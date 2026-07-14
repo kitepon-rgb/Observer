@@ -49,15 +49,16 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
   - 完了条件: 未確定事項3件が解消または明示的blockedになり、反対仮説の検証を一回通過する。
   - 裁定: Throughline JSON CLI + Observer MCP adapter、macOS owner-only state、`emitted_unacked` receiptを採用。DB直接監視、Throughline本体のMCP所有、cross-platform見せかけ、Host ack見せかけを棄却した。
 
-- [ ] **P0-6 Claude親／Claude Observerのhost境界を実測する。**
+- [x] **P0-6 Claude親／Claude Observerのhost境界を実測する。**
   - 成果物: Claudeの完了turn証拠、正式Stop event／payload、project／session identity、60秒超wait、同じturnへのcontinuation、明示停止の再現記録。
   - 完了条件: Claude Observerと親Claudeへの配送を、Codex wireの流用や推測なしで実装できる。
+  - 実測: Claude Code 2.1.207でheadless `result/end_turn`、同じsession IDのresume、`SessionStart:resume`を確認した。backgroundは`--print`非対応で、`claude --bg '<task>'`のjob handleを`agents --json`／`logs`／`stop`で回収できた。完了turnはfinal assistantやprocess exitでなく、Throughline所有のStop receiptへ束縛する。`/rewind`はforkなので同一session rollbackを新設しない。
 
 - [x] **P0-7 Observerのprovider配置と役割を固定する。**
   - 成果物: Codex親→Codex Observer、Claude親→Claude Observerという同provider契約と、継続的反証ではない伴走者契約。
   - 完了条件: 一般Workerのrate-aware配置、異社相談役、Phase反証とObserverを文書上で分離する。
 
-**Gate:** Codex側はP0-1〜P0-5を完了済み。Claude adapterのプロダクションコードはP0-6完了まで書かない。
+**Gate:** P0-1〜P0-7を完了済み。Claude adapterはThroughline Stop receiptとbackground job handle契約から実装できる。
 
 ---
 
