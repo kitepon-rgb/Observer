@@ -86,6 +86,7 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
   - 成果物: runtime、package、lint、unit test、CIの最小構成。
   - 完了条件: 空実装のbaseline gateがgreenで、rollback可能な独立単位になる。
   - 実装: Node ESM / Node 22.13以上、runtime dependencyなし、Node test runner、構文検査、GitHub Actionsを追加。標準gateは`npm test && npm run check`。
+  - Control証跡: `observer-scaffold-run`は、初回baselineを親が同じworkspaceで確立したため`WORKSPACE_DRIFT`で失敗した。このRunを成功・acceptedへ変更しない。P2-1の完了根拠は親が独立に検証した16 test greenとroot commit `7b699c8`であり、Task `observer-scaffold`だけを本項参照でfinalizeする。
 
 - [x] **P2-2 project target登録を実装する。**
   - 成果物: canonical project resolver、`observer target register <absolute-project-root>`、Observer所有state。
