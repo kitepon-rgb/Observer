@@ -353,17 +353,28 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
-  - 成果物: project read-only、Observer state / Mailbox write-onlyの実行profileと拒否test。
-  - 完了条件: project内writeが失敗し、監視とMailbox publishは成功する。
+  - 成果物: production AIのtool surfaceを空にし、project観測とObserver state／Mailbox writeを
+    外部Supervisorだけが所有する実行profileと拒否test（[ADR 0083](adr/0083-read-only-execution-profile-reconciliation.md)）。
+  - 完了条件: host別live gateでproject writeが拒否され、Supervisor監視とMailbox publishは成功する。
+    非H fixtureのproject fingerprint不変をlive拒否証拠へ読み替えない。
+  - [x] ADR 0060によりproduction AIのThroughline／Observer MCP／Mailbox tool surfaceを空にし、
+    Observer MCP `observer_read`／`observer_wait`はread-only diagnostics／compatibilityへ分離した。
+    Mailbox writeは外部Supervisorの固定callbackだけが所有する。
   - [x] Codex native custom agentのTOML指定だけではunrestricted親のoverrideを防げないことを実測した。
   - [x] app-server persistent threadのper-thread read-only、project write拒否、別processからの`thread/read`／`thread/list`回収をcharacterizationした（[ADR 0009](adr/0009-codex-appserver-characterization.md)）。
-  - [ ] Codexアプリ内表示、65秒超wait、adapter crash後のturn resume、明示interrupt／停止、Observer MCP限定writeをcharacterizationする。
+  - [ ] **非H:** Claude exact-empty tool surface／既存隔離flagとCodex runtime-root read-only envelopeを固定し、
+    同じSupervisor cycleでHEAD／index／tracked・untracked／modeを含むproject fingerprint不変と
+    Observer state root配下のMailbox publish成功をfixture化する。
+  - [ ] **Codex live H:** アプリ内表示、65秒超turn、adapter crash後のturn resume、明示interrupt／停止、
+    project write拒否をcharacterizationする。
   - [x] Claude backgroundを`Read,Grep,Glob`だけで起動し、組込みtool surface上のproject read成功、Write tool不在による一回のwrite拒否、公開job lifecycleをcharacterizationした（[ADR 0010](adr/0010-claude-background-readonly-characterization.md)）。
   - [x] 空のsetting sources、skills／Chrome無効、strict MCPの一試行で、HEAD、index、tracked／untracked、modeを含むproject fingerprint不変をcharacterizationした（[ADR 0011](adr/0011-claude-process-boundary-characterization.md)）。
-  - [ ] settings／hooks／plugins隔離を独立fixtureで証明し、Observer MCP追加後もproject fingerprint不変を再検証する。
   - [x] Claude backgroundの65秒超継続、実行中stop、子process消滅をcharacterizationした。MCPは`--tools`による公開と`--allowedTools`による無人許可を分離する。
-  - [x] Claude adapter coreで`Read,Grep,Glob`と`mcp__observer__*`以外を拒否し、raw agent list／stop stderrを構造化receiptへ保持しないことを固定した（[ADR 0012](adr/0012-claude-host-adapter-contract.md)）。
-  - [ ] Claude backgroundのObserver MCP限定write、再stop receipt、daemon／adapter crash後のterminal result回収をcharacterizationする。
+  - [x] Claude adapter coreをADR 0060でexact-empty tool surfaceへ補正し、raw agent list／stop stderrを
+    構造化receiptへ保持しないことを固定した。ADR 0012の`Read,Grep,Glob`／`mcp__observer__*` allowlistはsuperseded。
+  - [ ] **Claude live H:** `--safe-mode`と公開background agent定義、認証維持、隔離`--settings` Stop hook、
+    project write拒否、再stop receipt、daemon／adapter crash後のterminal result回収をcharacterizationする。
+    `--bare`はOAuth／keychainを無効化するため隔離fallbackにしない。
     即時完了、terminal直前crash、実行中restart、daemon消失、失敗terminalを独立fixtureにし、`done`を結果回収済みへ丸めない。
     再stopは成功receiptを返さない実測のため、terminal stateを先に確認し、実行中stop receiptとterminal観測を分離する。
 
