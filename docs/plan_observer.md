@@ -308,10 +308,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       execution-verifiedなaiterm Codex一件へ親review配置する（[ADR 0030](adr/0030-evidence-builder-external-executor-placement.md)）。
     - strict Worker Reportを手補正せずimportし、親のfocused 15/15、`npm run check`、対象2 pathの
       `git diff --check`を再確認してControl revision 8でacceptした。実装はcommit `0536d07`へ独立固定した。
-  - [ ] read-only collectorを実装し、承認済みplan ref、git HEAD／status／diff evidence、既存test receiptを
+  - [x] read-only collectorを実装し、承認済みplan ref、git HEAD／status／diff evidence、既存test receiptを
     snapshot builderへ渡す。collector unavailableを空の成功へ丸めず、利用不能refとして明示する。
     - path containment、1 MiB取得上限、固定git argv、domain-separated source digest、test receipt投影を
       [ADR 0032](adr/0032-read-only-evidence-collector-contract.md)へ固定した。live repoとSupervisor配線は別gateとする。
+    - strict Worker Reportを手補正せずimportし、親のfocused 22/22、`npm run check`、対象2 pathの
+      `git diff --check`を再確認してControl revision 17でacceptした。実装はcommit `4276615`、受入証拠は
+      [ADR 0033](adr/0033-read-only-evidence-collector-acceptance.md)へ独立固定した。
   - [ ] generation stateへcycle数とmodel-visible byte数を耐久化し、8 cycle／256 KiB到達前の
     terminal確認付きplanned rolloverへ接続する。
 
