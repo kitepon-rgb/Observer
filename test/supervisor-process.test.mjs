@@ -123,6 +123,24 @@ test("model pendingはbounded poll後に同じoperation回収stepへ進む", asy
   assert.equal(released(), 1);
 });
 
+test("model result unknownは永久pollせずfaultとしてfail loudにする", async () => {
+  let polls = 0;
+  let closed = 0;
+  const { value, released } = dependencies({
+    runSupervisorProductionStep: async () => step("model_result_unknown"),
+    waitForModelPoll: async () => { polls += 1; },
+  });
+  await assert.rejects(runSupervisorProcess(request({
+    createProviderRuntime: async () => ({
+      providerRuntime: { provider: "codex" },
+      close: async () => { closed += 1; },
+    }),
+  }), value), { code: "E_SUPERVISOR_MODEL_RESULT_UNKNOWN" });
+  assert.equal(polls, 0);
+  assert.equal(closed, 1);
+  assert.equal(released(), 1);
+});
+
 test("explicit watch stopは進行中waitを取消し、faultへ偽装しない", async () => {
   let reads = 0;
   const { value, released } = dependencies({

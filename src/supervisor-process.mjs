@@ -16,7 +16,7 @@ export const SUPERVISOR_PROCESS_RESULT_SCHEMA = "observer.supervisor_process_res
 const TARGET = /^p_[a-f0-9]{64}$/;
 const WATCH = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TERMINAL_STEP = new Set(["rollover_required", "provider_unavailable"]);
-const RECOVERABLE_STEP = new Set(["model_pending", "model_result_unknown"]);
+const RECOVERABLE_STEP = new Set(["model_pending"]);
 const CONTINUING_STEP = new Set(["timeout", "committed"]);
 const WATCH_TERMINAL = new Set(["stopping", "stopped", "faulted"]);
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
@@ -88,6 +88,9 @@ export async function runSupervisorProcess({
       const step = validateStepResult(observed.value, initial.provider);
       if (TERMINAL_STEP.has(step.status)) return processResult(step.status, step.provider, step.cycle_id);
       if (CONTINUING_STEP.has(step.status)) continue;
+      if (step.status === "model_result_unknown") {
+        fail("E_SUPERVISOR_MODEL_RESULT_UNKNOWN", "同じmodel operationの結果をexact回収できません");
+      }
       if (!RECOVERABLE_STEP.has(step.status)) {
         fail("E_SUPERVISOR_PROCESS_STEP_INVALID", "Supervisor step結果をloopへ適用できません");
       }

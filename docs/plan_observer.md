@@ -288,6 +288,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                   一step coreを配線し、timeout／cancel／fault／explicit stop loopを固定する。
                   - [ ] target固有process lease、active watch停止監視、timeout／model pendingのbounded反復を
                     host-neutral process loopとして実装する。
+                    `model_result_unknown`は回収不能なterminal faultとしてpollせず停止する（[ADR 0067](adr/0067-model-result-unknown-is-terminal.md)）。
                   - [ ] Throughline executableとCodex app-serverを一process内で検証・初期化し、終了時にCodex childの
                     terminal確認を必須化する。子process残存や終了不明を成功へ丸めない。
                   - [ ] `observer supervisor run` CLIをabsolute command／watch identity／Observer rootへ束縛し、
