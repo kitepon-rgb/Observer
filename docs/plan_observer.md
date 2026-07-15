@@ -227,7 +227,18 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
             - [x] 隔離した2 Workerの成果を本線へ統合し、focused gateを通す。
               - 関連gate 46/46、`npm run check`、`git diff --check`成功。両TaskはControl revision 29までに
                 [ADR 0046](adr/0046-generation-provider-binding-step-acceptance.md)でfinalizeした。
-          - [ ] model request送信結果不明をhost lifecycleと別journalで回収する。
+          - [ ] model request送信結果不明をhost lifecycleと別journalで回収する
+            （[ADR 0047](adr/0047-model-operation-journal-contract.md)）。
+            - [ ] generation reservationより先にhost-neutral model operationを`prepared`で耐久化し、
+              `prepared -> reserved -> dispatching -> accepted -> completed -> applied`の一方向遷移と
+              identity conflictを実装する。
+            - [ ] Supervisorを`issue_once`／`recover_only`／idempotent applyへ分け、`dispatching`からmodel requestを
+              再送せず、strict parse済みcanonical AI outputだけをcycle processedへ移管する。
+            - [ ] prepared／reservation／provider handle／canonical result／apply／processed／cleanup間の
+              crash matrixをfocused fixtureで固定する。
+            - [ ] Claude／Codexのexact operation result readをprovider固有journalへ実装し、handle欠損を
+              別operationへの再送で隠さない。
+            - [ ] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする。
         - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
