@@ -286,6 +286,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                   [ADR 0065](adr/0065-supervisor-production-step-acceptance.md)で受け入れた。
                 - [ ] verified Throughline clientとpre-initialized Codex app-server sessionを所有する外部process／CLIへ
                   一step coreを配線し、timeout／cancel／fault／explicit stop loopを固定する。
+                  - [ ] target固有process lease、active watch停止監視、timeout／model pendingのbounded反復を
+                    host-neutral process loopとして実装する。
+                  - [ ] Throughline executableとCodex app-serverを一process内で検証・初期化し、終了時にCodex childの
+                    terminal確認を必須化する。子process残存や終了不明を成功へ丸めない。
+                  - [ ] `observer supervisor run` CLIをabsolute command／watch identity／Observer rootへ束縛し、
+                    signal cancel、explicit stop、faultのJSON／exit contractをfocused fixtureで固定する。
+                  - [ ] focused／related gateを各一回通し、不変受入ADRと独立commitへ固定する。
               - [ ] Claude background jobへの公開非対話reply ACKと隔離`--settings` Stop hookをlive H gateで実証して接続する。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
