@@ -575,12 +575,14 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 - [ ] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
   - 完了条件: 空Mailboxと通常waitが開発体験を阻害せず、clean環境で導入・撤去を再現できる。
-  - [ ] **P5-2a clean環境installer／verify／rollback契約を閉じる**
+  - [x] **P5-2a clean環境installer／verify／rollback契約を閉じる**
     （[ADR 0099](adr/0099-clean-install-verify-rollback-contract.md)）。
-    - [ ] versioned製品manifest、runtime package files、sanitized `observer diagnostics`を実装する。
-    - [ ] 4 binをexecutableへ揃え、package tamper、platform、Node、MCP／hook binary契約をfocused testで固定する。
-    - [ ] dotagentsの隔離HOME／npm prefixでinstall→reinstall→verify→rollbackとhook adapter dry-runを通す。
-    - [ ] actual HOME apply、hook trust、live host、credential、publish／pushはHまたは後続gateへ残す。
+    - [x] versioned製品manifest、runtime package files、sanitized `observer diagnostics`を実装した。
+    - [x] 4 binをexecutableへ揃え、package tamper、platform、Node、MCP／hook binary契約をfocused testで固定した。
+    - [x] dotagentsの隔離HOME／npm prefixでinstall→reinstall→verify→rollbackとhook adapter dry-runを通した。
+    - [x] actual HOME apply、hook trust、live host、credential、publish／pushは未実施のH／後続gateへ残した。
+    - 実装 `630c5ff`／`b45c07a`（Observer）、`894799b`（dotagents）を
+      [ADR 0100](adr/0100-clean-install-verify-rollback-acceptance.md)で受け入れた。
   - [x] project-ownedな`.codex-sidecar.yml`を追加し、read-only presetと隔離worktree writer、
     Observer製品面だけのpath allowlist、明示model policyを正規dry-runで検証した。
     - `codex-sidecar diagnostics --project .`: `status=ok`。
