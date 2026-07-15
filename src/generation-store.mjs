@@ -70,7 +70,7 @@ export async function reserveGenerationInput({ stateRoot, targetId, watchId, cyc
     requireActive(state);
     const reservation = { cycle_id: cycleId, input_digest: inputDigest, model_visible_bytes: modelVisibleBytes };
     if (state.pending_reservation !== null) {
-      if (sameReservation(state.pending_reservation, reservation)) return { outcome: "reserved", state: publicState(state) };
+      if (sameReservation(state.pending_reservation, reservation)) return { outcome: "reserved", reservation: "existing", state: publicState(state) };
       fail("E_GENERATION_RESERVATION_CONFLICT", "別のpending reservationがあります");
     }
     if (modelVisibleBytes > GENERATION_MAX_MODEL_VISIBLE_BYTES) fail("E_GENERATION_INPUT_TOO_LARGE", "fresh generationでもinput上限を超えています");
@@ -81,7 +81,7 @@ export async function reserveGenerationInput({ stateRoot, targetId, watchId, cyc
     }
     const next = transition(state, { pending_reservation: reservation }, dependencies.now);
     await atomicReplacePrivateFile(paths.statePath, serialize(next));
-    return { outcome: "reserved", state: publicState(next) };
+    return { outcome: "reserved", reservation: "created", state: publicState(next) };
   });
 }
 
@@ -97,15 +97,21 @@ export async function completeGenerationCycle({ stateRoot, targetId, watchId, cy
       fail("E_GENERATION_COMPLETION_CONFLICT", "同じcycleのcompletionが一致しません");
     }
     if (state.pending_reservation === null || !sameReservation(state.pending_reservation, completed)) fail("E_GENERATION_RESERVATION_REQUIRED", "matching reservationが必要です");
-    const next = transition(state, {
-      completed_cycles: state.completed_cycles + 1,
-      model_visible_bytes: state.model_visible_bytes + modelVisibleBytes,
-      pending_reservation: null,
-      last_completed_cycle: completed,
-    }, dependencies.now);
+    const next = completeGenerationState(state, completed, dependencies.now);
     await atomicReplacePrivateFile(paths.statePath, serialize(next));
     return publicState(next);
   });
+}
+
+export function completeGenerationState(state, completed, clock = undefined) {
+  validateGenerationState(state); validateCompleted(completed, false);
+  requireActive(state);
+  if (state.last_completed_cycle !== null && state.last_completed_cycle.cycle_id === completed.cycle_id) {
+    if (sameCompleted(state.last_completed_cycle, completed)) return structuredClone(state);
+    fail("E_GENERATION_COMPLETION_CONFLICT", "同じcycleのcompletionが一致しません");
+  }
+  if (state.pending_reservation === null || !sameReservation(state.pending_reservation, completed)) fail("E_GENERATION_RESERVATION_REQUIRED", "matching reservationが必要です");
+  return transition(state, { completed_cycles: state.completed_cycles + 1, model_visible_bytes: state.model_visible_bytes + completed.model_visible_bytes, pending_reservation: null, last_completed_cycle: structuredClone(completed) }, clock);
 }
 
 export async function requestGenerationStop({ stateRoot, targetId, watchId }, dependencies = {}) {

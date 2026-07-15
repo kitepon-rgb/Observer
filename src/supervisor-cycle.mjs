@@ -6,6 +6,7 @@ import {
   prepareCycle,
   readCycleState,
 } from "./cycle-store.mjs";
+import { reserveGenerationInput } from "./generation-store.mjs";
 import { runFixedThroughReplay, runWatchCycle } from "./watch-cycle.mjs";
 
 export const CYCLE_RESULT_SCHEMA = "observer.cycle_result.v1";
@@ -16,13 +17,14 @@ export async function runSupervisorCycle({
   target,
   watchId,
   client,
+  prepareCycleInput,
   processCycle,
   timeoutSeconds = 3600,
   projectionRetries = DEFAULT_PROJECTION_RETRIES,
   signal,
   store = defaultStore,
 } = {}) {
-  if (typeof processCycle !== "function") fail("E_SUPERVISOR_CALLBACK", "cycle callbackが不正です");
+  if (typeof processCycle !== "function" || typeof prepareCycleInput !== "function") fail("E_SUPERVISOR_CALLBACK", "cycle callbackが不正です");
   if (!Number.isSafeInteger(projectionRetries) || projectionRetries < 0) fail("E_SUPERVISOR_RETRY_CONFIG", "projection retry設定が不正です");
   throwIfAborted(signal);
   const cycleState = await store.readCycleState({ stateRoot, targetId: target?.targetId });
@@ -64,11 +66,19 @@ export async function runSupervisorCycle({
     fail("E_CYCLE_PENDING_CONFLICT", "prepared cycleがreplayed cycleと一致しません");
   }
 
+  const input = await prepareCycleInput({ cycle_id: prepared.cycle_id, target, proposed_state: cycle.proposed_state, turns: cycle.turns, signal });
+  validateCycleInput(input);
+  const reservation = await store.reserveGenerationInput({ stateRoot, targetId: target.targetId, watchId, cycleId: prepared.cycle_id, inputDigest: input.input_digest, modelVisibleBytes: input.model_visible_bytes });
+  if (reservation.outcome === "planned_rollover") return { status: "rollover_required", proposed_state: committed, cycle_id: prepared.cycle_id, turns: [] };
+  if (reservation.reservation === "existing") return { status: "model_result_unknown", proposed_state: committed, cycle_id: prepared.cycle_id, turns: [] };
+  const inputReceipt = { schema: input.schema, input_digest: input.input_digest, model_visible_bytes: input.model_visible_bytes };
   const result = await processCycle({
     cycle_id: prepared.cycle_id,
     target,
     proposed_state: cycle.proposed_state,
     turns: cycle.turns,
+    input: inputReceipt,
+    value: input.value,
     signal,
   });
   validateCycleResult(result);
@@ -77,6 +87,8 @@ export async function runSupervisorCycle({
     targetId: target.targetId,
     watchId,
     cycleId: prepared.cycle_id,
+    inputDigest: input.input_digest,
+    modelVisibleBytes: input.model_visible_bytes,
     resultDigest: result.result_digest,
   });
   const state = await store.commitProcessedCycle({ stateRoot, targetId: target.targetId, watchId, cycleId: prepared.cycle_id });
@@ -88,6 +100,11 @@ export function validateCycleResult(value) {
     Object.keys(value).length !== 2 || value.schema !== CYCLE_RESULT_SCHEMA || typeof value.result_digest !== "string" || !/^[a-f0-9]{64}$/.test(value.result_digest)) {
     fail("E_CYCLE_RESULT_INVALID", "cycle callback resultが不正です");
   }
+  return value;
+}
+
+export function validateCycleInput(value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value) || Object.getPrototypeOf(value) !== Object.prototype || Object.keys(value).sort().join(",") !== "input_digest,model_visible_bytes,schema,value" || value.schema !== "observer.cycle_input.v1" || typeof value.input_digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value.input_digest) || !Number.isSafeInteger(value.model_visible_bytes) || value.model_visible_bytes < 0) fail("E_CYCLE_INPUT_INVALID", "cycle inputが不正です");
   return value;
 }
 
@@ -146,4 +163,4 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw new ObserverError("E_THROUGHLINE_CANCELLED", "Throughline待機が取消されました");
 }
 
-const defaultStore = { readCycleState, prepareCycle, markCycleProcessed, commitProcessedCycle };
+const defaultStore = { readCycleState, prepareCycle, markCycleProcessed, commitProcessedCycle, reserveGenerationInput };

@@ -13,14 +13,15 @@ import {
   removePrivateFile,
 } from "./private-state.mjs";
 import { validateWatchState } from "./watch-store.mjs";
+import { completeGenerationState, validateGenerationState } from "./generation-store.mjs";
 
-export const PENDING_CYCLE_SCHEMA = "observer.pending_cycle.v1";
+export const PENDING_CYCLE_SCHEMA = "observer.pending_cycle.v2";
 const TARGET_ID_RE = /^p_[a-f0-9]{64}$/;
 const WATCH_ID_RE = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIGEST_RE = /^[a-f0-9]{64}$/;
 const CYCLE_ID_RE = /^c_[a-f0-9]{64}$/;
 const PENDING_KEYS = [
-  "base_cursor", "created_at", "cycle_id", "proposed_state", "result_digest",
+  "base_cursor", "created_at", "cycle_id", "input_digest", "model_visible_bytes", "proposed_state", "result_digest",
   "schema", "status", "target_id", "updated_at", "watch_id",
 ];
 
@@ -58,7 +59,7 @@ export async function prepareCycle({ stateRoot, targetId, watchId, baseState = n
       status: "prepared",
       base_cursor: baseState?.cursor ?? null,
       proposed_state: structuredClone(proposedState),
-      result_digest: null,
+      input_digest: null, model_visible_bytes: null, result_digest: null,
       created_at: timestamp,
       updated_at: timestamp,
     });
@@ -67,20 +68,28 @@ export async function prepareCycle({ stateRoot, targetId, watchId, baseState = n
   });
 }
 
-export async function markCycleProcessed({ stateRoot, targetId, watchId, cycleId, resultDigest }, dependencies = {}) {
+export async function markCycleProcessed({ stateRoot, targetId, watchId, cycleId, inputDigest, modelVisibleBytes, resultDigest }, dependencies = {}) {
   validateIdentifiers({ targetId, watchId, cycleId });
+  requireDigest(inputDigest, "cycle input digest"); validateInputBytes(modelVisibleBytes);
   if (typeof resultDigest !== "string" || !DIGEST_RE.test(resultDigest)) fail("E_CYCLE_RESULT_INVALID", "cycle result digestが不正です");
   const paths = await requirePaths(stateRoot, targetId);
   return withTransaction(paths, watchId, async () => {
     const pending = await requirePending(paths.pendingPath, targetId);
     requirePendingOwner(pending, watchId, cycleId);
     if (pending.status === "processed") {
-      if (pending.result_digest !== resultDigest) fail("E_CYCLE_RESULT_CONFLICT", "processed result digestが一致しません");
+      if (pending.result_digest !== resultDigest || pending.input_digest !== inputDigest || pending.model_visible_bytes !== modelVisibleBytes) fail("E_CYCLE_RESULT_CONFLICT", "processed receiptが一致しません");
       return structuredClone(pending);
     }
+    const generation = await readGeneration(paths.generationPath);
+    if (generation === null) fail("E_GENERATION_NOT_FOUND", "generation stateがありません");
+    if (generation.target_id !== targetId || generation.watch_id !== watchId) fail("E_GENERATION_WATCH_MISMATCH", "generation identityがcycleと一致しません");
+    const reservation = { cycle_id: cycleId, input_digest: inputDigest, model_visible_bytes: modelVisibleBytes };
+    if (generation.pending_reservation === null || generation.pending_reservation.cycle_id !== reservation.cycle_id || generation.pending_reservation.input_digest !== reservation.input_digest || generation.pending_reservation.model_visible_bytes !== reservation.model_visible_bytes) fail("E_GENERATION_RESERVATION_REQUIRED", "generation reservationが一致しません");
     const next = validatePendingCycle({
       ...pending,
       status: "processed",
+      input_digest: inputDigest,
+      model_visible_bytes: modelVisibleBytes,
       result_digest: resultDigest,
       updated_at: nextTimestamp(pending.updated_at, dependencies.now),
     });
@@ -96,6 +105,12 @@ export async function commitProcessedCycle({ stateRoot, targetId, watchId, cycle
     const pending = await requirePending(paths.pendingPath, targetId);
     requirePendingOwner(pending, watchId, cycleId);
     if (pending.status !== "processed") fail("E_CYCLE_NOT_PROCESSED", "processed receiptより先にcursorをcommitできません");
+    const generation = await readGeneration(paths.generationPath);
+    if (generation === null) fail("E_GENERATION_NOT_FOUND", "generation stateがありません");
+    if (generation.target_id !== targetId || generation.watch_id !== watchId) fail("E_GENERATION_WATCH_MISMATCH", "generation identityがcycleと一致しません");
+    const completion = { cycle_id: pending.cycle_id, input_digest: pending.input_digest, model_visible_bytes: pending.model_visible_bytes, result_digest: `sha256:${pending.result_digest}` };
+    const generationNeedsWrite = generation.pending_reservation !== null;
+    const nextGeneration = completeGenerationState(generation, completion, dependencies.now);
     const committed = await readCommitted(paths.cursorPath, targetId);
     const committedCursor = committed?.cursor ?? null;
     if (committedCursor === pending.base_cursor) {
@@ -104,6 +119,10 @@ export async function commitProcessedCycle({ stateRoot, targetId, watchId, cycle
       await dependencies.afterCursorCommit?.();
     } else if (committedCursor !== pending.proposed_state.cursor || !sameParentState(committed, pending.proposed_state)) {
       fail("E_CYCLE_BASE_MISMATCH", "committed cursorがpending cycleと一致しません");
+    }
+    if (generationNeedsWrite) {
+      await atomicReplacePrivateFile(paths.generationPath, serialize(nextGeneration));
+      await dependencies.afterGenerationCommit?.();
     }
     await removePrivateFile(paths.pendingPath);
     return structuredClone(pending.proposed_state);
@@ -129,9 +148,9 @@ export function validatePendingCycle(value) {
   if (!["prepared", "processed"].includes(value.status) || !isOptionalCursor(value.base_cursor)) fail("E_CYCLE_STATE_SCHEMA", "pending cycle statusが不正です");
   validateParentForTarget(value.proposed_state, value.target_id);
   if (value.cycle_id !== cycleIdFor(value.target_id, value.base_cursor, value.proposed_state.cursor)) fail("E_CYCLE_STATE_SCHEMA", "pending cycle digestが一致しません");
-  if (value.status === "prepared" ? value.result_digest !== null : typeof value.result_digest !== "string" || !DIGEST_RE.test(value.result_digest)) {
-    fail("E_CYCLE_STATE_SCHEMA", "pending cycle resultが不正です");
-  }
+  if (value.status === "prepared") {
+    if (value.input_digest !== null || value.model_visible_bytes !== null || value.result_digest !== null) fail("E_CYCLE_STATE_SCHEMA", "prepared pendingのinput/resultはnullです");
+  } else if (typeof value.input_digest !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value.input_digest) || !Number.isSafeInteger(value.model_visible_bytes) || value.model_visible_bytes < 0 || value.model_visible_bytes > 262144 || typeof value.result_digest !== "string" || !DIGEST_RE.test(value.result_digest)) fail("E_CYCLE_STATE_SCHEMA", "processed pendingが不正です");
   validateTimestamp(value.created_at);
   validateTimestamp(value.updated_at);
   if (Date.parse(value.updated_at) < Date.parse(value.created_at)) fail("E_CYCLE_STATE_SCHEMA", "pending cycle timestampが後退しています");
@@ -155,6 +174,7 @@ async function existingPaths(stateRoot, targetId) {
     watchPath: join(directory, "current.json"),
     cursorPath: join(directory, "cursor.json"),
     pendingPath: join(directory, "pending-cycle.json"),
+    generationPath: join(directory, "generation.json"),
     lockPath: join(directory, "transaction.lock"),
   };
 }
@@ -221,6 +241,7 @@ async function requirePending(path, targetId) {
   if (pending === null) fail("E_CYCLE_PENDING_MISSING", "pending cycleがありません");
   return pending;
 }
+async function readGeneration(path) { try { return validateGenerationState(await readPrivateJson(path)); } catch (error) { if (error?.code === "ENOENT") return null; throw error; } }
 
 function requireBaseState(committed, baseState) {
   if (committed === null && baseState === null) return;
@@ -280,6 +301,8 @@ function validateTimestamp(value) {
   const parsed = typeof value === "string" ? Date.parse(value) : Number.NaN;
   if (Number.isNaN(parsed) || new Date(parsed).toISOString() !== value) fail("E_CYCLE_STATE_SCHEMA", "cycle timestampが不正です");
 }
+function requireDigest(value, field) { if (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value)) fail("E_CYCLE_INPUT_INVALID", `${field}が不正です`); }
+function validateInputBytes(value) { if (!Number.isSafeInteger(value) || value < 0 || value > 262144) fail("E_CYCLE_INPUT_INVALID", "model visible bytesが不正です"); }
 
 function serialize(value) {
   return `${JSON.stringify(value)}\n`;
