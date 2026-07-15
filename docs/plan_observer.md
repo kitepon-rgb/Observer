@@ -321,10 +321,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
             - [x] host-neutral rebind transaction、new epoch generation、watch provider／handle CASを実装する。
               - commit `426f8b9`。focused 21/21、関連gate 83/83、`npm run check`、
                 `git diff --check`を通し、[ADR 0073](adr/0073-parent-epoch-rebind-core-acceptance.md)で受け入れた。
-            - [ ] Claude／Codex provider bindingを一command一stepで接続する。
-              - [ ] provider recovery contextをauthorization／launch request digestへ再束縛し、
+            - [x] Claude／Codex provider bindingを一command一stepで接続した
+              （[ADR 0075](adr/0075-parent-rebind-provider-binding-acceptance.md)）。
+              - [x] provider recovery contextをauthorization／launch request digestへ再束縛し、
                 Codex turn-start unknown再送と不完全terminal receiptを補正する
                 （[ADR 0074](adr/0074-parent-rebind-recovery-context-correction.md)）。
+                core correction `d7ebdbb`、provider binding `3a737ad`。focused 6/6、関連66/66、
+                `npm run check`、`git diff --cached --check`がgreen。
             - [ ] Supervisor processへ接続し、new epoch activation後にprepared cycleへ戻る。
             - [ ] 実thread／host switchとcrash recoveryをPhase O2 H gateで受け入れる。
           - [ ] watch／provider faultをterminal確認済みのfault transition／receiptへ記録し、
