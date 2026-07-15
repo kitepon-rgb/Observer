@@ -386,10 +386,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 
 ## Phase 3: Mailboxと親Stop hook
 
-- [x] **P3-1 中央Mailboxの保存・publish契約を実装する。**
+- [ ] **P3-1 中央Mailboxの保存・publish契約を実装する。**
   - 成果物: project別inbox、message schema、atomic publish、permission / size / digest検査。
   - 完了条件: 不正messageを拒否し、正常messageを部分書込なしで公開できる。
   - 実装: strict schema、canonical digest、byte上限、secret pattern拒否、同一message ID拒否、同一filesystem上の完全書込み後publishを実装した。
+  - [ ] `dedupe_key`が既存secret pattern検査から漏れている欠陥を
+    [ADR 0085](adr/0085-mailbox-dedupe-key-secret-correction.md)で独立補正する。
 
 - [x] **P3-2 consume transactionを実装する。**
   - 成果物: atomic claim、本文削除、digest-only receipt、`delivery_unknown`、retention。
