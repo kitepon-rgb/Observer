@@ -229,9 +229,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                 [ADR 0046](adr/0046-generation-provider-binding-step-acceptance.md)でfinalizeした。
           - [ ] model request送信結果不明をhost lifecycleと別journalで回収する
             （[ADR 0047](adr/0047-model-operation-journal-contract.md)）。
-            - [ ] generation reservationより先にhost-neutral model operationを`prepared`で耐久化し、
+            - [x] generation reservationより先にhost-neutral model operationを`prepared`で耐久化し、
               `prepared -> reserved -> dispatching -> accepted -> completed -> applied`の一方向遷移と
               identity conflictを実装する。
+              - commit `4c3cc03`。exact cycle result、UTC時刻非後退、private path／lock、status限定cleanupまで
+                focused 8/8で固定し、[ADR 0049](adr/0049-model-operation-store-core-acceptance.md)で受け入れた。
             - [ ] Supervisorを`issue_once`／`recover_only`／idempotent applyへ分け、`dispatching`からmodel requestを
               再送せず、strict parse済みcanonical AI outputだけをcycle processedへ移管する。
             - [ ] prepared／reservation／provider handle／canonical result／apply／processed／cleanup間の
