@@ -317,6 +317,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       [ADR 0033](adr/0033-read-only-evidence-collector-acceptance.md)へ独立固定した。
   - [ ] generation stateへcycle数とmodel-visible byte数を耐久化し、8 cycle／256 KiB到達前の
     terminal確認付きplanned rolloverへ接続する。
+    - 一parent session epochへ一論理Observer、一watch内で一active generationを維持する。
+    - model呼出し前のexact reservation、8 completed cycle、262,144 UTF-8 bytes、fresh generationでも
+      一入力が超過する場合のfail-closedを[ADR 0034](adr/0034-generation-budget-and-planned-rollover.md)へ固定した。
+    - generation state／budget reservation、cycle transaction接続、host terminal／次generation起動を
+      独立gateに分け、旧generationのterminal不明時は新世代を起動しない。
 
 - [ ] **P4-3 過剰指摘抑制を実装する。**
   - 成果物: materiality、evidence、novelty、actionability、timing gateとdedupe / cooldown。
