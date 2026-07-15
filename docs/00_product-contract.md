@@ -49,6 +49,20 @@ Observer project-local Stop hook
 
 ThroughlineはObserver stateや手紙本文を所有しない。ObserverはThroughlineのDB stateを複製または変更しない。
 
+### 2.1 Observerプロジェクトidentity
+
+製品として起動するClaude／Codex Observerのhost `cwd`は、監視対象にかかわらずcanonicalなObserver
+リポジトリrootへ固定する。監視対象の絶対`project_root`はtarget ID、child start envelope、Observer MCPの
+照合データであり、host `cwd`、一時git repo、アプリ上の別projectへ変換しない。
+
+複数targetはwatchごとにthread／jobを分離してよいが、実行projectは一つのObserverである。これにより
+Observer rootの`AGENTS.md`／`CLAUDE.md`を静的な製品役割の正本とし、起動promptにはwatch identity、cursor、
+観測入力など可変情報だけを渡す。実行時役割は検証済み`observer.child_start.v1`かつ`mode=observe`の時だけ
+有効にし、同じrepoを編集する開発AIの権限と混同しない。
+
+Codexアプリ／Claude UI上で単一Observer projectとして表示されることはlive hostのH受入条件である。
+requestの`cwd`固定、persistent stateの列挙、`source` fieldだけでUI表示済みとは判定しない。
+
 ---
 
 ## 3. 監視対象
@@ -343,3 +357,4 @@ at-most-once advisory delivery
 9. Observerを親と異なるproviderへ自動配置しない。
 10. Observerを継続的な反証役または一般Workerとして扱わない。
 11. 利用者の明示指示なしにObserverを起動または自動再起動しない。
+12. 全hostの`cwd`をcanonicalなObserver rootへ固定し、監視対象ごとの擬似projectやtemporary repoを作らない。

@@ -151,6 +151,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       commits `1ed545c`、`ed4f077`、Control revision 32。
     - [x] unrestricted Codex親ではcustom agentの`read-only`が実効sandboxにならないことを実測し、native Observerを禁止した（[ADR 0008](adr/0008-codex-readonly-host-boundary.md)）。
     - [ ] Codex persistent app-server thread候補／Claude backgroundの親host adapter、同provider Observer role、routing検証を実装する。
+      - [x] 全hostの`cwd`をcanonicalなObserver rootへ固定し、target `project_root`をhost cwdや擬似projectへ使わない製品identityを固定した（[ADR 0017](adr/0017-observer-project-identity.md)）。
+        - `AGENTS.md`を両host共通の静的Observer契約、`CLAUDE.md`をClaude固有差分の入口にする。
+        - watchごとにthread／jobは分けても、監視対象ごとのtemporary repo／アプリprojectを生成しない。
+        - 実行時契約は検証済みchild start envelopeの時だけ発火し、Observer開発AIの権限と分離する。
+        - Codex app／Claude UI表示と既存の不要project cleanupは未検証のH gateとして残す。
       Claude backgroundはexact tool allowlistでproject readとwrite拒否、job handleの`working → done`、同handle stopを実証した。
       argvの可変長flag順序とterminal後のlogs回収不能を[ADR 0010](adr/0010-claude-background-readonly-characterization.md)でadapter契約へ固定した。
       - [x] Claude adapterの純粋coreとして、絶対CLI path、固定prompt位置、Observer MCPのruntime-root字句境界、公開／無人許可の分離、
@@ -266,3 +271,4 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 9. Claude／Codexの親Stop hook adapterはMailboxなしで高速に終了し、外部LLM、network、long-pollへ同期依存しない。
 10. E2E、fault injection、installer、verify、rollback、full CI、最終監査、knowledge returnが完了する。
 11. 利用者の明示指示を受けた親だけが同provider Observerを起動し、一targetで二重起動しない。
+12. Claude／Codex ObserverはcanonicalなObserver rootを実行`cwd`とし、監視対象ごとの擬似projectやtemporary repoを作らない。
