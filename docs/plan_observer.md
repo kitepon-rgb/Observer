@@ -316,7 +316,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
           - [ ] parent epoch切替を旧generationへのmodel requestなしで明示
             `rebind_required` transition／receiptへ記録し、parent authorizationと
             terminal確認後だけ新epochを開始する（[ADR 0072](adr/0072-parent-epoch-rebind-transaction.md)）。
-            - [ ] host-neutral rebind transaction、new epoch generation、watch provider／handle CASを実装する。
+            - [x] host-neutral rebind transaction、new epoch generation、watch provider／handle CASを実装する。
+              - commit `426f8b9`。focused 21/21、関連gate 83/83、`npm run check`、
+                `git diff --check`を通し、[ADR 0073](adr/0073-parent-epoch-rebind-core-acceptance.md)で受け入れた。
             - [ ] Claude／Codex provider bindingを一command一stepで接続する。
             - [ ] Supervisor processへ接続し、new epoch activation後にprepared cycleへ戻る。
             - [ ] 実thread／host switchとcrash recoveryをPhase O2 H gateで受け入れる。
