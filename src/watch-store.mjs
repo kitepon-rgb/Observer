@@ -207,6 +207,42 @@ export async function compareAndSwapWatchLaunchHandle({
   });
 }
 
+export async function compareAndSwapWatchHostBinding({
+  stateRoot,
+  targetId,
+  watchId,
+  expectedProvider,
+  expectedLaunchHandle,
+  nextProvider,
+  nextLaunchHandle,
+}, dependencies = {}) {
+  validateTargetId(targetId);
+  validateWatchId(watchId);
+  validateProvider(expectedProvider);
+  validateProvider(nextProvider);
+  validateProviderLaunchHandle(expectedLaunchHandle, expectedProvider);
+  validateProviderLaunchHandle(nextLaunchHandle, nextProvider);
+  const paths = await requireWatchPaths(stateRoot, targetId);
+  return withWatchTransaction(paths.lockPath, async () => {
+    const current = await requireCurrent(paths.currentPath);
+    requireTransition(current, watchId, ["active"]);
+    if (current.provider === nextProvider && sameLaunchHandle(current.launch_handle, nextLaunchHandle)) {
+      return { outcome: "already_swapped", status: publicWatchStatus(current) };
+    }
+    if (current.provider !== expectedProvider || !sameLaunchHandle(current.launch_handle, expectedLaunchHandle)) {
+      fail("E_WATCH_HOST_BINDING_CAS_MISMATCH", "watch host bindingが旧provider／handleと一致しません");
+    }
+    const next = validateWatchState({
+      ...current,
+      provider: nextProvider,
+      launch_handle: structuredClone(nextLaunchHandle),
+      updated_at: nextTimestamp(current, dependencies.now),
+    });
+    await atomicReplacePrivateFile(paths.currentPath, serialize(next));
+    return { outcome: "swapped", status: publicWatchStatus(next) };
+  });
+}
+
 export async function inspectWatchTransactionLock({ stateRoot, targetId }) {
   validateTargetId(targetId);
   const paths = await watchPaths(stateRoot, targetId);
@@ -387,6 +423,13 @@ function validateLaunchHandle(handle) {
   if (typeof handle.kind !== "string" || !HANDLE_KIND_RE.test(handle.kind)) fail("E_WATCH_LAUNCH_HANDLE_INVALID", "launch handle kindが不正です");
   if (typeof handle.value !== "string" || handle.value.length === 0 || handle.value.length > 1024 || /[\u0000-\u001f\u007f]/u.test(handle.value)) {
     fail("E_WATCH_LAUNCH_HANDLE_INVALID", "launch handle valueが不正です");
+  }
+}
+
+function validateProviderLaunchHandle(handle, provider) {
+  validateLaunchHandle(handle);
+  if (handle.kind !== (provider === "codex" ? "codex.thread" : "claude.job")) {
+    fail("E_WATCH_LAUNCH_HANDLE_INVALID", "launch handle kindがproviderと一致しません");
   }
 }
 

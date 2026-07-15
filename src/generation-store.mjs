@@ -21,7 +21,7 @@ const TARGET_ID_RE = /^p_[a-f0-9]{64}$/;
 const WATCH_ID_RE = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 const HEX_RE = /^[a-f0-9]{64}$/;
-const STATUS = new Set(["active", "rollover_requested", "stopping", "terminal_confirmed", "starting"]);
+const STATUS = new Set(["active", "rollover_requested", "rebind_required", "stopping", "terminal_confirmed", "starting"]);
 const STATE_KEYS = Object.freeze([
   "activation_receipt_digest", "completed_cycles", "created_at", "generation_id", "host_handle_digest",
   "last_completed_cycle", "model_visible_bytes", "parent_epoch_id", "pending_reservation", "previous_terminal_receipt_digest",
@@ -134,6 +134,37 @@ export async function requestGenerationStop({ stateRoot, targetId, watchId }, de
   });
 }
 
+export async function authorizeGenerationRebind({ stateRoot, targetId, watchId, expectedGenerationId }, dependencies = {}) {
+  validateTargetId(targetId); validateWatchId(watchId); requireDigest(expectedGenerationId, "expected generation ID");
+  const paths = await requirePaths(stateRoot, targetId);
+  return withGenerationTransaction(paths, { stateRoot, targetId, watchId }, dependencies, async () => {
+    const state = await requireState(paths.statePath);
+    requireWatch(state, watchId);
+    if (state.generation_id !== expectedGenerationId) fail("E_GENERATION_REBIND_IDENTITY_CHANGED", "rebind対象generationが変化しました");
+    if (state.status === "rebind_required") return publicState(state);
+    if (state.status !== "active") fail("E_GENERATION_REBIND_TRANSITION_INVALID", "active generationだけをrebind認可できます");
+    if (state.pending_reservation !== null) fail("E_GENERATION_REBIND_OPERATION_PENDING", "pending model reservationがあるgenerationはrebindできません");
+    const next = transition(state, { status: "rebind_required", rollover_reason: "parent_rebind" }, dependencies.now);
+    await atomicReplacePrivateFile(paths.statePath, serialize(next));
+    return publicState(next);
+  });
+}
+
+export async function requestGenerationRebindStop({ stateRoot, targetId, watchId, expectedGenerationId }, dependencies = {}) {
+  validateTargetId(targetId); validateWatchId(watchId); requireDigest(expectedGenerationId, "expected generation ID");
+  const paths = await requirePaths(stateRoot, targetId);
+  return withGenerationTransaction(paths, { stateRoot, targetId, watchId }, dependencies, async () => {
+    const state = await requireState(paths.statePath);
+    requireWatch(state, watchId);
+    if (state.generation_id !== expectedGenerationId) fail("E_GENERATION_REBIND_IDENTITY_CHANGED", "rebind停止対象generationが変化しました");
+    if (state.status === "stopping" && state.rollover_reason === "parent_rebind") return publicState(state);
+    if (state.status !== "rebind_required") fail("E_GENERATION_REBIND_TRANSITION_INVALID", "rebind requiredだけをstoppingへ進められます");
+    const next = transition(state, { status: "stopping" }, dependencies.now);
+    await atomicReplacePrivateFile(paths.statePath, serialize(next));
+    return publicState(next);
+  });
+}
+
 export async function confirmGenerationTerminal({ stateRoot, targetId, watchId, terminalReceipt }, dependencies = {}) {
   validateTargetId(targetId); validateWatchId(watchId);
   const paths = await requirePaths(stateRoot, targetId);
@@ -156,13 +187,68 @@ export async function beginNextGeneration({ stateRoot, targetId, watchId }, depe
   return withGenerationTransaction(paths, { stateRoot, targetId, watchId }, dependencies, async () => {
     const state = await requireState(paths.statePath);
     requireWatch(state, watchId);
-    if (state.status === "starting") return publicState(state);
-    if (state.status !== "terminal_confirmed") fail("E_GENERATION_TRANSITION_INVALID", "terminal confirmed前に次generationを開始できません");
+    if (state.status === "starting") {
+      if (state.sequence > 1) return publicState(state);
+      fail("E_GENERATION_TRANSITION_INVALID", "parent rebind startingをplanned rolloverとして回収できません");
+    }
+    if (state.status !== "terminal_confirmed" || !["completed_cycles", "model_visible_bytes"].includes(state.rollover_reason)) fail("E_GENERATION_TRANSITION_INVALID", "planned rolloverのterminal confirmed前に次generationを開始できません");
     const sequence = state.sequence + 1;
     const next = validateGenerationState({
       ...state, generation_id: generationId(state.watch_id, state.parent_epoch_id, sequence), sequence, status: "starting", rollover_reason: null,
       host_handle_digest: null, activation_receipt_digest: null, previous_terminal_receipt_digest: state.terminal_receipt_digest,
       terminal_receipt_digest: null, completed_cycles: 0, model_visible_bytes: 0, pending_reservation: null, last_completed_cycle: null,
+      updated_at: nextTime(state, dependencies.now),
+    });
+    await atomicReplacePrivateFile(paths.statePath, serialize(next));
+    return publicState(next);
+  });
+}
+
+export async function beginReboundGeneration({
+  stateRoot,
+  targetId,
+  watchId,
+  nextProvider,
+  parentThreadSha256,
+  expectedFromProvider,
+  expectedFromGenerationId,
+  expectedFromParentEpochId,
+}, dependencies = {}) {
+  validateTargetId(targetId); validateWatchId(watchId); validateIdentity({ targetId, watchId, provider: nextProvider });
+  validateIdentity({ targetId, watchId, provider: expectedFromProvider });
+  requireHex(parentThreadSha256, "parent thread digest");
+  requireDigest(expectedFromGenerationId, "expected generation ID");
+  requireDigest(expectedFromParentEpochId, "expected parent epoch ID");
+  const paths = await requirePaths(stateRoot, targetId);
+  return withGenerationTransaction(paths, { stateRoot, targetId, watchId, provider: expectedFromProvider }, dependencies, async () => {
+    const state = await requireState(paths.statePath);
+    requireWatch(state, watchId);
+    const nextParentEpochId = parentEpoch(nextProvider, parentThreadSha256);
+    if (state.status === "starting" && state.sequence === 1 && state.provider === nextProvider &&
+        state.parent_epoch_id === nextParentEpochId && state.previous_terminal_receipt_digest !== null) return publicState(state);
+    if (state.generation_id !== expectedFromGenerationId || state.parent_epoch_id !== expectedFromParentEpochId || state.provider !== expectedFromProvider) {
+      fail("E_GENERATION_REBIND_IDENTITY_CHANGED", "rebind元generation identityが変化しました");
+    }
+    if (state.status !== "terminal_confirmed" || state.rollover_reason !== "parent_rebind") {
+      fail("E_GENERATION_REBIND_TRANSITION_INVALID", "rebind terminal confirmed前にnew epochを開始できません");
+    }
+    if (nextParentEpochId === state.parent_epoch_id) fail("E_GENERATION_REBIND_EPOCH_UNCHANGED", "同じparent epochへrebindできません");
+    const next = validateGenerationState({
+      ...state,
+      provider: nextProvider,
+      parent_epoch_id: nextParentEpochId,
+      generation_id: generationId(state.watch_id, nextParentEpochId, 1),
+      sequence: 1,
+      status: "starting",
+      rollover_reason: null,
+      host_handle_digest: null,
+      activation_receipt_digest: null,
+      previous_terminal_receipt_digest: state.terminal_receipt_digest,
+      terminal_receipt_digest: null,
+      completed_cycles: 0,
+      model_visible_bytes: 0,
+      pending_reservation: null,
+      last_completed_cycle: null,
       updated_at: nextTime(state, dependencies.now),
     });
     await atomicReplacePrivateFile(paths.statePath, serialize(next));
@@ -194,21 +280,25 @@ export function validateGenerationState(state) {
   validateIdentity(state); requireDigest(state.parent_epoch_id, "parent epoch ID"); requireDigest(state.generation_id, "generation ID");
   if (!Number.isSafeInteger(state.sequence) || state.sequence < 1 || !STATUS.has(state.status)) invalid("generation lifecycleが不正です");
   if (state.generation_id !== generationId(state.watch_id, state.parent_epoch_id, state.sequence)) invalid("generation IDがidentityと一致しません");
-  if (state.rollover_reason !== null && !["completed_cycles", "model_visible_bytes"].includes(state.rollover_reason)) invalid("rollover reasonが不正です");
+  if (state.rollover_reason !== null && !["completed_cycles", "model_visible_bytes", "parent_rebind"].includes(state.rollover_reason)) invalid("rollover reasonが不正です");
   for (const field of ["activation_receipt_digest", "terminal_receipt_digest", "previous_terminal_receipt_digest", "host_handle_digest"]) if (state[field] !== null) requireDigest(state[field], field);
   if (!Number.isSafeInteger(state.completed_cycles) || state.completed_cycles < 0 || state.completed_cycles > GENERATION_MAX_COMPLETED_CYCLES) invalid("completed cyclesが不正です");
   validateBytes(state.model_visible_bytes);
   validateReservation(state.pending_reservation, true); validateCompleted(state.last_completed_cycle, true);
   timestamp(state.created_at); timestamp(state.updated_at); if (Date.parse(state.updated_at) < Date.parse(state.created_at)) invalid("generation clockが後退しています");
-  if (state.sequence === 1 ? state.previous_terminal_receipt_digest !== null : state.previous_terminal_receipt_digest === null) invalid("generation sequenceとprevious terminalが一致しません");
+  if (state.sequence > 1 && state.previous_terminal_receipt_digest === null) invalid("generation sequenceとprevious terminalが一致しません");
   if (state.completed_cycles === 0 ? state.last_completed_cycle !== null || state.model_visible_bytes !== 0 : state.last_completed_cycle === null) invalid("completed cyclesとbudget receiptが一致しません");
   if (state.last_completed_cycle !== null && state.last_completed_cycle.model_visible_bytes > state.model_visible_bytes) invalid("last completed cycleが累積budgetを超えています");
   if (state.pending_reservation !== null && state.model_visible_bytes + state.pending_reservation.model_visible_bytes > GENERATION_MAX_MODEL_VISIBLE_BYTES) invalid("pending reservationが累積budgetを超えています");
   if (state.pending_reservation !== null && state.status !== "active") invalid("pending reservationはactiveだけに保存できます");
   if (state.status === "active") {
     if (state.rollover_reason !== null || state.host_handle_digest === null || state.activation_receipt_digest === null || state.terminal_receipt_digest !== null) invalid("active generation relationshipが不正です");
-  } else if (["rollover_requested", "stopping"].includes(state.status)) {
-    if (state.rollover_reason === null || state.host_handle_digest === null || state.activation_receipt_digest === null || state.terminal_receipt_digest !== null || state.pending_reservation !== null) invalid("rollover generation relationshipが不正です");
+  } else if (state.status === "rollover_requested") {
+    if (!["completed_cycles", "model_visible_bytes"].includes(state.rollover_reason) || state.host_handle_digest === null || state.activation_receipt_digest === null || state.terminal_receipt_digest !== null || state.pending_reservation !== null) invalid("rollover generation relationshipが不正です");
+  } else if (state.status === "rebind_required") {
+    if (state.rollover_reason !== "parent_rebind" || state.host_handle_digest === null || state.activation_receipt_digest === null || state.terminal_receipt_digest !== null || state.pending_reservation !== null) invalid("rebind generation relationshipが不正です");
+  } else if (state.status === "stopping") {
+    if (state.rollover_reason === null || state.host_handle_digest === null || state.activation_receipt_digest === null || state.terminal_receipt_digest !== null || state.pending_reservation !== null) invalid("stopping generation relationshipが不正です");
   } else if (state.status === "terminal_confirmed") {
     if (state.rollover_reason === null || state.host_handle_digest === null || state.activation_receipt_digest === null || state.terminal_receipt_digest === null || state.pending_reservation !== null) invalid("terminal generation relationshipが不正です");
   } else if (state.rollover_reason !== null || state.host_handle_digest !== null || state.activation_receipt_digest !== null || state.terminal_receipt_digest !== null || state.previous_terminal_receipt_digest === null || state.completed_cycles !== 0 || state.model_visible_bytes !== 0 || state.pending_reservation !== null || state.last_completed_cycle !== null) {

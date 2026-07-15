@@ -9,6 +9,7 @@ import { acquirePrivateLock, ensureStatePath } from "../src/private-state.mjs";
 import {
   activateWatch,
   attachWatchLaunchHandle,
+  compareAndSwapWatchHostBinding,
   compareAndSwapWatchLaunchHandle,
   completeWatchStop,
   inspectWatchTransactionLock,
@@ -201,4 +202,32 @@ test("active watch handleは旧→新CASだけを許しpublic statusへraw handl
     }, { now: () => T1 }),
     expectCode("E_WATCH_LAUNCH_HANDLE_CAS_MISMATCH"),
   );
+});
+
+test("parent rebindはproviderとprivate handleを同じCASで切り替える", async () => {
+  const stateRoot = await box();
+  const starting = await reserveActiveWatch({ stateRoot, target: TARGET, provider: "claude" }, { randomUUID: () => UUID_A, now: () => T0 });
+  const oldHandle = { kind: "claude.job", value: "job-old" };
+  const nextHandle = { kind: "codex.thread", value: "11111111-1111-7111-8111-111111111111" };
+  await attachWatchLaunchHandle({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: oldHandle }, { now: () => T0 });
+  await activateWatch({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: oldHandle }, { now: () => T0 });
+  const swapped = await compareAndSwapWatchHostBinding({
+    stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id,
+    expectedProvider: "claude", expectedLaunchHandle: oldHandle,
+    nextProvider: "codex", nextLaunchHandle: nextHandle,
+  }, { now: () => T1 });
+  assert.equal(swapped.outcome, "swapped");
+  assert.equal(swapped.status.provider, "codex");
+  assert.equal("launch_handle" in swapped.status, false);
+  assert.deepEqual((await readWatchHostBinding({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id })).launch_handle, nextHandle);
+  assert.equal((await compareAndSwapWatchHostBinding({
+    stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id,
+    expectedProvider: "claude", expectedLaunchHandle: oldHandle,
+    nextProvider: "codex", nextLaunchHandle: nextHandle,
+  }, { now: () => T1 })).outcome, "already_swapped");
+  await assert.rejects(compareAndSwapWatchHostBinding({
+    stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id,
+    expectedProvider: "claude", expectedLaunchHandle: oldHandle,
+    nextProvider: "claude", nextLaunchHandle: nextHandle,
+  }), expectCode("E_WATCH_LAUNCH_HANDLE_INVALID"));
 });

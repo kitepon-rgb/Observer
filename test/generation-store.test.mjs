@@ -10,11 +10,15 @@ import {
   GENERATION_MAX_COMPLETED_CYCLES,
   GENERATION_MAX_MODEL_VISIBLE_BYTES,
   activateGeneration,
+  authorizeGenerationRebind,
   beginNextGeneration,
+  beginReboundGeneration,
   completeGenerationCycle,
   confirmGenerationTerminal,
+  generationParentEpochId,
   initializeGeneration,
   readGenerationState,
+  requestGenerationRebindStop,
   requestGenerationStop,
   reserveGenerationInput,
   validateGenerationState,
@@ -131,11 +135,75 @@ test("terminal receipt確認前には次sequenceを開始できず、confirmed�
   await assert.rejects(activateGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, readyReceipt: receipt("ready", "job-private-3") }, deps(T1)), expectCode("E_GENERATION_ACTIVATION_CONFLICT"));
 });
 
+test("parent rebindは旧generationをmodel前に閉じnew epoch sequence 1だけを開始する", async () => {
+  const stateRoot = await box();
+  const initial = await initialize(stateRoot);
+  const authorized = await authorizeGenerationRebind({
+    stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, expectedGenerationId: initial.generation_id,
+  }, deps(T1));
+  assert.equal(authorized.status, "rebind_required");
+  assert.equal(authorized.rollover_reason, "parent_rebind");
+  await assert.rejects(
+    reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: 1 }, deps(T1)),
+    expectCode("E_GENERATION_TRANSITION_INVALID"),
+  );
+  await requestGenerationRebindStop({
+    stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, expectedGenerationId: initial.generation_id,
+  }, deps(T1));
+  await confirmGenerationTerminal({
+    stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, terminalReceipt: receipt("stopped"),
+  }, deps(T1));
+  await assert.rejects(beginNextGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID }, deps(T1)), expectCode("E_GENERATION_TRANSITION_INVALID"));
+  const nextThread = "f".repeat(64);
+  const input = {
+    stateRoot,
+    targetId: TARGET_ID,
+    watchId: WATCH_ID,
+    nextProvider: "codex",
+    parentThreadSha256: nextThread,
+    expectedFromProvider: "claude",
+    expectedFromGenerationId: initial.generation_id,
+    expectedFromParentEpochId: initial.parent_epoch_id,
+  };
+  const starting = await beginReboundGeneration(input, deps(T1));
+  assert.equal(starting.status, "starting");
+  assert.equal(starting.provider, "codex");
+  assert.equal(starting.sequence, 1);
+  assert.equal(starting.parent_epoch_id, generationParentEpochId("codex", nextThread));
+  assert.notEqual(starting.generation_id, initial.generation_id);
+  await assert.rejects(beginNextGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID }, {
+    now: () => T1,
+    readWatchStatus: async () => ({ provider: "codex", watch_id: WATCH_ID, target_id: TARGET_ID, status: "active" }),
+  }), expectCode("E_GENERATION_TRANSITION_INVALID"));
+  assert.deepEqual(await beginReboundGeneration(input, deps(T1)), starting);
+  const codexReady = {
+    schema: "observer.host_receipt.v1", provider: "codex", watch_id: WATCH_ID, target_id: TARGET_ID, outcome: "ready",
+    handle: { kind: "codex.thread", value: "11111111-1111-7111-8111-111111111111" },
+  };
+  const active = await activateGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, readyReceipt: codexReady }, {
+    now: () => T1,
+    readWatchStatus: async () => ({ provider: "codex", watch_id: WATCH_ID, target_id: TARGET_ID, status: "active" }),
+  });
+  assert.equal(active.status, "active");
+  assert.equal(active.sequence, 1);
+  assert.equal(active.previous_terminal_receipt_digest !== null, true);
+});
+
+test("parent rebindはpending model reservationを正常終了へ丸めない", async () => {
+  const stateRoot = await box();
+  const initial = await initialize(stateRoot);
+  await reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: 1 }, deps(T1));
+  await assert.rejects(authorizeGenerationRebind({
+    stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, expectedGenerationId: initial.generation_id,
+  }, deps(T1)), expectCode("E_GENERATION_REBIND_OPERATION_PENDING"));
+});
+
 test("generation identity、status relationship、invalid timestampをfail closedで拒否する", async () => {
   const stateRoot = await box();
   const state = await initialize(stateRoot);
   assert.throws(() => validateGenerationState({ ...state, generation_id: `sha256:${"f".repeat(64)}` }), expectCode("E_GENERATION_STATE_INVALID"));
   assert.throws(() => validateGenerationState({ ...state, rollover_reason: "completed_cycles" }), expectCode("E_GENERATION_STATE_INVALID"));
+  assert.throws(() => validateGenerationState({ ...state, status: "rollover_requested", rollover_reason: "parent_rebind", pending_reservation: null }), expectCode("E_GENERATION_STATE_INVALID"));
   assert.throws(() => validateGenerationState({ ...state, created_at: "not-a-time" }), expectCode("E_GENERATION_STATE_INVALID"));
   assert.throws(() => validateGenerationState({ ...state, model_visible_bytes: 1 }), expectCode("E_GENERATION_STATE_INVALID"));
   assert.throws(() => validateGenerationState({
