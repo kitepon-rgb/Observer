@@ -548,6 +548,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     Codexのcompleted cycleからsemantic decision、Mailbox、parent Stopまでを貫通する。silence、suppression、
     crash replay、重複、誤配送、claim失敗をexact-once契約へ収束させ、Claudeはstate変更前の
     `provider_unavailable`だけを受け入れる（[ADR 0092](adr/0092-host-neutral-core-e2e-contract.md)）。
+    - [ ] provider journal cleanup後・generic applied前のcrash replayで、production callbackが
+      generic completedのprovider receipt／output digestをcleanup evidenceへ渡さず永久停止する欠陥を
+      [ADR 0093](adr/0093-provider-cleanup-replay-binding.md)どおり補正する。
   - [ ] **P5-1b live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
     65秒超wait、実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。
 
