@@ -255,6 +255,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               - provider journal coreとfake public-surface fixtureを先に受け入れるが、この時点では本TODOを閉じない。
                 現行profileへObserver所有hookだけを注入するhost adapter接続、Codex item baseline、
                 両host session／turn相関、Supervisorの`complete -> provider cleanup -> apply`を続けて実装する。
+                - [x] provider journal coreをcommit `4443ff9`で追加し、両host合計focused 10/10を通して
+                  [ADR 0056](adr/0056-provider-result-journal-core-acceptance.md)で受け入れた。
+                - [x] Supervisorを`completeModelOperation -> cleanupProviderOperation -> applyCycle`へ接続し、
+                  generic completed recoveryとcleanup fail-closedをcommit `3600876`、focused 26/26、
+                  [ADR 0057](adr/0057-supervisor-provider-cleanup-acceptance.md)で固定した。
               - Claude job `sessionId`／Stop `session_id`の一致、Codex hook trustとin-progress item再読はlive H gateで
                 version固定し、未実証をproduction対応済みにしない。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする

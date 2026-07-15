@@ -121,6 +121,11 @@ exactな`agentMessage` itemだけを再読する。Claudeはbackground job IDと
 result captureを抑止せず、continuation再発行の制御だけに使う。Claude terminal後の
 `logs`、transcript、private provider state、handle欠損時の別turn／別job／新規requestをfallbackに使わない。
 provider journalが欠ける場合は結果不明のまま止め、二重model実行を避ける。
+provider completedはgeneric model operationへcanonical outputを耐久化した後、raw outputを含まない
+`cleanup_only` receiptでprovider journalをcleanupし、exactな
+`observer.model_operation_cleanup.v1 / cleaned`を確認してからだけcycle applyへ進む。
+順序は`completeModelOperation -> cleanupProviderOperation -> applyCycle`とし、cleanup失敗を
+apply成功へ丸めない。generic completedからのrecoveryでも同じcleanupを再実行する。
 
 親の明示起動契約は[ADR 0002](adr/0002-explicit-parent-launch.md)、Codex hostの耐久境界は
 [ADR 0018](adr/0018-codex-host-runtime-boundary.md)を正本とする。
