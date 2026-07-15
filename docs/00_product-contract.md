@@ -21,6 +21,7 @@ Observerは第二の親ではない。
 - 問題がなければ沈黙する。
 - Observerは親と同じprovider familyで動き、近い思考様式と同じアプリのUXを保つ伴走者である。
 - Observerは毎turnへ反証を打ち込む監査官ではない。独立反証やPhase監査は別役割が担う。
+- Observerは利用者の明示指示を受けた親だけが起動し、暗黙には起動しない。
 
 ---
 
@@ -68,6 +69,19 @@ observer watch /absolute/path/to/project
 - 同時に複数親が活動する場合の競合解決はv1の契約外とする。
 
 DBファイル自体のmtime、`sessions.updated_at`、`bodies`の件数を親選択へ使わない。Codexはrolloutの`task_complete`、ClaudeはPhase 0で実hostから確定した完了証拠だけを使い、Throughlineが返すhost-bound cursorと完了時刻から現在親を解決する。
+
+### 3.1 起動と停止
+
+- 利用者が現在の親へ明示的に起動を依頼した時だけ、親がObserverを起動する。
+- Codex親はCodex Observer、Claude親はClaude Observerを各hostの正式なbackground／child入口から起動する。
+- install、SessionStart、project open、Throughline更新を契機に自動起動しない。
+- 親はprovider childを起動する前に、Observer所有stateへproject target単位のactive watchを確保する。
+- 一targetでactive watchは一つだけとし、二重起動は`already_active`でfail closedにする。後勝ちtakeoverしない。
+- 親threadが再作成されても、起動済みObserverが確定turnを追跡し、別Observerを自動追加しない。
+- 利用者が親へ明示的に停止を依頼した時は、親がchildを停止してactive watchを閉じる。
+- fault時は継続と自動再起動を止め、親が原因を利用者へ報告する。
+
+正本は[ADR 0002](adr/0002-explicit-parent-launch.md)とする。
 
 ---
 
@@ -239,6 +253,7 @@ v1のsupported platformはmacOSとする。
 ```text
 ~/Library/Application Support/Observer/
   targets/
+  watches/
   mailboxes/
 ```
 
@@ -300,6 +315,8 @@ at-most-once advisory delivery
 ## 11. v1非目標・廃案
 
 - Observerを監視対象プロジェクトと同じフォルダで起動する。
+- install、SessionStart、project openによるObserverの暗黙起動。
+- 同一targetのactive watchを後勝ちで奪う、または二重起動する。
 - Mailboxをgit common dirへ置く。
 - 利用者が固定の親session IDやControl IDを指定する。
 - ObserverがThroughlineのDB、WAL、mtimeを直接監視する。
@@ -325,3 +342,4 @@ at-most-once advisory delivery
 8. 進行中turnを完了turnとして監査しない。
 9. Observerを親と異なるproviderへ自動配置しない。
 10. Observerを継続的な反証役または一般Workerとして扱わない。
+11. 利用者の明示指示なしにObserverを起動または自動再起動しない。

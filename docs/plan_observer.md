@@ -58,7 +58,12 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
   - 成果物: Codex親→Codex Observer、Claude親→Claude Observerという同provider契約と、継続的反証ではない伴走者契約。
   - 完了条件: 一般Workerのrate-aware配置、異社相談役、Phase反証とObserverを文書上で分離する。
 
-**Gate:** P0-1〜P0-7を完了済み。Claude adapterはThroughline Stop receiptとbackground job handle契約から実装できる。
+- [x] **P0-8 Observerの起動責任とlifecycleを固定する。**
+  - 成果物: ユーザー明示指示、親launcher、同provider、二重起動拒否、明示停止、fault停止の契約。
+  - 完了条件: 暗黙起動と自動再起動を禁止し、一target一watchの所有境界を固定する。
+  - 裁定: [ADR 0002](adr/0002-explicit-parent-launch.md)。
+
+**Gate:** P0-1〜P0-8を完了済み。Claude adapterはThroughline Stop receiptとbackground job handle契約から実装できる。
 
 ---
 
@@ -94,15 +99,18 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
   - 完了条件: 同じprojectを安定したtargetへ解決し、別projectと混同せず、working treeを汚さない。
   - 実装: canonical pathのSHA-256からtarget IDを生成し、macOSの中央stateへ0700/0600でatomic登録する。相対path、symlink state、不正permission、非macOS defaultをfail closedで拒否する。
 
-- [ ] **P2-3 最新親スレッド解決を実装する。**
+- [x] **P2-3 最新親スレッド解決を実装する。**
   - 成果物: Throughlineのhost-bound確定turn時刻から現在親とhostを選ぶresolver。
   - 完了条件: 親AからBへのthread切替と、Claude／Codex間のhost切替fixtureで、Bの最初の確定turn後にだけ追跡先がBへ切り替わる。複数活動親はfail closedにする。
   - v1境界: [ADR 0001](adr/0001-parent-resolution-boundary.md)。一般的なactive leaseをmtime／PID／TTLで
     推測せず、一project一活動親を前提にする。Throughlineが返す`ambiguous_parent`はfail closedにする。
+  - 実装: hash-only parent state、snapshot／delta／thread／host切替、cursor連結、pagination transaction、
+    `projection_pending`／`ambiguous_parent`／`resync_required`のfail-closed境界を実装した。
+  - 検証: `node --test test/parent-resolver.test.mjs` 5/5 PASS。commit `91e51bd`、Control revision 8。
 
 - [ ] **P2-4 一時間wait loopとcursor回復を実装する。**
-  - 成果物: host-neutralな`observer watch <absolute-project-root>`と、Claude／Codex adapterでchanged / timeout / restartを処理する監視loop。
-  - 完了条件: timeout時は定型報告だけでDoneし、同じturn内の次監視サイクルで同じcursorから再待機し、停止中の更新も回収する。transport / schema / state failureではfaultedになり、Stop continuationを繰り返さない。
+  - 成果物: host-neutralな`observer watch <absolute-project-root>`、active watch transaction、親別launcherと、Claude／Codex adapterでchanged / timeout / restartを処理する監視loop。
+  - 完了条件: ユーザー明示指示を受けた親だけが同provider Observerを一体起動する。timeout時は定型報告だけでDoneし、同じturn内の次監視サイクルで同じcursorから再待機し、停止中の更新も回収する。二重起動、transport / schema / state failureではfail closedまたはfaultedになり、takeover、自動再起動、Stop continuationを繰り返さない。
 
 - [ ] **P2-5 read-only境界を強制する。**
   - 成果物: project read-only、Observer state / Mailbox write-onlyの実行profileと拒否test。
@@ -193,3 +201,4 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
 8. 配送後は本文を削除し、boundedなdigest-only receiptだけを残す。
 9. Claude／Codexの親Stop hook adapterはMailboxなしで高速に終了し、外部LLM、network、long-pollへ同期依存しない。
 10. E2E、fault injection、installer、verify、rollback、full CI、最終監査、knowledge returnが完了する。
+11. 利用者の明示指示を受けた親だけが同provider Observerを起動し、一targetで二重起動しない。
