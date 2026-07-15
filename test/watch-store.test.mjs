@@ -8,10 +8,12 @@ import { ObserverError } from "../src/observer-error.mjs";
 import { acquirePrivateLock, ensureStatePath } from "../src/private-state.mjs";
 import {
   activateWatch,
+  attachWatchLaunchHandle,
   completeWatchStop,
   inspectWatchTransactionLock,
   readWatchStatus,
   recordWatchFaultAfterChildExit,
+  recordWatchFaultBeforeChildStart,
   recoverWatchTransactionLock,
   requestWatchStop,
   reserveActiveWatch,
@@ -49,13 +51,35 @@ test("provider childより先にstartingを予約し、active watchの二重起�
   );
 });
 
-test("activateとstatusはprivate launch handleを公開せず、watch IDのCASを要求する", async () => {
+test("launch handleをactive前に耐久化し、公開statusへ出さずwatch IDとhandleのCASを要求する", async () => {
   const stateRoot = await box();
   const starting = await reserveActiveWatch({ stateRoot, target: TARGET, provider: "claude" }, { randomUUID: () => UUID_A, now: () => T0 });
   await assert.rejects(
     activateWatch({ stateRoot, targetId: TARGET.targetId, watchId: `w_${UUID_B}`, launchHandle: { kind: "claude.job", value: "job-secret" } }, { now: () => T1 }),
     expectCode("E_WATCH_STATE_CHANGED"),
   );
+  const launching = await attachWatchLaunchHandle({
+    stateRoot,
+    targetId: TARGET.targetId,
+    watchId: starting.watch_id,
+    launchHandle: { kind: "claude.job", value: "job-private-1" },
+  }, { now: () => T1 });
+  assert.equal(launching.status, "launching");
+  assert.equal("launch_handle" in launching, false);
+  await assert.rejects(
+    activateWatch({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: { kind: "claude.job", value: "other-job" } }, { now: () => T1 }),
+    expectCode("E_WATCH_LAUNCH_HANDLE_MISMATCH"),
+  );
+  await assert.rejects(
+    requestWatchStop({
+      stateRoot,
+      targetId: TARGET.targetId,
+      watchId: starting.watch_id,
+      expectedLaunchHandle: { kind: "claude.job", value: "other-job" },
+    }, { now: () => T1 }),
+    expectCode("E_WATCH_LAUNCH_HANDLE_MISMATCH"),
+  );
+  assert.equal((await readWatchStatus({ stateRoot, targetId: TARGET.targetId })).status, "launching");
   const active = await activateWatch({
     stateRoot,
     targetId: TARGET.targetId,
@@ -70,6 +94,7 @@ test("activateとstatusはprivate launch handleを公開せず、watch IDのCAS�
 test("stopはstoppingを保持して再試行でき、確認後だけhandleを消してstoppedへ閉じる", async () => {
   const stateRoot = await box();
   const starting = await reserveActiveWatch({ stateRoot, target: TARGET, provider: "codex" }, { randomUUID: () => UUID_A, now: () => T0 });
+  await attachWatchLaunchHandle({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: { kind: "codex.agent", value: "/root/observer" } }, { now: () => T1 });
   await activateWatch({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: { kind: "codex.agent", value: "/root/observer" } }, { now: () => T1 });
   const stop = await requestWatchStop({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id }, { now: () => T1 });
   assert.equal(stop.status.status, "stopping");
@@ -84,7 +109,7 @@ test("stopはstoppingを保持して再試行でき、確認後だけhandleを�
 test("terminal stateからの再startは観測済みprevious watch IDを要求する", async () => {
   const stateRoot = await box();
   const first = await reserveActiveWatch({ stateRoot, target: TARGET, provider: "codex" }, { randomUUID: () => UUID_A, now: () => T0 });
-  await recordWatchFaultAfterChildExit({ stateRoot, targetId: TARGET.targetId, watchId: first.watch_id, faultCode: "E_CYCLE_FAILED" }, { now: () => T1 });
+  await recordWatchFaultBeforeChildStart({ stateRoot, targetId: TARGET.targetId, watchId: first.watch_id, faultCode: "E_CYCLE_FAILED" }, { now: () => T1 });
   await assert.rejects(
     reserveActiveWatch({ stateRoot, target: TARGET, provider: "codex" }, { randomUUID: () => UUID_B, now: () => T1 }),
     expectCode("E_WATCH_STATE_CHANGED"),
@@ -102,16 +127,34 @@ test("faultは固定codeだけを残し、clock rollbackと不正handleを拒否
     expectCode("E_WATCH_LAUNCH_HANDLE_INVALID"),
   );
   await assert.rejects(
-    recordWatchFaultAfterChildExit({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, faultCode: "raw failure text" }, { now: () => T1 }),
+    recordWatchFaultBeforeChildStart({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, faultCode: "raw failure text" }, { now: () => T1 }),
     expectCode("E_WATCH_FAULT_CODE_INVALID"),
   );
   await assert.rejects(
-    recordWatchFaultAfterChildExit({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, faultCode: "E_FAILED" }, { now: () => T0 }),
+    recordWatchFaultBeforeChildStart({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, faultCode: "E_FAILED" }, { now: () => T0 }),
     expectCode("E_WATCH_CLOCK_ROLLBACK"),
   );
-  const faulted = await recordWatchFaultAfterChildExit({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, faultCode: "E_FAILED" }, { now: () => T1 });
+  const faulted = await recordWatchFaultBeforeChildStart({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, faultCode: "E_FAILED" }, { now: () => T1 });
   assert.equal(faulted.fault_code, "E_FAILED");
   assert.equal("launch_handle" in faulted, false);
+});
+
+test("handle耐久化後はpre-child faultで消せず、child exit確認用遷移だけがfaultへ閉じる", async () => {
+  const stateRoot = await box();
+  const starting = await reserveActiveWatch({ stateRoot, target: TARGET, provider: "claude" }, { randomUUID: () => UUID_A, now: () => T0 });
+  await attachWatchLaunchHandle({
+    stateRoot,
+    targetId: TARGET.targetId,
+    watchId: starting.watch_id,
+    launchHandle: { kind: "claude.job", value: "job-private-1" },
+  }, { now: () => T1 });
+  await assert.rejects(
+    recordWatchFaultBeforeChildStart({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, faultCode: "E_FAILED" }, { now: () => T1 }),
+    expectCode("E_WATCH_TRANSITION_INVALID"),
+  );
+  assert.equal((await readWatchStatus({ stateRoot, targetId: TARGET.targetId })).status, "launching");
+  const faulted = await recordWatchFaultAfterChildExit({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, faultCode: "E_FAILED" }, { now: () => T1 });
+  assert.equal(faulted.status, "faulted");
 });
 
 test("残留transaction lockは観測nonce一致時だけ明示回復する", async () => {

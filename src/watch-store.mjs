@@ -22,7 +22,7 @@ const TARGET_ID_RE = /^p_[a-f0-9]{64}$/;
 const WATCH_ID_RE = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HANDLE_KIND_RE = /^[a-z][a-z0-9._-]{0,63}$/;
 const FAULT_CODE_RE = /^E_[A-Z0-9_]{1,127}$/;
-const LIVE_STATUSES = new Set(["starting", "active", "stopping"]);
+const LIVE_STATUSES = new Set(["starting", "launching", "active", "stopping"]);
 const TERMINAL_STATUSES = new Set(["stopped", "faulted"]);
 const STATE_KEYS = [
   "created_at", "fault_code", "launch_handle", "project_root", "provider",
@@ -68,10 +68,33 @@ export async function activateWatch({ stateRoot, targetId, watchId, launchHandle
   const paths = await requireWatchPaths(stateRoot, targetId);
   return withWatchTransaction(paths.lockPath, async () => {
     const current = await requireCurrent(paths.currentPath);
-    requireTransition(current, watchId, ["starting"]);
+    requireTransition(current, watchId, ["launching"]);
+    if (!sameLaunchHandle(current.launch_handle, launchHandle)) fail("E_WATCH_LAUNCH_HANDLE_MISMATCH", "保存済みlaunch handleが一致しません");
     const next = validateWatchState({
       ...current,
       status: "active",
+      updated_at: nextTimestamp(current, dependencies.now),
+    });
+    await atomicReplacePrivateFile(paths.currentPath, serialize(next));
+    return publicWatchStatus(next);
+  });
+}
+
+export async function attachWatchLaunchHandle({ stateRoot, targetId, watchId, launchHandle }, dependencies = {}) {
+  validateTargetId(targetId);
+  validateWatchId(watchId);
+  validateLaunchHandle(launchHandle);
+  const paths = await requireWatchPaths(stateRoot, targetId);
+  return withWatchTransaction(paths.lockPath, async () => {
+    const current = await requireCurrent(paths.currentPath);
+    requireTransition(current, watchId, ["starting", "launching"]);
+    if (current.status === "launching") {
+      if (!sameLaunchHandle(current.launch_handle, launchHandle)) fail("E_WATCH_LAUNCH_HANDLE_MISMATCH", "保存済みlaunch handleが一致しません");
+      return publicWatchStatus(current);
+    }
+    const next = validateWatchState({
+      ...current,
+      status: "launching",
       updated_at: nextTimestamp(current, dependencies.now),
       launch_handle: structuredClone(launchHandle),
     });
@@ -80,13 +103,17 @@ export async function activateWatch({ stateRoot, targetId, watchId, launchHandle
   });
 }
 
-export async function requestWatchStop({ stateRoot, targetId, watchId }, dependencies = {}) {
+export async function requestWatchStop({ stateRoot, targetId, watchId, expectedLaunchHandle = null }, dependencies = {}) {
   validateTargetId(targetId);
   validateWatchId(watchId);
+  if (expectedLaunchHandle !== null) validateLaunchHandle(expectedLaunchHandle);
   const paths = await requireWatchPaths(stateRoot, targetId);
   return withWatchTransaction(paths.lockPath, async () => {
     const current = await requireCurrent(paths.currentPath);
-    requireTransition(current, watchId, ["active", "stopping"]);
+    requireTransition(current, watchId, ["launching", "active", "stopping"]);
+    if (expectedLaunchHandle !== null && !sameLaunchHandle(current.launch_handle, expectedLaunchHandle)) {
+      fail("E_WATCH_LAUNCH_HANDLE_MISMATCH", "保存済みlaunch handleが一致しません");
+    }
     if (current.status === "stopping") {
       return { status: publicWatchStatus(current), launchHandle: structuredClone(current.launch_handle) };
     }
@@ -107,11 +134,16 @@ export async function completeWatchStop({ stateRoot, targetId, watchId }, depend
 }
 
 export async function recordWatchFaultAfterChildExit({ stateRoot, targetId, watchId, faultCode }, dependencies = {}) {
-  if (typeof faultCode !== "string" || !FAULT_CODE_RE.test(faultCode)) {
-    fail("E_WATCH_FAULT_CODE_INVALID", "watch fault codeが不正です");
-  }
+  validateFaultCode(faultCode);
   return terminalTransition({
-    stateRoot, targetId, watchId, expectedStatuses: ["starting", "active", "stopping"], status: "faulted", faultCode,
+    stateRoot, targetId, watchId, expectedStatuses: ["launching", "active", "stopping"], status: "faulted", faultCode,
+  }, dependencies);
+}
+
+export async function recordWatchFaultBeforeChildStart({ stateRoot, targetId, watchId, faultCode }, dependencies = {}) {
+  validateFaultCode(faultCode);
+  return terminalTransition({
+    stateRoot, targetId, watchId, expectedStatuses: ["starting"], status: "faulted", faultCode,
   }, dependencies);
 }
 
@@ -152,7 +184,7 @@ export function validateWatchState(state) {
   validateTimestamp(state.created_at, "created_at");
   validateTimestamp(state.updated_at, "updated_at");
   if (Date.parse(state.updated_at) < Date.parse(state.created_at)) fail("E_WATCH_STATE_SCHEMA", "watch timestampの順序が不正です");
-  if (["active", "stopping"].includes(state.status)) validateLaunchHandle(state.launch_handle);
+  if (["launching", "active", "stopping"].includes(state.status)) validateLaunchHandle(state.launch_handle);
   else if (state.launch_handle !== null) fail("E_WATCH_STATE_SCHEMA", "このwatch statusにはlaunch handleを保存できません");
   if (state.status === "faulted") {
     if (typeof state.fault_code !== "string" || !FAULT_CODE_RE.test(state.fault_code)) fail("E_WATCH_STATE_SCHEMA", "faulted watchに固定fault codeがありません");
@@ -266,6 +298,10 @@ function requireTransition(current, watchId, expectedStatuses) {
   if (!expectedStatuses.includes(current.status)) fail("E_WATCH_TRANSITION_INVALID", "現在statusから要求されたwatch遷移はできません");
 }
 
+function sameLaunchHandle(left, right) {
+  return left?.kind === right?.kind && left?.value === right?.value;
+}
+
 function validateTarget(target) {
   requirePlainObject(target, "project target", "E_WATCH_TARGET_INVALID");
   if (target.schema !== TARGET_SCHEMA || !TARGET_ID_RE.test(target.targetId) || !isAbsolute(target.projectRoot)) {
@@ -287,6 +323,10 @@ function validateWatchId(watchId) {
 
 function validateOptionalWatchId(watchId, field) {
   if (watchId !== null && (typeof watchId !== "string" || !WATCH_ID_RE.test(watchId))) fail("E_WATCH_ID_INVALID", `${field}が不正です`);
+}
+
+function validateFaultCode(faultCode) {
+  if (typeof faultCode !== "string" || !FAULT_CODE_RE.test(faultCode)) fail("E_WATCH_FAULT_CODE_INVALID", "watch fault codeが不正です");
 }
 
 function validateLaunchHandle(handle) {
