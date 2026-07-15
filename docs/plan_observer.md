@@ -575,6 +575,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 - [ ] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
   - 完了条件: 空Mailboxと通常waitが開発体験を阻害せず、clean環境で導入・撤去を再現できる。
+  - [ ] **P5-2a clean環境installer／verify／rollback契約を閉じる**
+    （[ADR 0099](adr/0099-clean-install-verify-rollback-contract.md)）。
+    - [ ] versioned製品manifest、runtime package files、sanitized `observer diagnostics`を実装する。
+    - [ ] 4 binをexecutableへ揃え、package tamper、platform、Node、MCP／hook binary契約をfocused testで固定する。
+    - [ ] dotagentsの隔離HOME／npm prefixでinstall→reinstall→verify→rollbackとhook adapter dry-runを通す。
+    - [ ] actual HOME apply、hook trust、live host、credential、publish／pushはHまたは後続gateへ残す。
   - [x] project-ownedな`.codex-sidecar.yml`を追加し、read-only presetと隔離worktree writer、
     Observer製品面だけのpath allowlist、明示model policyを正規dry-runで検証した。
     - `codex-sidecar diagnostics --project .`: `status=ok`。
