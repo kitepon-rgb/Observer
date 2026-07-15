@@ -201,8 +201,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
           （[ADR 0038](adr/0038-generation-host-rollover-transaction.md)、
           [ADR 0040](adr/0040-generation-host-rollover-core-acceptance.md)）。
         - [ ] 上記record-first coreをClaude／Codex固有のterminal stop／次generation start commandへ接続する。
-          - [ ] raw handleを出さないrecovery contextと、watchを再遷移させないCodex generation runtimeを先行実装する
-            （[ADR 0042](adr/0042-generation-provider-binding-recovery-contract.md)）。
+          - [x] raw handleを出さないrecovery contextと、watchを再遷移させないCodex generation runtimeを先行実装した
+            （[ADR 0042](adr/0042-generation-provider-binding-recovery-contract.md)、
+            [ADR 0043](adr/0043-generation-recovery-surface-acceptance.md)）。
           - [ ] recovery contextを使うClaude／Codex provider bindingを実装する。
           - [ ] model request送信結果不明をhost lifecycleと別journalで回収する。
         - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
