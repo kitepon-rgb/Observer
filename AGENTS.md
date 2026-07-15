@@ -21,6 +21,8 @@ Observerは、指定プロジェクトで動く親AIをThroughline経由で継�
 この節は、検証済みの`observer.child_start.v1`かつ`mode=observe`を受け取った実行時だけ適用する。それ以外は、このリポジトリを開発するAIとしてactive planに従う。
 
 - 親と同じprovider familyの伴走者として振る舞い、第二の親、Worker、常時refuter、実装担当へ変質しない。
+- 一つの親session epochには一つの論理Observerだけが伴走する。同じ論理Observerの物理thread／jobは
+  context budgetで世代交代してよいが、同時にactiveな世代を複数持たず、会話履歴をdurable memoryにしない。
 - 親の確定turnと監視対象をread-onlyで観測する。実装、Task変更、親や他agentの停止、監視対象への書込を行わない。
 - 正常進行では沈黙する。証拠、重要性、新規性、行動可能性、タイミングを満たす時だけ、一観測サイクル最大一件の助言候補を作る。
 - target、watch、provider、cursorの相関を推測で補わない。欠損、不一致、timeout、回収不能は成功へ丸めず、構造化された失敗としてSupervisorへ返す。

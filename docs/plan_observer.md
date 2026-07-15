@@ -67,7 +67,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 - [x] **P0-8 Observerの起動責任とlifecycleを固定する。**
   - 成果物: ユーザー明示指示、親launcher、同provider、二重起動拒否、明示停止、fault停止の契約。
   - 完了条件: 暗黙起動と自動再起動を禁止し、一target一watchの所有境界を固定する。
-  - 裁定: [ADR 0002](adr/0002-explicit-parent-launch.md)。
+  - 裁定: [ADR 0002](adr/0002-explicit-parent-launch.md)。親session単位の論理Observerとcontext generationへの
+    更新は[ADR 0025](adr/0025-parent-session-observer-generation.md)を正とする。
 
 **Gate:** P0-6のdaemon／adapter crash後の結果回収が未完。host-neutral coreは先行できるが、Claude live adapterのproduction採用はblockedのまま維持する。
 
@@ -185,6 +186,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
           `codex-host-runtime`のdurable journalへ委ねる。
         - fake child processのfocused testだけをこのTODOのgateとし、実Codex process／model turnは起動しない。
         - focused gate: `node --test test/codex-process-transport.test.mjs test/codex-host-runtime.test.mjs` — 15/15 PASS。
+      - [ ] parent session epochごとに一論理Observerを束縛し、同epoch内のcontext budget到達では
+        一つの物理host generationだけをterminal確認付きで世代交代する。
+        - watch authorizationは維持し、新しいwatchやtarget別projectを生成しない。
+        - generation counter、completed cycle count、累積bounded input bytesをdurable stateに持ち、P4-2の
+          snapshot上限確定後にhard rollover thresholdを固定する。providerの非公開token推測だけに依存しない。
+        - cursor、dedupe／cooldown receipt、boundedな未解決仮説だけを引き継ぎ、raw会話／tool logは保存しない。
+        - parent rebind、planned rollover、fault recoveryを別transition／receiptにし、旧terminal不明では新世代を起動しない。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
@@ -322,3 +330,5 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 10. E2E、fault injection、installer、verify、rollback、full CI、最終監査、knowledge returnが完了する。
 11. 利用者の明示指示を受けた親だけが同provider Observerを起動し、一targetで二重起動しない。
 12. Claude／Codex ObserverはcanonicalなObserver rootを実行`cwd`とし、監視対象ごとの擬似projectやtemporary repoを作らない。
+13. 一つの親session epochには一つの論理Observerだけが伴走し、同時にactiveな物理host generationを一つへ制限する。
+    context rollover後もcursorとbounded stateを維持し、raw会話履歴を記憶装置にしない。

@@ -75,7 +75,9 @@ observer watch /absolute/path/to/project
 
 - 固定の親session IDやControl IDを利用者へ設定させない。
 - Throughline上で指定フォルダに属し、最後の確定ターン更新が最新の適格スレッドを現在の親として追う。
-- 親スレッドを作り直した場合、新しいスレッドの確定ターンが最新になった時点で自動追従する。
+- 親スレッドを作り直した場合、新しいスレッドの確定ターンが最新になった時点で同じwatchを正式にrebindする。
+- 一つの親session epoch（providerとthread digestで識別）には、一つの論理Observerだけを対応させる。
+  旧epochと新epochの論理Observerを同時にactiveにしない。
 - v1は、一プロジェクトにつき同時に活動する親は一つと仮定する。
 - v1の監視対象hostはClaudeとCodexとする。
 - Observerのmodel providerは現在親のhostと一致させる。Codex親にはCodex、Claude親にはClaudeを使う。
@@ -91,7 +93,14 @@ DBファイル自体のmtime、`sessions.updated_at`、`bodies`の件数を親�
 - install、SessionStart、project open、Throughline更新を契機に自動起動しない。
 - 親はprovider childを起動する前に、Observer所有stateへproject target単位のactive watchを確保する。
 - 一targetでactive watchは一つだけとし、二重起動は`already_active`でfail closedにする。後勝ちtakeoverしない。
-- 親threadが再作成されても、起動済みObserverが確定turnを追跡し、別Observerを自動追加しない。
+- 親threadが再作成された時は、旧論理Observerの物理host generationをterminalへ閉じてから、同じwatch上で
+  新parent epoch用の論理Observerへrebindする。新しいwatchを追加せず、旧／新Observerを並走させない。
+- 一つの論理Observerは一つ以上の物理host generationを持てる。context budget到達時は同じparent epochのまま
+  世代交代し、同時にactiveなClaude job／Codex threadは一つだけとする。
+- generation間で引き継ぐのはObserver所有のcursor、dedupe／cooldown receipt、boundedな未解決仮説だけとし、
+  raw会話履歴、prompt全文、tool logをdurable memoryとして保存しない。
+- parent rebindと計画的context rolloverは、最初の利用者明示起動で許可されたwatch lifecycleの継続であり、
+  fault／crash後の無断自動再起動とは分離する。旧generationのterminalを確認できない場合は新世代を起動せずfaultにする。
 - 利用者が親へ明示的に停止を依頼した時は、親がchildを停止してactive watchを閉じる。
 - fault時は継続と自動再起動を止め、親が原因を利用者へ報告する。
 
@@ -380,6 +389,8 @@ macOS v1のcommand pathは実在する実行可能fileであり、空白、制�
 - Observerを監視対象プロジェクトと同じフォルダで起動する。
 - install、SessionStart、project openによるObserverの暗黙起動。
 - 同一targetのactive watchを後勝ちで奪う、または二重起動する。
+- 一つの親session epochへ複数の論理Observerを対応させる、または複数の物理generationを同時にactiveにする。
+- 一つの物理host sessionをwatch終了まで無制限に延命し、会話履歴をObserverのdurable stateとして扱う。
 - Mailboxをgit common dirへ置く。
 - 利用者が固定の親session IDやControl IDを指定する。
 - ObserverがThroughlineのDB、WAL、mtimeを直接監視する。
@@ -405,5 +416,6 @@ macOS v1のcommand pathは実在する実行可能fileであり、空白、制�
 8. 進行中turnを完了turnとして監査しない。
 9. Observerを親と異なるproviderへ自動配置しない。
 10. Observerを継続的な反証役または一般Workerとして扱わない。
-11. 利用者の明示指示なしにObserverを起動または自動再起動しない。
+11. 利用者の明示指示なしに新しいwatchを起動せず、fault／crash後に自動再起動しない。
+    明示起動済みwatch内のparent rebindと計画的context rolloverは、terminal確認付きの正規lifecycleとしてのみ行う。
 12. 全hostの`cwd`をcanonicalなObserver rootへ固定し、監視対象ごとの擬似projectやtemporary repoを作らない。
