@@ -111,6 +111,10 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
 - [ ] **P2-4 一時間wait loopとcursor回復を実装する。**
   - 成果物: host-neutralな`observer watch <absolute-project-root>`、active watch transaction、親別launcherと、Claude／Codex adapterでchanged / timeout / restartを処理する監視loop。
   - 完了条件: ユーザー明示指示を受けた親だけが同provider Observerを一体起動する。timeout時は定型報告だけでDoneし、同じturn内の次監視サイクルで同じcursorから再待機し、停止中の更新も回収する。二重起動、transport / schema / state failureではfail closedまたはfaultedになり、takeover、自動再起動、Stop continuationを繰り返さない。
+  - [ ] Throughline公開CLI clientと、cursorをまだ保存しない一監視cycleを実装する（[ADR 0003](adr/0003-throughline-subprocess-cycle.md)）。
+  - [ ] `projection_pending` bounded retry、監査後のcursor atomic commit、crash recoveryを実装する。
+  - [ ] 一target一active watch transactionと明示stopを実装する。
+  - [ ] Codex／Claude親launcherと同provider child lifecycleを実装する。
 
 - [ ] **P2-5 read-only境界を強制する。**
   - 成果物: project read-only、Observer state / Mailbox write-onlyの実行profileと拒否test。
