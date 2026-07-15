@@ -1,0 +1,37 @@
+{
+  "schema": "observer.semantic_behavioral_reference.v1",
+  "outputs": [
+    {
+      "case_id": "healthy_progress",
+      "raw_output": "{\"schema\":\"observer.ai_output.v1\",\"outcome\":\"no_advisory\"}"
+    },
+    {
+      "case_id": "preference_only",
+      "raw_output": "{\"schema\":\"observer.ai_output.v1\",\"outcome\":\"no_advisory\"}"
+    },
+    {
+      "case_id": "general_advice",
+      "raw_output": "{\"schema\":\"observer.ai_output.v1\",\"outcome\":\"no_advisory\"}"
+    },
+    {
+      "case_id": "evidence_missing",
+      "raw_output": "{\"schema\":\"observer.ai_output.v1\",\"outcome\":\"no_advisory\"}"
+    },
+    {
+      "case_id": "already_addressed",
+      "raw_output": "{\"schema\":\"observer.ai_output.v1\",\"outcome\":\"no_advisory\"}"
+    },
+    {
+      "case_id": "resolved",
+      "raw_output": "{\"schema\":\"observer.ai_output.v1\",\"outcome\":\"no_advisory\"}"
+    },
+    {
+      "case_id": "material_verification_gap",
+      "raw_output": "{\"schema\":\"observer.ai_output.v1\",\"outcome\":\"advisory\",\"proposal\":{\"title\":\"必須のfocused transaction testが失敗しています\",\"body\":\"このまま完了すると受入条件を満たした証拠がありません。\",\"suggested_action\":\"失敗scopeを修正してfocused testを再実行してください。\",\"dedupe_key\":\"verification:transaction-focused\",\"severity\":\"warning\",\"category\":\"verification_gap\",\"evidence_refs\":[\"test:focused-failed\"]}}"
+    },
+    {
+      "case_id": "direct_contract_breach",
+      "raw_output": "{\"schema\":\"observer.ai_output.v1\",\"outcome\":\"advisory\",\"proposal\":{\"title\":\"credential fileがstageされています\",\"body\":\"次のrepository変更前に除外を確認しないとcredential非収録契約に反します。\",\"suggested_action\":\"stage内容を確認しcredential fileを対象外にしてください。\",\"dedupe_key\":\"acceptance:credential-file-staged\",\"severity\":\"review_required\",\"category\":\"acceptance_mismatch\",\"evidence_refs\":[\"git:credential-file-staged\"]}}"
+    }
+  ]
+}

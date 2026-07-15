@@ -52,6 +52,10 @@ test("runtime promptはroot契約、固定二結果、child startだけを一つ
   assert.match(prompt, /AGENTS\.md/);
   assert.match(prompt, /observer\.ai_output\.v1/);
   assert.match(prompt, /no_advisory/);
+  assert.match(prompt, /既定はno_advisory/);
+  assert.match(prompt, /実質的な影響/);
+  assert.match(prompt, /親が認識して具体的な対処を開始していません/);
+  assert.match(prompt, /単なる好み、別解、一般論/);
   assert.match(prompt, /助言候補は最大一件/);
   assert.match(prompt, /info \| warning \| review_required/);
   assert.match(prompt, /verification_gap/);
