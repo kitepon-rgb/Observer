@@ -519,8 +519,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     60分cooldown、severity escalation、bounded historyをhost-neutral coreへ実装する
     （[ADR 0087](adr/0087-advisory-semantic-decision-transaction.md)、
     [ADR 0088](adr/0088-advisory-semantic-decision-core-acceptance.md)）。
-  - [ ] **P4-3b cycle application integration:** acceptedだけをMailboxへexact publishし、suppressed専用result、
-    crash replay、finalization／retentionを既存model operation順序へ接続する。
+  - [x] **P4-3b cycle application integration:** acceptedだけをMailboxへexact publishし、suppressed専用result、
+    crash replay、finalization／retentionを既存model operation順序へ接続した
+    （[ADR 0089](adr/0089-advisory-semantic-cycle-integration-acceptance.md)）。
   - [ ] **P4-3c semantic behavioral eval:** materiality、actionability、semantic timing、親が対処中かを
     文字列heuristicへ落とさず、好み／一般論／対処中を`no_advisory`にするstrict eval fixtureを固定する。
     実provider採否はP4-4 H gateへ残し、runtime機械gateだけでP4-3を完了扱いしない。
