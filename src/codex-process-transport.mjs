@@ -66,6 +66,7 @@ export class CodexProcessTransport {
   #terminal = null;
   #resolveTerminal;
   #terminalPromise;
+  #terminationController = new AbortController();
 
   constructor(child, { onNotification = null } = {}) {
     validateChild(child);
@@ -102,6 +103,10 @@ export class CodexProcessTransport {
   close() {
     if (this.#closed) return;
     this.#abort("E_CODEX_TRANSPORT_CLOSED", "Codex app-server transportを明示終了しました");
+  }
+
+  get terminationSignal() {
+    return this.#terminationController.signal;
   }
 
   async closeAndWait({ terminateGraceMs = 1_000, killGraceMs = 1_000 } = {}) {
@@ -224,6 +229,7 @@ export class CodexProcessTransport {
   #abort(code, message, terminate = true) {
     if (this.#closed) return;
     this.#closed = true;
+    this.#terminationController.abort();
     const error = new ObserverError(code, message);
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();

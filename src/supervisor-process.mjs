@@ -72,6 +72,7 @@ export async function runSupervisorProcess({
         provider: initial.provider,
         pollIntervalMs,
         signal,
+        providerSignal: runtime.providerSignal,
         operation: (operationSignal) => (dependencies.runSupervisorProductionStep ?? runSupervisorProductionStep)({
           stateRoot,
           target,
@@ -101,6 +102,7 @@ export async function runSupervisorProcess({
         provider: initial.provider,
         pollIntervalMs,
         signal,
+        providerSignal: runtime.providerSignal,
         operation: (operationSignal) => (dependencies.waitForModelPoll ?? waitForModelPoll)(pollIntervalMs, operationSignal),
       }, dependencies);
       if (paused.kind === "terminal") return processResult(paused.status, initial.provider, null);
@@ -133,12 +135,17 @@ export async function recoverSupervisorProcessLock({ stateRoot, targetId, expect
   return (dependencies.recoverPrivateLock ?? recoverPrivateLock)(await processLockPath(stateRoot, targetId), expectedNonce);
 }
 
-async function runMonitoredOperation({ stateRoot, target, watchId, provider, pollIntervalMs, signal, operation }, dependencies) {
+async function runMonitoredOperation({
+  stateRoot, target, watchId, provider, pollIntervalMs, signal, providerSignal, operation,
+}, dependencies) {
   if (signal?.aborted) return { kind: "terminal", status: "cancelled" };
+  if (providerSignal.aborted) providerTerminated();
   const operationController = new AbortController();
   const monitorController = new AbortController();
   const onExternalAbort = () => operationController.abort();
+  const onProviderAbort = () => operationController.abort();
   signal?.addEventListener("abort", onExternalAbort, { once: true });
+  providerSignal.addEventListener("abort", onProviderAbort, { once: true });
   const operationPromise = Promise.resolve()
     .then(() => operation(operationController.signal))
     .then((value) => ({ kind: "operation", value }), (error) => ({ kind: "operation_error", error }));
@@ -154,7 +161,9 @@ async function runMonitoredOperation({ stateRoot, target, watchId, provider, pol
     monitorController.abort();
     await monitorPromise;
     signal?.removeEventListener("abort", onExternalAbort);
+    providerSignal.removeEventListener("abort", onProviderAbort);
     if (signal?.aborted) return { kind: "terminal", status: "cancelled" };
+    if (providerSignal.aborted) providerTerminated();
     if (winner.kind === "operation_error") throw winner.error;
     return { kind: "result", value: winner.value };
   }
@@ -162,7 +171,9 @@ async function runMonitoredOperation({ stateRoot, target, watchId, provider, pol
   operationController.abort();
   const operationOutcome = await operationPromise;
   signal?.removeEventListener("abort", onExternalAbort);
+  providerSignal.removeEventListener("abort", onProviderAbort);
   if (signal?.aborted) return { kind: "terminal", status: "cancelled" };
+  if (providerSignal.aborted) providerTerminated();
   if (winner.kind === "monitor_error") {
     if (operationOutcome.kind === "operation_error" && !isCancellation(operationOutcome.error)) {
       throw new AggregateError([winner.error, operationOutcome.error], "watch監視とSupervisor operationが失敗しました");
@@ -204,8 +215,8 @@ function terminalForWatch(watch) {
 }
 
 function validateOwnedRuntime(value) {
-  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "close,providerRuntime" ||
-      !isPlainObject(value.providerRuntime) || typeof value.close !== "function") {
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "close,providerRuntime,providerSignal" ||
+      !isPlainObject(value.providerRuntime) || !(value.providerSignal instanceof AbortSignal) || typeof value.close !== "function") {
     fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "Supervisor provider runtime所有権が不正です");
   }
   return value;
@@ -295,6 +306,10 @@ function waitForModelPoll(milliseconds, signal) {
 
 function cancelled() {
   return new ObserverError("E_THROUGHLINE_CANCELLED", "Supervisor process待機が取消されました");
+}
+
+function providerTerminated() {
+  fail("E_SUPERVISOR_PROVIDER_PROCESS_TERMINATED", "Supervisor provider processが終了しました");
 }
 
 function isCancellation(error) {

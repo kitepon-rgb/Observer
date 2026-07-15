@@ -62,7 +62,7 @@ export async function createCodexSupervisorRuntime({ runtimeRoot, codexCommand }
   try {
     transport = await (dependencies.startCodexAppServerTransport ?? startCodexAppServerTransport)({ verification }, dependencies.transportDependencies);
     if (!transport || typeof transport.request !== "function" || typeof transport.notify !== "function" ||
-        typeof transport.closeAndWait !== "function") {
+        typeof transport.closeAndWait !== "function" || !(transport.terminationSignal instanceof AbortSignal)) {
       fail("E_SUPERVISOR_CODEX_RUNTIME_INVALID", "Codex app-server transport所有権が不正です");
     }
     await (dependencies.initializeCodexObserverSession ?? initializeCodexObserverSession)({ session: transport }, dependencies.initializeDependencies);
@@ -72,6 +72,7 @@ export async function createCodexSupervisorRuntime({ runtimeRoot, codexCommand }
         runtime_root: verification.runtime_root,
         session: transport,
       },
+      providerSignal: transport.terminationSignal,
       close: () => transport.closeAndWait(),
     };
   } catch (error) {

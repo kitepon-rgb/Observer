@@ -32,12 +32,15 @@ await chmod(join(TEST_STATE_ROOT, "watches"), 0o700);
 await chmod(join(TEST_STATE_ROOT, "watches", TARGET_ID), 0o700);
 
 function request(overrides = {}) {
+  const providerController = new AbortController();
   return {
     stateRoot: TEST_STATE_ROOT,
     target: TARGET,
     watchId: WATCH_ID,
     client: CLIENT,
-    createProviderRuntime: async () => ({ providerRuntime: { provider: "codex" }, close: async () => {} }),
+    createProviderRuntime: async () => ({
+      providerRuntime: { provider: "codex" }, providerSignal: providerController.signal, close: async () => {},
+    }),
     pollIntervalMs: 100,
     ...overrides,
   };
@@ -82,7 +85,11 @@ test("timeoutとcommittedは同じruntimeで次stepへ戻り、外部cancelでcl
     signal: controller.signal,
     createProviderRuntime: async () => {
       created += 1;
-      return { providerRuntime: { provider: "codex" }, close: async () => { closed += 1; } };
+      return {
+        providerRuntime: { provider: "codex" },
+        providerSignal: new AbortController().signal,
+        close: async () => { closed += 1; },
+      };
     },
   }), value);
   assert.deepEqual(result, {
@@ -133,10 +140,34 @@ test("model result unknownは永久pollせずfaultとしてfail loudにする", 
   await assert.rejects(runSupervisorProcess(request({
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
+      providerSignal: new AbortController().signal,
       close: async () => { closed += 1; },
     }),
   }), value), { code: "E_SUPERVISOR_MODEL_RESULT_UNKNOWN" });
   assert.equal(polls, 0);
+  assert.equal(closed, 1);
+  assert.equal(released(), 1);
+});
+
+test("provider process faultはThroughline waitを取消しcycle mutation前にfail loudにする", async () => {
+  const providerController = new AbortController();
+  let closed = 0;
+  const { value, released } = dependencies({
+    waitForMonitorPoll: async (_milliseconds, signal) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => resolve(false), { once: true });
+    }),
+    runSupervisorProductionStep: async ({ signal }) => new Promise((_resolve, reject) => {
+      signal.addEventListener("abort", () => reject(new ObserverError("E_THROUGHLINE_CANCELLED", "cancelled")), { once: true });
+      providerController.abort();
+    }),
+  });
+  await assert.rejects(runSupervisorProcess(request({
+    createProviderRuntime: async () => ({
+      providerRuntime: { provider: "codex" },
+      providerSignal: providerController.signal,
+      close: async () => { closed += 1; },
+    }),
+  }), value), { code: "E_SUPERVISOR_PROVIDER_PROCESS_TERMINATED" });
   assert.equal(closed, 1);
   assert.equal(released(), 1);
 });

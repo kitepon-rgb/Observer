@@ -135,6 +135,7 @@ test("process切断はpendingをunknownにしてtransport内で再送しない",
   const pending = transport.request("turn/start", { threadId: "one" });
   child.emit("exit", 1, null);
   await assert.rejects(pending, expectCode("E_CODEX_TRANSPORT_UNKNOWN"));
+  assert.equal(transport.terminationSignal.aborted, true);
   assert.equal(child.lines.length, 1);
   assert.throws(() => transport.request("turn/start", { threadId: "one" }), expectCode("E_CODEX_TRANSPORT_CLOSED"));
 });

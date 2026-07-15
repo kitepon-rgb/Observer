@@ -291,6 +291,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                     `model_result_unknown`は回収不能なterminal faultとしてpollせず停止する（[ADR 0067](adr/0067-model-result-unknown-is-terminal.md)）。
                   - [ ] Throughline executableとCodex app-serverを一process内で検証・初期化し、終了時にCodex childの
                     terminal確認を必須化する。子process残存や終了不明を成功へ丸めない。
+                    app-server faultは進行中Throughline waitへ即時伝播する（[ADR 0068](adr/0068-provider-process-fault-cancels-wait.md)）。
                   - [ ] `observer supervisor run` CLIをabsolute command／watch identity／Observer rootへ束縛し、
                     signal cancel、explicit stop、faultのJSON／exit contractをfocused fixtureで固定する。
                   - [ ] focused／related gateを各一回通し、不変受入ADRと独立commitへ固定する。

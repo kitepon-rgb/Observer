@@ -37,7 +37,11 @@ test("verified Throughline clientとCodex runtime factoryをprocess lease内へ�
     },
     createCodexSupervisorRuntime: async (input) => {
       calls.push(["create-codex", input]);
-      return { providerRuntime: { provider: "codex" }, close: async () => {} };
+      return {
+        providerRuntime: { provider: "codex" },
+        providerSignal: new AbortController().signal,
+        close: async () => {},
+      };
     },
     runSupervisorProcess: async (input) => {
       calls.push(["run-process", input.client === client]);
@@ -61,6 +65,7 @@ test("Codex runtimeはapp-serverを一度initializeし、closeAndWait所有権�
     request: async () => {},
     notify: async () => {},
     closeAndWait: async () => { calls.push("close"); },
+    terminationSignal: new AbortController().signal,
   };
   const owned = await createCodexSupervisorRuntime({ runtimeRoot: ROOT, codexCommand: CODEX }, {
     verifyCodexAppServerRuntime: async (input) => {
@@ -76,6 +81,7 @@ test("Codex runtimeはapp-serverを一度initializeし、closeAndWait所有権�
     },
   });
   assert.deepEqual(owned.providerRuntime, { provider: "codex", runtime_root: ROOT, session: transport });
+  assert.equal(owned.providerSignal, transport.terminationSignal);
   await owned.close();
   assert.deepEqual(calls.map((entry) => Array.isArray(entry) ? entry[0] : entry), ["verify", "start", "initialize", "close"]);
 });
@@ -86,6 +92,7 @@ test("initialize失敗時もtransport terminal cleanupを確認してから失�
     request: async () => {},
     notify: async () => {},
     closeAndWait: async () => { closed += 1; },
+    terminationSignal: new AbortController().signal,
   };
   await assert.rejects(createCodexSupervisorRuntime({ runtimeRoot: ROOT, codexCommand: CODEX }, {
     verifyCodexAppServerRuntime: async () => ({ runtime_root: ROOT }),
