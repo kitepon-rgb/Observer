@@ -284,17 +284,18 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                 - [x] 一target一process lock、evidence input、Codex provider callback、sanitized production receiptを
                   束ねる一step callerをcommit `0ca7abe`で実装した。focused 4/4、関連44/44、static gateを通し、
                   [ADR 0065](adr/0065-supervisor-production-step-acceptance.md)で受け入れた。
-                - [ ] verified Throughline clientとpre-initialized Codex app-server sessionを所有する外部process／CLIへ
+                - [x] verified Throughline clientとpre-initialized Codex app-server sessionを所有する外部process／CLIへ
                   一step coreを配線し、timeout／cancel／fault／explicit stop loopを固定する。
-                  - [ ] target固有process lease、active watch停止監視、timeout／model pendingのbounded反復を
+                  - [x] target固有process lease、active watch停止監視、timeout／model pendingのbounded反復を
                     host-neutral process loopとして実装する。
                     `model_result_unknown`は回収不能なterminal faultとしてpollせず停止する（[ADR 0067](adr/0067-model-result-unknown-is-terminal.md)）。
-                  - [ ] Throughline executableとCodex app-serverを一process内で検証・初期化し、終了時にCodex childの
+                  - [x] Throughline executableとCodex app-serverを一process内で検証・初期化し、終了時にCodex childの
                     terminal確認を必須化する。子process残存や終了不明を成功へ丸めない。
                     app-server faultは進行中Throughline waitへ即時伝播する（[ADR 0068](adr/0068-provider-process-fault-cancels-wait.md)）。
-                  - [ ] `observer supervisor run` CLIをabsolute command／watch identity／Observer rootへ束縛し、
+                  - [x] `observer supervisor run` CLIをabsolute command／watch identity／Observer rootへ束縛し、
                     signal cancel、explicit stop、faultのJSON／exit contractをfocused fixtureで固定する。
-                  - [ ] focused／related gateを各一回通し、不変受入ADRと独立commitへ固定する。
+                  - [x] focused／related gateを通し、[ADR 0069](adr/0069-supervisor-process-cli-acceptance.md)と
+                    独立commitへ固定する。corrective変更後の最終関連gateは70/70、static gateはgreen。
               - [ ] Claude background jobへの公開非対話reply ACKと隔離`--settings` Stop hookをlive H gateで実証して接続する。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
