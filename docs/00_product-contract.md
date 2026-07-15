@@ -344,9 +344,16 @@ Observerはprovider別のcanonical hook fragmentとread-only verifierを所有�
 `observer-parent-stop-hook` executable path、candidate Host configに限定し、Claude／Codexの設定fileを書き換えない。
 macOS v1のcommand pathは実在する実行可能fileであり、空白、制御文字、単一／二重引用符を含まないものだけを受理する。
 
+公開入口は`observer-hook-config`とする。`fragment`／`verify`の双方が`--provider <claude|codex>`と
+`--executable <absolute-path>`を受け、`verify`だけが最大1 MiBのstrict UTF-8 candidate config JSONをstdinから読む。
+成功はJSON一行、usageはexit 2、その他の既知失敗はcode付きJSON一行をstderrへ返す。Host設定やObserver stateへ書かない。
+
 - Claude fragmentはmatcherなしのstandalone `Stop` entryで、`type=command`、absolute command、bounded `timeout`だけを持つ。
 - Codex fragmentはmatcherなしのstandalone `Stop` entryで、`type=command`、absolute command、bounded `timeoutSec`、
   `async=false`、`statusMessage=null`だけを持つ。
+- v1のtimeoutは両providerとも5秒、commandは`<absolute-path> --provider <provider>`に固定する。
+- fragment schemaは`observer.parent_stop_hook_fragment.v1`、verification schemaは
+  `observer.parent_stop_hook_verification.v1`とする。candidateの`hooks.Stop`未定義は`missing`であり、配列以外はinvalidとする。
 - verifierは対象commandの0件、複数件、非canonical 1件、canonical 1件をそれぞれ
   `missing`、`duplicate`、`noncanonical`、`canonical`として区別する。他製品のhookをObserver所有と誤認しない。
 - 全端末への設定合成、backup、transaction rollback、端末verifyはdotagentsのfactory adapterが所有する。
