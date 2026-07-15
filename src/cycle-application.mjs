@@ -1,6 +1,15 @@
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 
+import {
+  confirmAdvisoryPublished,
+  finalizeAdvisoryDecision,
+  preflightAdvisoryFinalization,
+  prepareAdvisoryDecision,
+  validateAdvisoryDecisionReceipt,
+  validateAdvisoryFinalizationPreflightReceipt,
+  validateAdvisoryFinalizationReceipt,
+} from "./advisory-semantic-decision.mjs";
 import { validateCycleInputReceipt } from "./cycle-input.mjs";
 import {
   cleanupOperationPublishReceipt,
@@ -47,7 +56,8 @@ const IDENTITY_FIELDS = Object.freeze([
 export async function applyCycleOutput({ stateRoot, operation, output, cycleInput, now = new Date() } = {}, dependencies = {}) {
   validateApplicationInput({ stateRoot, operation, cycleInput, now }, "completed");
   const canonicalOutput = parseObserverAiOutput(JSON.stringify(output));
-  const context = cycleContext(cycleInput, operation);
+  const evidence = cycleEvidence(cycleInput, operation);
+  const context = evidence.context;
   const durable = await readDurableOperation({ stateRoot, operation, expectedStatus: "completed" }, dependencies);
   const outputDigest = `sha256:${observerAiOutputDigest(canonicalOutput)}`;
   if (durable.completed_output_digest !== outputDigest || JSON.stringify(durable.completed_output) !== JSON.stringify(canonicalOutput)) {
@@ -78,7 +88,28 @@ export async function applyCycleOutput({ stateRoot, operation, output, cycleInpu
     body: proposal.body,
     evidence_refs: [...proposal.evidence_refs],
     suggested_action: proposal.suggested_action,
-  });
+  }, { now });
+  const semanticOperation = {
+    target_id: operation.target_id,
+    watch_id: operation.watch_id,
+    generation_id: operation.generation_id,
+    cycle_id: operation.cycle_id,
+    input_digest: operation.input_digest,
+    operation_id: operation.operation_id,
+    output_digest: durable.completed_output_digest,
+  };
+  const prepare = dependencies.prepareAdvisoryDecision ?? prepareAdvisoryDecision;
+  const decision = validateAdvisoryDecisionReceipt(await prepare({
+    stateRoot,
+    operation: semanticOperation,
+    proposal,
+    snapshot: evidence,
+    candidateResultDigest: message.content_digest.slice("sha256:".length),
+    now,
+  }, dependencies.semanticDependencies ?? {}));
+  requireSemanticDecisionMatches(decision, semanticOperation, message.content_digest);
+  if (decision.decision === "suppressed") return cycleResult(decision.result_digest);
+
   const publish = dependencies.publishOperationMessage ?? publishOperationMessage;
   const published = await publish({ stateRoot, operationId: operation.operation_id, message, now });
   if (published?.operationId !== operation.operation_id || published?.messageId !== message.message_id ||
@@ -86,11 +117,23 @@ export async function applyCycleOutput({ stateRoot, operation, output, cycleInpu
       published?.status !== "published") {
     fail("E_CYCLE_APPLICATION_PUBLISH_MISMATCH", "Mailbox publish receiptがcycle applicationと一致しません");
   }
-  return cycleResult(message.content_digest.slice("sha256:".length));
+  const confirm = dependencies.confirmAdvisoryPublished ?? confirmAdvisoryPublished;
+  const confirmed = validateAdvisoryDecisionReceipt(await confirm({
+    stateRoot,
+    targetId: operation.target_id,
+    operationId: operation.operation_id,
+    publishResult: published,
+    now,
+  }, dependencies.semanticDependencies ?? {}));
+  requireSemanticDecisionMatches(confirmed, semanticOperation, message.content_digest);
+  if (confirmed.decision !== "accepted" || confirmed.status !== "accepted_published") {
+    fail("E_CYCLE_APPLICATION_SEMANTIC_MISMATCH", "published advisoryのsemantic decisionが一致しません");
+  }
+  return cycleResult(confirmed.result_digest);
 }
 
-export async function finalizeCycleApplication({ stateRoot, operation } = {}, dependencies = {}) {
-  validateFinalizationInput({ stateRoot, operation });
+export async function finalizeCycleApplication({ stateRoot, operation, now = new Date() } = {}, dependencies = {}) {
+  validateFinalizationInput({ stateRoot, operation, now });
   const durable = await readDurableOperation({ stateRoot, operation, expectedStatus: "applied" }, dependencies);
   if (!durable.applied_result || durable.applied_result.result_digest !== operation.applied_result.result_digest ||
       durable.completed_output_digest !== operation.completed_output_digest) {
@@ -105,21 +148,49 @@ export async function finalizeCycleApplication({ stateRoot, operation } = {}, de
     return finalization("no_op");
   }
 
-  const cleanup = dependencies.cleanupOperationPublishReceipt ?? cleanupOperationPublishReceipt;
-  const contentDigest = `sha256:${operation.applied_result.result_digest}`;
-  const cleaned = await cleanup({
+  const preflight = dependencies.preflightAdvisoryFinalization ?? preflightAdvisoryFinalization;
+  const preflightReceipt = validateAdvisoryFinalizationPreflightReceipt(await preflight({
     stateRoot,
     targetId: operation.target_id,
     operationId: operation.operation_id,
-    messageId: operationMessageId(operation.operation_id),
-    contentDigest,
-  });
-  if (cleaned?.operationId !== operation.operation_id || cleaned?.targetId !== operation.target_id ||
-      cleaned?.messageId !== operationMessageId(operation.operation_id) || cleaned?.contentDigest !== contentDigest ||
-      typeof cleaned.cleaned !== "boolean" || typeof cleaned.replayed !== "boolean") {
-    fail("E_CYCLE_APPLICATION_FINALIZATION_MISMATCH", "Mailbox cleanup receiptがcycle applicationと一致しません");
+    resultDigest: operation.applied_result.result_digest,
+    now,
+  }, dependencies.semanticDependencies ?? {}));
+  requireSemanticFinalizationMatches(preflightReceipt, operation);
+
+  let cleanupOutcome = null;
+  if (preflightReceipt.decision === "accepted") {
+    const cleanup = dependencies.cleanupOperationPublishReceipt ?? cleanupOperationPublishReceipt;
+    const contentDigest = `sha256:${operation.applied_result.result_digest}`;
+    const cleaned = await cleanup({
+      stateRoot,
+      targetId: operation.target_id,
+      operationId: operation.operation_id,
+      messageId: operationMessageId(operation.operation_id),
+      contentDigest,
+    });
+    if (cleaned?.operationId !== operation.operation_id || cleaned?.targetId !== operation.target_id ||
+        cleaned?.messageId !== operationMessageId(operation.operation_id) || cleaned?.contentDigest !== contentDigest ||
+        typeof cleaned.cleaned !== "boolean" || typeof cleaned.replayed !== "boolean") {
+      fail("E_CYCLE_APPLICATION_FINALIZATION_MISMATCH", "Mailbox cleanup receiptがcycle applicationと一致しません");
+    }
+    cleanupOutcome = cleaned.cleaned ? "cleaned" : "already_cleaned";
   }
-  return finalization(cleaned.cleaned ? "cleaned" : "already_cleaned");
+
+  const finalizeSemantic = dependencies.finalizeAdvisoryDecision ?? finalizeAdvisoryDecision;
+  const semanticFinalization = validateAdvisoryFinalizationReceipt(await finalizeSemantic({
+    stateRoot,
+    targetId: operation.target_id,
+    operationId: operation.operation_id,
+    resultDigest: operation.applied_result.result_digest,
+    now,
+  }, dependencies.semanticDependencies ?? {}));
+  requireSemanticFinalizationMatches(semanticFinalization, operation);
+  if (preflightReceipt.decision === "accepted") return finalization(cleanupOutcome);
+  const suppressedOutcome = semanticFinalization.outcome === "already_finalized"
+    ? "suppressed_already_finalized"
+    : semanticFinalization.outcome === "recovered" ? "suppressed_recovered" : "suppressed_finalized";
+  return finalization(suppressedOutcome);
 }
 
 async function readDurableOperation({ stateRoot, operation, expectedStatus }, dependencies) {
@@ -154,18 +225,20 @@ function validateApplicationInput({ stateRoot, operation, cycleInput, now }, exp
   validateNow(now);
 }
 
-function cycleContext(cycleInput, operation) {
-  const context = JSON.parse(cycleInput.value).evidence.context;
+function cycleEvidence(cycleInput, operation) {
+  const evidence = JSON.parse(cycleInput.value).evidence;
+  const context = evidence.context;
   if (!isPlainObject(context) || context.target_id !== operation.target_id || context.watch_id !== operation.watch_id ||
       context.cycle_id !== operation.cycle_id || context.parent_host !== operation.provider ||
       !THREAD.test(context.parent_thread_sha256)) {
     fail("E_CYCLE_APPLICATION_IDENTITY_MISMATCH", "cycle input contextがoperationと一致しません");
   }
-  return context;
+  return evidence;
 }
 
-function validateFinalizationInput({ stateRoot, operation }) {
+function validateFinalizationInput({ stateRoot, operation, now }) {
   validateStateRoot(stateRoot);
+  validateNow(now);
   if (!isPlainObject(operation)) fail("E_CYCLE_APPLICATION_INPUT_INVALID", "finalization operationが不正です");
   const expectedKeys = [...OPERATION_KEYS, "applied_result", "completed_output_digest"].sort();
   const actualKeys = Object.keys(operation).sort();
@@ -177,6 +250,32 @@ function validateFinalizationInput({ stateRoot, operation }) {
       operation.applied_result.schema !== "observer.cycle_result.v1" || !HEX.test(operation.applied_result.result_digest) ||
       !DIGEST.test(operation.completed_output_digest)) {
     fail("E_CYCLE_APPLICATION_INPUT_INVALID", "finalization resultが不正です");
+  }
+}
+
+function requireSemanticDecisionMatches(value, operation, contentDigest) {
+  for (const key of [
+    "target_id",
+    "watch_id",
+    "generation_id",
+    "cycle_id",
+    "input_digest",
+    "operation_id",
+    "output_digest",
+  ]) {
+    if (value[key] !== operation[key]) {
+      fail("E_CYCLE_APPLICATION_SEMANTIC_MISMATCH", "semantic decision identityがcycle operationと一致しません");
+    }
+  }
+  if (value.decision === "accepted" && `sha256:${value.result_digest}` !== contentDigest) {
+    fail("E_CYCLE_APPLICATION_SEMANTIC_MISMATCH", "accepted semantic resultがsealed messageと一致しません");
+  }
+}
+
+function requireSemanticFinalizationMatches(value, operation) {
+  if (value.target_id !== operation.target_id || value.operation_id !== operation.operation_id ||
+      value.result_digest !== operation.applied_result.result_digest) {
+    fail("E_CYCLE_APPLICATION_FINALIZATION_MISMATCH", "semantic finalization identityがapplied operationと一致しません");
   }
 }
 

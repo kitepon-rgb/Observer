@@ -133,6 +133,10 @@ export async function prepareAdvisoryDecision({
   });
 }
 
+export function validateAdvisoryDecisionReceipt(value) {
+  return publicCurrent(validateCurrent(value));
+}
+
 export async function confirmAdvisoryPublished({
   stateRoot,
   targetId,
@@ -179,18 +183,47 @@ export async function preflightAdvisoryFinalization({
     const history = await readHistory(paths.history, dependencies);
     requireClockNotBefore(input.now, current, history.entries);
     if (current === null) {
-      finalizedReplay(history.entries, input);
-      return preflightResult("already_finalized", history.entries.length, 0);
+      const entry = finalizedEntry(history.entries, input);
+      return preflightResult("already_finalized", entry.decision, input, history.entries.length, 0);
     }
     requireFinalizableCurrent(current, input);
     const existing = history.entries.find((entry) => entry.operation_id === input.operationId) ?? null;
     if (existing !== null) {
       requireHistoryMatchesCurrent(existing, current, input);
-      return preflightResult("ready", history.entries.length, 0);
+      return preflightResult("ready", current.decision, input, history.entries.length, 0);
     }
     const plan = retentionPlan(history.entries, current, input.now, dependencies);
-    return preflightResult("ready", plan.retained.length, history.entries.length - plan.retained.length);
+    requireHistoryCapacity(nextHistory(plan, current, input.now), dependencies);
+    return preflightResult(
+      "ready",
+      current.decision,
+      input,
+      plan.retained.length,
+      history.entries.length - plan.retained.length,
+    );
   });
+}
+
+export function validateAdvisoryFinalizationPreflightReceipt(value) {
+  requirePlain(value, "semantic finalization preflight", "E_ADVISORY_PREFLIGHT_RECEIPT_INVALID");
+  requireExactKeys(value, [
+    "decision",
+    "operation_id",
+    "outcome",
+    "removed_count",
+    "result_digest",
+    "retained_count",
+    "schema",
+    "target_id",
+  ], "semantic finalization preflight", "E_ADVISORY_PREFLIGHT_RECEIPT_INVALID");
+  if (value.schema !== "observer.advisory_finalization_preflight.v1" ||
+      !["ready", "already_finalized"].includes(value.outcome) || !DECISIONS.has(value.decision) ||
+      !TARGET.test(value.target_id) || !DIGEST.test(value.operation_id) || !HEX.test(value.result_digest) ||
+      !Number.isSafeInteger(value.retained_count) || value.retained_count < 0 ||
+      !Number.isSafeInteger(value.removed_count) || value.removed_count < 0) {
+    fail("E_ADVISORY_PREFLIGHT_RECEIPT_INVALID", "semantic finalization preflight receiptが不正です");
+  }
+  return structuredClone(value);
 }
 
 export async function finalizeAdvisoryDecision({
@@ -213,19 +246,27 @@ export async function finalizeAdvisoryDecision({
     if (existing !== null) {
       requireHistoryMatchesCurrent(existing, current, input);
       await removeFile(paths.current, dependencies);
-      return finalizationResult("recovered");
+      return finalizationResult("recovered", input);
     }
 
     const plan = retentionPlan(history.entries, current, input.now, dependencies);
-    const entry = historyEntry(current, input.now);
-    const nextHistory = validateHistory({
-      schema: ADVISORY_HISTORY_SCHEMA,
-      entries: [...plan.retained, entry].sort(compareHistory),
-    });
-    await writeHistory(paths.history, nextHistory, history.exists, dependencies);
+    const historyValue = nextHistory(plan, current, input.now);
+    await writeHistory(paths.history, historyValue, history.exists, dependencies);
     await removeFile(paths.current, dependencies);
-    return finalizationResult("finalized");
+    return finalizationResult("finalized", input);
   });
+}
+
+export function validateAdvisoryFinalizationReceipt(value) {
+  requirePlain(value, "semantic finalization", "E_ADVISORY_FINALIZATION_RECEIPT_INVALID");
+  requireExactKeys(value, ["operation_id", "outcome", "result_digest", "schema", "target_id"],
+    "semantic finalization", "E_ADVISORY_FINALIZATION_RECEIPT_INVALID");
+  if (value.schema !== "observer.advisory_finalization.v1" ||
+      !["finalized", "recovered", "already_finalized"].includes(value.outcome) ||
+      !TARGET.test(value.target_id) || !DIGEST.test(value.operation_id) || !HEX.test(value.result_digest)) {
+    fail("E_ADVISORY_FINALIZATION_RECEIPT_INVALID", "semantic finalization receiptが不正です");
+  }
+  return structuredClone(value);
 }
 
 export async function readCurrentAdvisoryDecision({ stateRoot, targetId } = {}, dependencies = {}) {
@@ -408,12 +449,17 @@ function requireFinalizableCurrent(current, input) {
 }
 
 function finalizedReplay(entries, input) {
+  finalizedEntry(entries, input);
+  return finalizationResult("already_finalized", input);
+}
+
+function finalizedEntry(entries, input) {
   const matches = entries.filter((entry) => entry.operation_id === input.operationId);
   if (matches.length === 0) fail("E_ADVISORY_DECISION_NOT_FOUND", "semantic decisionがありません");
   if (matches.length !== 1 || matches[0].target_id !== input.targetId || matches[0].result_digest !== input.resultDigest) {
     fail("E_ADVISORY_FINALIZE_CONFLICT", "finalized decisionが要求identityと一致しません");
   }
-  return finalizationResult("already_finalized");
+  return matches[0];
 }
 
 function requireHistoryMatchesCurrent(entry, current, input) {
@@ -432,6 +478,14 @@ function historyEntry(current, now) {
     value[key] = key === "finalized_at" ? now.toISOString() : current[key];
   }
   return validateHistoryEntry(value);
+}
+
+function nextHistory(plan, current, now) {
+  const entry = historyEntry(current, now);
+  return validateHistory({
+    schema: ADVISORY_HISTORY_SCHEMA,
+    entries: [...plan.retained, entry].sort(compareHistory),
+  });
 }
 
 function withDecisionDigest(value) {
@@ -585,12 +639,17 @@ async function readOptional(path, dependencies) {
 }
 
 async function writeHistory(path, history, exists, dependencies) {
-  const serialized = serialize(history);
-  if (Buffer.byteLength(serialized, "utf8") > HISTORY_MAX_BYTES) {
-    fail("E_ADVISORY_HISTORY_SATURATED", "semantic history byte上限を超えています");
-  }
+  const serialized = requireHistoryCapacity(history, dependencies);
   if (exists) return replaceFile(path, serialized, dependencies);
   return createFile(path, serialized, dependencies);
+}
+
+function requireHistoryCapacity(history, dependencies) {
+  const serialized = serialize(history);
+  if (Buffer.byteLength(serialized, "utf8") > historyMaxBytes(dependencies)) {
+    fail("E_ADVISORY_HISTORY_SATURATED", "semantic history byte上限を超えています");
+  }
+  return serialized;
 }
 
 function createFile(path, data, dependencies) {
@@ -652,14 +711,24 @@ function publicCurrent(value) {
   return structuredClone(value);
 }
 
-function finalizationResult(outcome) {
-  return { schema: "observer.advisory_finalization.v1", outcome };
+function finalizationResult(outcome, input) {
+  return {
+    schema: "observer.advisory_finalization.v1",
+    outcome,
+    target_id: input.targetId,
+    operation_id: input.operationId,
+    result_digest: input.resultDigest,
+  };
 }
 
-function preflightResult(outcome, retainedCount, removedCount) {
+function preflightResult(outcome, decision, input, retainedCount, removedCount) {
   return {
     schema: "observer.advisory_finalization_preflight.v1",
     outcome,
+    decision,
+    target_id: input.targetId,
+    operation_id: input.operationId,
+    result_digest: input.resultDigest,
     retained_count: retainedCount,
     removed_count: removedCount,
   };
@@ -685,6 +754,14 @@ function maxHistory(dependencies) {
   const value = dependencies.maxHistory ?? ADVISORY_HISTORY_MAX_ENTRIES;
   if (!Number.isSafeInteger(value) || value <= 0 || value > ADVISORY_HISTORY_MAX_ENTRIES) {
     fail("E_ADVISORY_POLICY_INVALID", "history cap設定が不正です");
+  }
+  return value;
+}
+
+function historyMaxBytes(dependencies) {
+  const value = dependencies.maxHistoryBytes ?? HISTORY_MAX_BYTES;
+  if (!Number.isSafeInteger(value) || value <= 0 || value > HISTORY_MAX_BYTES) {
+    fail("E_ADVISORY_POLICY_INVALID", "history byte cap設定が不正です");
   }
   return value;
 }

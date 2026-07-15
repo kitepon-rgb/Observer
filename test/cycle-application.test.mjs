@@ -4,6 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import {
+  readAdvisoryDecisionHistory,
+  readCurrentAdvisoryDecision,
+} from "../src/advisory-semantic-decision.mjs";
 import { applyCycleOutput, finalizeCycleApplication } from "../src/cycle-application.mjs";
 import { buildCycleInput } from "../src/cycle-input.mjs";
 import { buildEvidenceSnapshot } from "../src/evidence-snapshot.mjs";
@@ -37,8 +41,22 @@ const CYCLE_INPUT = buildCycleInput(buildEvidenceSnapshot({
   },
   turns: [],
   plan: [],
-  git: [],
-  tests: [],
+  git: [{
+    ref: "git:unstaged_diff",
+    source_digest: `sha256:${"3".repeat(64)}`,
+    available: true,
+    content: "diff --git a/src/a.mjs b/src/a.mjs",
+    unavailable_code: null,
+  }],
+  tests: [{
+    ref: "test:focused",
+    source_digest: `sha256:${"4".repeat(64)}`,
+    available: true,
+    command_ref: "node --test test/focused.test.mjs",
+    outcome: "failed",
+    observed_at: NOW.toISOString(),
+    unavailable_code: null,
+  }],
 }));
 const ADVISORY = {
   schema: "observer.ai_output.v1",
@@ -54,6 +72,14 @@ const ADVISORY = {
   },
 };
 const NO_ADVISORY = { schema: "observer.ai_output.v1", outcome: "no_advisory" };
+const INELIGIBLE_ADVISORY = {
+  ...ADVISORY,
+  proposal: { ...ADVISORY.proposal, evidence_refs: ["git:missing"] },
+};
+const SECRET_ADVISORY = {
+  ...ADVISORY,
+  proposal: { ...ADVISORY.proposal, dedupe_key: `sk-proj-${"x".repeat(24)}` },
+};
 
 async function setup(output, { createdAt = NOW } = {}) {
   const stateRoot = await mkdtemp(join(tmpdir(), "observer-cycle-application-"));
@@ -148,6 +174,7 @@ test("no-advisoryはMailboxを作らずdurable outputから同じresultを再構
   const finalized = await finalizeCycleApplication({
     stateRoot: fixture.stateRoot,
     operation: await markApplied(fixture, first),
+    now: NOW,
   });
   assert.deepEqual(finalized, { schema: "observer.cycle_application_finalization.v1", outcome: "no_op" });
 });
@@ -158,6 +185,10 @@ test("advisoryは決定的messageを一度だけpublishしapplied後だけreceip
   const first = await applyCycleOutput(input);
   const replay = await applyCycleOutput(input);
   assert.deepEqual(replay, first);
+  assert.equal((await readCurrentAdvisoryDecision({
+    stateRoot: fixture.stateRoot,
+    targetId: TARGET_ID,
+  })).status, "accepted_published");
 
   const mailbox = await ensureMailbox(fixture.stateRoot, TARGET_ID);
   const inbox = await readdir(mailbox.inbox);
@@ -170,15 +201,126 @@ test("advisoryは決定的messageを一度だけpublishしapplied後だけreceip
   assert.equal(JSON.stringify(first).includes(ADVISORY.proposal.body), false);
 
   const operation = await markApplied(fixture, first);
-  assert.deepEqual(await finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation }), {
+  assert.deepEqual(await finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation, now: NOW }), {
     schema: "observer.cycle_application_finalization.v1",
     outcome: "cleaned",
   });
-  assert.deepEqual(await finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation }), {
+  assert.deepEqual(await finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation, now: NOW }), {
     schema: "observer.cycle_application_finalization.v1",
     outcome: "already_cleaned",
   });
   assert.deepEqual(await readdir(mailbox["publish-receipts"]), []);
+  assert.equal(await readCurrentAdvisoryDecision({ stateRoot: fixture.stateRoot, targetId: TARGET_ID }), null);
+  const history = await readAdvisoryDecisionHistory({ stateRoot: fixture.stateRoot, targetId: TARGET_ID });
+  assert.equal(history.entries.length, 1);
+  assert.equal(history.entries[0].decision, "accepted");
+});
+
+test("evidence不適格advisoryはMailboxなしのsuppressed resultとしてfinalizeする", async () => {
+  const fixture = await setup(INELIGIBLE_ADVISORY);
+  const result = await applyCycleOutput({ ...fixture, cycleInput: CYCLE_INPUT, now: NOW });
+  const current = await readCurrentAdvisoryDecision({ stateRoot: fixture.stateRoot, targetId: TARGET_ID });
+  assert.equal(current.status, "suppressed");
+  assert.equal(current.reason, "evidence_ineligible");
+  assert.equal(current.result_digest, result.result_digest);
+  await assert.rejects(readdir(join(fixture.stateRoot, "mailboxes")), (error) => error.code === "ENOENT");
+
+  const operation = await markApplied(fixture, result);
+  assert.deepEqual(await finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation, now: NOW }), {
+    schema: "observer.cycle_application_finalization.v1",
+    outcome: "suppressed_finalized",
+  });
+  assert.deepEqual(await finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation, now: NOW }), {
+    schema: "observer.cycle_application_finalization.v1",
+    outcome: "suppressed_already_finalized",
+  });
+  const history = await readAdvisoryDecisionHistory({ stateRoot: fixture.stateRoot, targetId: TARGET_ID });
+  assert.equal(history.entries[0].decision, "suppressed");
+});
+
+test("publish後・semantic confirm前crashは同じoperationのexact replayで回収する", async () => {
+  const fixture = await setup(ADVISORY);
+  const input = { ...fixture, cycleInput: CYCLE_INPUT, now: NOW };
+  let injected = false;
+  await assert.rejects(applyCycleOutput(input, {
+    async confirmAdvisoryPublished() {
+      injected = true;
+      throw Object.assign(new Error("injected semantic confirm failure"), { code: "E_INJECTED_CONFIRM" });
+    },
+  }), (error) => error.code === "E_INJECTED_CONFIRM");
+  assert.equal(injected, true);
+  assert.equal((await readCurrentAdvisoryDecision({
+    stateRoot: fixture.stateRoot,
+    targetId: TARGET_ID,
+  })).status, "accepted_pending_publish");
+
+  const recovered = await applyCycleOutput(input);
+  assert.equal((await readCurrentAdvisoryDecision({
+    stateRoot: fixture.stateRoot,
+    targetId: TARGET_ID,
+  })).status, "accepted_published");
+  assert.match(recovered.result_digest, /^[a-f0-9]{64}$/);
+});
+
+test("candidate messageのsecret検査はsemantic decision保存より先に失敗する", async () => {
+  const fixture = await setup(SECRET_ADVISORY);
+  let prepareCalled = false;
+  await assert.rejects(applyCycleOutput({ ...fixture, cycleInput: CYCLE_INPUT, now: NOW }, {
+    async prepareAdvisoryDecision() {
+      prepareCalled = true;
+    },
+  }), { code: "E_MESSAGE_SENSITIVE_CONTENT" });
+  assert.equal(prepareCalled, false);
+  assert.equal(await readCurrentAdvisoryDecision({ stateRoot: fixture.stateRoot, targetId: TARGET_ID }), null);
+});
+
+test("semantic preflightはMailbox cleanupより先に失敗し、cleanup後crashはreplayで収束する", async () => {
+  const fixture = await setup(ADVISORY);
+  const result = await applyCycleOutput({ ...fixture, cycleInput: CYCLE_INPUT, now: NOW });
+  const operation = await markApplied(fixture, result);
+  let cleanupCalled = false;
+  await assert.rejects(finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation, now: NOW }, {
+    async preflightAdvisoryFinalization() {
+      return {
+        schema: "observer.advisory_finalization_preflight.v1",
+        outcome: "ready",
+        decision: "accepted",
+        target_id: TARGET_ID,
+        operation_id: `sha256:${"f".repeat(64)}`,
+        result_digest: result.result_digest,
+        retained_count: 0,
+        removed_count: 0,
+      };
+    },
+    async cleanupOperationPublishReceipt() {
+      cleanupCalled = true;
+    },
+  }), { code: "E_CYCLE_APPLICATION_FINALIZATION_MISMATCH" });
+  assert.equal(cleanupCalled, false);
+
+  await assert.rejects(finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation, now: NOW }, {
+    semanticDependencies: { maxHistoryBytes: 1 },
+    async cleanupOperationPublishReceipt() {
+      cleanupCalled = true;
+    },
+  }), (error) => error.code === "E_ADVISORY_HISTORY_SATURATED");
+  assert.equal(cleanupCalled, false);
+
+  await assert.rejects(finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation, now: NOW }, {
+    async finalizeAdvisoryDecision() {
+      throw Object.assign(new Error("injected semantic finalize failure"), { code: "E_INJECTED_FINALIZE" });
+    },
+  }), (error) => error.code === "E_INJECTED_FINALIZE");
+  assert.equal((await readCurrentAdvisoryDecision({
+    stateRoot: fixture.stateRoot,
+    targetId: TARGET_ID,
+  })).status, "accepted_published");
+
+  assert.deepEqual(await finalizeCycleApplication({ stateRoot: fixture.stateRoot, operation, now: NOW }), {
+    schema: "observer.cycle_application_finalization.v1",
+    outcome: "already_cleaned",
+  });
+  assert.equal(await readCurrentAdvisoryDecision({ stateRoot: fixture.stateRoot, targetId: TARGET_ID }), null);
 });
 
 test("identity、canonical output、threadをdurable operationと独立検証する", async () => {

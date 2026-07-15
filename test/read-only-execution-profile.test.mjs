@@ -91,7 +91,21 @@ test("外部Supervisor所有のdurable cycle applicationはprojectを変えずst
   const projectRoot = await projectFixture(); const before = await fingerprint(projectRoot);
   const stateRoot = await mkdtemp(join(tmpdir(), "observer-read-only-state-")); const targetRoot = join(stateRoot, "watches", TARGET_ID);
   await mkdir(targetRoot, { recursive: true, mode: 0o700 }); await chmod(stateRoot, 0o700); await chmod(join(stateRoot, "watches"), 0o700); await chmod(targetRoot, 0o700);
-  const cycleInput = buildCycleInput(buildEvidenceSnapshot({ context: { after_cursor_sha256: "1".repeat(64), cycle_id: CYCLE_ID, parent_host: "codex", parent_thread_sha256: "2".repeat(64), target_id: TARGET_ID, through_cursor_sha256: "3".repeat(64), watch_id: WATCH_ID }, turns: [], plan: [], git: [], tests: [] }));
+  const cycleInput = buildCycleInput(buildEvidenceSnapshot({
+    context: { after_cursor_sha256: "1".repeat(64), cycle_id: CYCLE_ID, parent_host: "codex", parent_thread_sha256: "2".repeat(64), target_id: TARGET_ID, through_cursor_sha256: "3".repeat(64), watch_id: WATCH_ID },
+    turns: [],
+    plan: [],
+    git: [],
+    tests: [{
+      ref: "test:readonly",
+      source_digest: `sha256:${"4".repeat(64)}`,
+      available: true,
+      command_ref: "git status --porcelain=v1",
+      outcome: "passed",
+      observed_at: NOW.toISOString(),
+      unavailable_code: null,
+    }],
+  }));
   const identity = { stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, generationId: GENERATION_ID, cycleId: CYCLE_ID, inputDigest: cycleInput.input_digest, modelVisibleBytes: cycleInput.model_visible_bytes, provider: "codex" };
   const clock = { now: () => NOW };
   const prepared = await prepareModelOperation(identity, clock);

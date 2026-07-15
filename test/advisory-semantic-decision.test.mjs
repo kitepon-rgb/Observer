@@ -12,6 +12,9 @@ import {
   prepareAdvisoryDecision,
   readAdvisoryDecisionHistory,
   readCurrentAdvisoryDecision,
+  validateAdvisoryDecisionReceipt,
+  validateAdvisoryFinalizationPreflightReceipt,
+  validateAdvisoryFinalizationReceipt,
 } from "../src/advisory-semantic-decision.mjs";
 import { buildCycleInput } from "../src/cycle-input.mjs";
 import { buildEvidenceSnapshot } from "../src/evidence-snapshot.mjs";
@@ -107,6 +110,29 @@ function publishReceipt(decision) {
     targetId: decision.target_id,
     contentDigest: `sha256:${decision.result_digest}`,
     status: "published",
+  };
+}
+
+function finalizationReceipt(outcome, decision) {
+  return {
+    schema: "observer.advisory_finalization.v1",
+    outcome,
+    target_id: decision.target_id,
+    operation_id: decision.operation_id,
+    result_digest: decision.result_digest,
+  };
+}
+
+function preflightReceipt(outcome, decision, retainedCount, removedCount) {
+  return {
+    schema: "observer.advisory_finalization_preflight.v1",
+    outcome,
+    decision: decision.decision,
+    target_id: decision.target_id,
+    operation_id: decision.operation_id,
+    result_digest: decision.result_digest,
+    retained_count: retainedCount,
+    removed_count: removedCount,
   };
 }
 
@@ -339,10 +365,8 @@ test("finalizationはpendingを拒否し、historyを0600で作ってexact repla
     }),
     expectCode("E_ADVISORY_FINALIZE_INVALID"),
   );
-  assert.deepEqual(await publishAndFinalize({ root, decision, now: at(2000) }), {
-    schema: "observer.advisory_finalization.v1",
-    outcome: "finalized",
-  });
+  assert.deepEqual(await publishAndFinalize({ root, decision, now: at(2000) }),
+    finalizationReceipt("finalized", decision));
   assert.equal(await readCurrentAdvisoryDecision({ stateRoot: root, targetId: TARGET_ID }), null);
   assert.deepEqual(await finalizeAdvisoryDecision({
     stateRoot: root,
@@ -350,7 +374,7 @@ test("finalizationはpendingを拒否し、historyを0600で作ってexact repla
     operationId: operation.operation_id,
     resultDigest: decision.result_digest,
     now: at(2000),
-  }), { schema: "observer.advisory_finalization.v1", outcome: "already_finalized" });
+  }), finalizationReceipt("already_finalized", decision));
 
   const directory = join(root, "watches", TARGET_ID);
   const historyPath = join(directory, "semantic-history.json");
@@ -402,31 +426,21 @@ test("history write後のcrashは同一operationだけをrecoveredへ収束さ�
     operationId: operation.operation_id,
     resultDigest: published.result_digest,
     now: at(2000),
-  }), {
-    schema: "observer.advisory_finalization_preflight.v1",
-    outcome: "ready",
-    retained_count: 1,
-    removed_count: 0,
-  });
+  }), preflightReceipt("ready", published, 1, 0));
   assert.deepEqual(await finalizeAdvisoryDecision({
     stateRoot: root,
     targetId: TARGET_ID,
     operationId: operation.operation_id,
     resultDigest: published.result_digest,
     now: at(2000),
-  }), { schema: "observer.advisory_finalization.v1", outcome: "recovered" });
+  }), finalizationReceipt("recovered", published));
   assert.deepEqual(await preflightAdvisoryFinalization({
     stateRoot: root,
     targetId: TARGET_ID,
     operationId: operation.operation_id,
     resultDigest: published.result_digest,
     now: at(2000),
-  }), {
-    schema: "observer.advisory_finalization_preflight.v1",
-    outcome: "already_finalized",
-    retained_count: 1,
-    removed_count: 0,
-  });
+  }), preflightReceipt("already_finalized", published, 1, 0));
 });
 
 test("60分cooldownはsame/lower severityを抑止し、severity escalationを通す", async () => {
@@ -567,12 +581,18 @@ test("preflightは非変更でretention pruningを予告し、active cooldown sa
     operationId: thirdPublished.operation_id,
     resultDigest: thirdPublished.result_digest,
     now: at(6100),
-  }, shortPolicy), {
-    schema: "observer.advisory_finalization_preflight.v1",
-    outcome: "ready",
-    retained_count: 0,
-    removed_count: 1,
-  });
+  }, shortPolicy), preflightReceipt("ready", thirdPublished, 0, 1));
+  assert.equal(await readFile(join(root, "watches", TARGET_ID, "semantic-history.json"), "utf8"), before);
+  await assert.rejects(
+    preflightAdvisoryFinalization({
+      stateRoot: root,
+      targetId: TARGET_ID,
+      operationId: thirdPublished.operation_id,
+      resultDigest: thirdPublished.result_digest,
+      now: at(6100),
+    }, { ...shortPolicy, maxHistoryBytes: 1 }),
+    expectCode("E_ADVISORY_HISTORY_SATURATED"),
+  );
   assert.equal(await readFile(join(root, "watches", TARGET_ID, "semantic-history.json"), "utf8"), before);
 
   const saturatedRoot = await temporaryRoot();
@@ -645,5 +665,50 @@ test("history decision digest改竄とoperation extra fieldをfail closedにす�
   await assert.rejects(
     readAdvisoryDecisionHistory({ stateRoot: root, targetId: TARGET_ID }),
     expectCode("E_ADVISORY_HISTORY_INVALID"),
+  );
+});
+
+test("integration receipt validatorはidentity fieldと未知fieldをexact検証する", async () => {
+  const root = await temporaryRoot();
+  const proposalValue = proposal();
+  const operation = operationFor(proposalValue);
+  const decision = await prepareAccepted({ root, proposalValue, operation, snapshot: snapshotFor(operation) });
+  assert.deepEqual(validateAdvisoryDecisionReceipt(decision), decision);
+  assert.throws(
+    () => validateAdvisoryDecisionReceipt({ ...decision, extra: true }),
+    expectCode("E_ADVISORY_DECISION_STATE_INVALID"),
+  );
+
+  const published = await confirmAdvisoryPublished({
+    stateRoot: root,
+    targetId: TARGET_ID,
+    operationId: operation.operation_id,
+    publishResult: publishReceipt(decision),
+    now: at(1000),
+  });
+  const preflight = await preflightAdvisoryFinalization({
+    stateRoot: root,
+    targetId: TARGET_ID,
+    operationId: operation.operation_id,
+    resultDigest: published.result_digest,
+    now: at(1000),
+  });
+  assert.deepEqual(validateAdvisoryFinalizationPreflightReceipt(preflight), preflight);
+  assert.throws(
+    () => validateAdvisoryFinalizationPreflightReceipt({ ...preflight, target_id: `p_${"f".repeat(63)}` }),
+    expectCode("E_ADVISORY_PREFLIGHT_RECEIPT_INVALID"),
+  );
+
+  const finalized = await finalizeAdvisoryDecision({
+    stateRoot: root,
+    targetId: TARGET_ID,
+    operationId: operation.operation_id,
+    resultDigest: published.result_digest,
+    now: at(1000),
+  });
+  assert.deepEqual(validateAdvisoryFinalizationReceipt(finalized), finalized);
+  assert.throws(
+    () => validateAdvisoryFinalizationReceipt({ ...finalized, extra: true }),
+    expectCode("E_ADVISORY_FINALIZATION_RECEIPT_INVALID"),
   );
 });

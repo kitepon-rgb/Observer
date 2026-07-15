@@ -136,8 +136,8 @@ export function validateMessage(message, { now = new Date() } = {}) {
   return message;
 }
 
-export function sealMessage(content) {
+export function sealMessage(content, { now = new Date() } = {}) {
   const message = { ...content, content_digest: "sha256:" + "0".repeat(64) };
   message.content_digest = computeMessageDigest(message);
-  return validateMessage(message);
+  return validateMessage(message, { now });
 }

@@ -134,7 +134,11 @@ export async function runSupervisorProductionStep({
           if (cycleInput === null) fail("E_SUPERVISOR_CYCLE_INPUT_MISSING", "cycle applicationへcanonical inputを再構成できません");
           return (dependencies.applyCycleOutput ?? applyCycleOutput)({ stateRoot, operation, output, cycleInput, now: currentDate(dependencies) });
         },
-        finalizeAppliedCycle: ({ operation }) => (dependencies.finalizeCycleApplication ?? finalizeCycleApplication)({ stateRoot, operation }),
+        finalizeAppliedCycle: ({ operation }) => (dependencies.finalizeCycleApplication ?? finalizeCycleApplication)({
+          stateRoot,
+          operation,
+          now: currentDate(dependencies),
+        }),
       });
     } catch (error) {
       if (!(error instanceof ParentRebindRequired)) throw error;
