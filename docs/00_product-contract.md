@@ -245,6 +245,38 @@ Observerが行ってはならないもの:
 
 各観測サイクルの既定結果は`no_advisory`とする。
 
+Observer AIのhost非依存出力は`observer.ai_output.v1`のJSON object一件だけとする。正常進行では理由や
+通常会話を付けず、次のexact objectを返す。
+
+```json
+{"schema":"observer.ai_output.v1","outcome":"no_advisory"}
+```
+
+助言候補は一件だけとし、次のexact fieldを持つ。Markdown、code fence、前後の説明、配列による複数候補、
+provider／target／watch／cycleの自己申告を許さない。それらの相関はSupervisorが信頼済みcontextから束縛する。
+
+```json
+{
+  "schema": "observer.ai_output.v1",
+  "outcome": "advisory",
+  "proposal": {
+    "body": "放置した場合の実質的な影響",
+    "category": "verification_gap",
+    "dedupe_key": "verification:focused-gate",
+    "evidence_refs": ["test:focused-gate-missing"],
+    "severity": "warning",
+    "suggested_action": "親が検討できる一つの行動",
+    "title": "具体的なclaim"
+  }
+}
+```
+
+- severityは`info`、`warning`、`review_required`だけを許す。
+- categoryは`stagnation`、`scope_drift`、`repeated_failure`、`verification_gap`、`unknown_run`、
+  `plan_drift`、`overengineering`、`acceptance_mismatch`、`context_drift`だけを許す。
+- raw出力は16 KiB以下、evidenceは1〜16件とし、文字列fieldはMailbox message以下のbyte上限へ揃える。
+- digestはschema検証・固定順正規化後にSupervisor側で計算し、AIが返したdigestを信用しない。
+
 手紙には次の全てが必要。
 
 1. 具体的なclaim

@@ -1,5 +1,6 @@
 import { join } from "node:path";
 
+import { buildObserverAiPrompt } from "./observer-ai-contract.mjs";
 import { fail } from "./observer-error.mjs";
 import { validateParentLaunchRequest, validateParentStopRequest } from "./parent-launch.mjs";
 
@@ -64,7 +65,7 @@ export function buildCodexTurnStartParams({ request, threadId } = {}) {
   validateThreadId(threadId, "E_CODEX_THREAD_HANDLE_INVALID");
   return {
     threadId,
-    input: [{ type: "text", text: JSON.stringify(request.child_start) }],
+    input: [{ type: "text", text: buildObserverAiPrompt(request.child_start) }],
     cwd: request.runtime_root,
     approvalPolicy: "never",
     sandboxPolicy: { type: "readOnly", networkAccess: false },

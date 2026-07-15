@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { buildObserverAiPrompt } from "../src/observer-ai-contract.mjs";
 import {
   buildCodexInitializeParams,
   buildCodexThreadReadParams,
@@ -84,7 +85,7 @@ test("thread start/resumeと全turn cwdをObserver rootへ固定しtargetはenve
   assert.deepEqual(turn.sandboxPolicy, { type: "readOnly", networkAccess: false });
   assert.equal(turn.approvalPolicy, "never");
   assert.equal(turn.input.length, 1);
-  assert.deepEqual(JSON.parse(turn.input[0].text), request().child_start);
+  assert.equal(turn.input[0].text, buildObserverAiPrompt(request().child_start));
   assert.equal(turn.input[0].text.includes("/monitored/project"), true);
 });
 

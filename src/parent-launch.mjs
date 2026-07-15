@@ -1,5 +1,6 @@
 import { isAbsolute } from "node:path";
 
+import { resolveObserverProvider } from "./observer-ai-contract.mjs";
 import { fail } from "./observer-error.mjs";
 import { canonicalDirectory } from "./private-state.mjs";
 import { registerProjectTarget } from "./project-target.mjs";
@@ -205,7 +206,7 @@ function validateAuthorization(value, expectedIntent) {
   if (value.schema !== PARENT_AUTHORIZATION_SCHEMA || value.intent !== expectedIntent || !isProvider(value.parent_provider)) {
     fail("E_PARENT_AUTHORIZATION_REQUIRED", "利用者の明示指示を受けた現在親のauthorizationが必要です");
   }
-  return value.parent_provider;
+  return resolveObserverProvider(value.parent_provider);
 }
 
 function validateLaunchRequest(value) {

@@ -1,5 +1,6 @@
 import { isAbsolute, normalize, relative, sep } from "node:path";
 
+import { buildObserverAiPrompt } from "./observer-ai-contract.mjs";
 import { fail } from "./observer-error.mjs";
 import { validateParentLaunchRequest } from "./parent-launch.mjs";
 
@@ -28,11 +29,7 @@ export function buildClaudeBackgroundInvocation({ request, claudeCommand, mcpCon
   }
   validateMcpConfig(mcpConfig, request.runtime_root);
   const sortedTools = validateObserverTools(observerTools);
-  const prompt = [
-    "Observer child start envelopeを検証し、Observer MCPだけを使って監視を開始してください。",
-    "projectはread-onlyです。起動結果を推測せず、失敗は明示してください。",
-    JSON.stringify(request.child_start),
-  ].join("\n");
+  const prompt = buildObserverAiPrompt(request.child_start);
   const availableTools = ["Read", "Grep", "Glob", ...sortedTools].join(",");
   const allowedTools = sortedTools.join(",");
   const args = [

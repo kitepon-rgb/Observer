@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { buildObserverAiPrompt } from "../src/observer-ai-contract.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
 import {
   buildClaudeBackgroundInvocation,
@@ -73,6 +74,7 @@ test("Claude background argvは固定promptを可変長flagより前へ置きtoo
     "--disable-slash-commands", "--no-chrome", prompt,
   ]);
   assert.ok(prompt.includes('"schema":"observer.child_start.v1"'));
+  assert.equal(prompt, buildObserverAiPrompt(request().child_start));
   const mcpIndex = result.args.indexOf("--mcp-config");
   const toolsIndex = result.args.indexOf("--tools");
   const allowedIndex = result.args.indexOf("--allowedTools");
