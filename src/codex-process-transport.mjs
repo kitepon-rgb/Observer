@@ -7,6 +7,7 @@ import { dirname, isAbsolute, normalize } from "node:path";
 import { ObserverError, fail } from "./observer-error.mjs";
 
 export const CODEX_PROCESS_VERIFICATION_SCHEMA = "observer.codex_process_verification.v1";
+export const CODEX_PROCESS_TERMINAL_SCHEMA = "observer.codex_process_terminal.v1";
 export const SUPPORTED_CODEX_VERSION = "codex-cli 0.144.3";
 
 const MAX_LINE_BYTES = 1024 * 1024;
@@ -62,17 +63,22 @@ export class CodexProcessTransport {
   #stdout = Buffer.alloc(0);
   #stderrBytes = 0;
   #onNotification;
+  #terminal = null;
+  #resolveTerminal;
+  #terminalPromise;
 
   constructor(child, { onNotification = null } = {}) {
     validateChild(child);
     if (onNotification !== null && typeof onNotification !== "function") fail("E_CODEX_NOTIFICATION_HANDLER_INVALID", "Codex notification handlerが不正です");
     this.#child = child;
     this.#onNotification = onNotification;
+    this.#terminalPromise = new Promise((resolve) => { this.#resolveTerminal = resolve; });
     child.stdout.on("data", (chunk) => this.#consumeStdout(chunk));
     child.stdout.on("end", () => this.#abort("E_CODEX_TRANSPORT_UNKNOWN", "Codex app-server stdoutが終了しました"));
     child.stderr.on("data", (chunk) => this.#consumeStderr(chunk));
     child.on("error", () => this.#abort("E_CODEX_TRANSPORT_UNKNOWN", "Codex app-server process errorで結果が不明です"));
-    child.on("exit", () => this.#abort("E_CODEX_TRANSPORT_UNKNOWN", "Codex app-server process終了で結果が不明です"));
+    child.on("exit", () => this.#abort("E_CODEX_TRANSPORT_UNKNOWN", "Codex app-server process終了で結果が不明です", false));
+    child.on("close", (code, signal) => this.#recordTerminal(code, signal));
   }
 
   request(method, params) {
@@ -96,6 +102,34 @@ export class CodexProcessTransport {
   close() {
     if (this.#closed) return;
     this.#abort("E_CODEX_TRANSPORT_CLOSED", "Codex app-server transportを明示終了しました");
+  }
+
+  async closeAndWait({ terminateGraceMs = 1_000, killGraceMs = 1_000 } = {}) {
+    if (![terminateGraceMs, killGraceMs].every((value) => Number.isSafeInteger(value) && value >= 0 && value <= 60_000)) {
+      fail("E_CODEX_PROCESS_TERMINATION_CONFIG", "Codex process終了待機設定が不正です");
+    }
+    this.close();
+    if (this.#terminal !== null) return structuredClone(this.#terminal);
+    let killTimer;
+    let unknownTimer;
+    const unknown = new Promise((_resolve, reject) => {
+      killTimer = setTimeout(() => {
+        if (this.#terminal === null) {
+          try { this.#child.kill("SIGKILL"); } catch {}
+        }
+      }, terminateGraceMs);
+      unknownTimer = setTimeout(() => {
+        if (this.#terminal === null) {
+          reject(new ObserverError("E_CODEX_PROCESS_TERMINATION_UNKNOWN", "Codex app-server processの終了を確認できません"));
+        }
+      }, terminateGraceMs + killGraceMs);
+    });
+    try {
+      return await Promise.race([this.#terminalPromise, unknown]);
+    } finally {
+      clearTimeout(killTimer);
+      clearTimeout(unknownTimer);
+    }
   }
 
   #write(message) {
@@ -187,14 +221,30 @@ export class CodexProcessTransport {
     if (this.#closed) fail("E_CODEX_TRANSPORT_CLOSED", "Codex app-server transportは終了済みです");
   }
 
-  #abort(code, message) {
+  #abort(code, message, terminate = true) {
     if (this.#closed) return;
     this.#closed = true;
     const error = new ObserverError(code, message);
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
     try { this.#child.stdin.end(); } catch {}
-    try { if (!this.#child.killed) this.#child.kill("SIGTERM"); } catch {}
+    if (terminate) {
+      try { this.#child.kill("SIGTERM"); } catch {}
+    }
+  }
+
+  #recordTerminal(exitCode, signal) {
+    if (this.#terminal !== null) return;
+    this.#abort("E_CODEX_TRANSPORT_UNKNOWN", "Codex app-server process終了で結果が不明です", false);
+    const normalizedExitCode = Number.isInteger(exitCode) ? exitCode : null;
+    const normalizedSignal = typeof signal === "string" && signal.length > 0 ? signal : null;
+    this.#terminal = {
+      schema: CODEX_PROCESS_TERMINAL_SCHEMA,
+      status: "closed",
+      exit_code: normalizedExitCode,
+      signal: normalizedSignal,
+    };
+    this.#resolveTerminal(structuredClone(this.#terminal));
   }
 }
 

@@ -30,6 +30,7 @@ class FakeChild extends EventEmitter {
     this.stderr = new PassThrough();
     this.lines = [];
     this.killed = false;
+    this.signals = [];
     this.stdin = new Writable({
       write: (chunk, _encoding, callback) => {
         this.lines.push(chunk.toString("utf8"));
@@ -40,6 +41,7 @@ class FakeChild extends EventEmitter {
 
   kill(signal) {
     this.killed = signal;
+    this.signals.push(signal);
     return true;
   }
 
@@ -135,6 +137,35 @@ test("process切断はpendingをunknownにしてtransport内で再送しない",
   await assert.rejects(pending, expectCode("E_CODEX_TRANSPORT_UNKNOWN"));
   assert.equal(child.lines.length, 1);
   assert.throws(() => transport.request("turn/start", { threadId: "one" }), expectCode("E_CODEX_TRANSPORT_CLOSED"));
+});
+
+test("terminal closeを待ち、grace超過ではSIGKILL後のcloseだけを成功にする", async () => {
+  const child = new FakeChild();
+  const originalKill = child.kill.bind(child);
+  child.kill = (signal) => {
+    const result = originalKill(signal);
+    if (signal === "SIGKILL") queueMicrotask(() => child.emit("close", null, "SIGKILL"));
+    return result;
+  };
+  const transport = new CodexProcessTransport(child);
+  const terminal = await transport.closeAndWait({ terminateGraceMs: 0, killGraceMs: 20 });
+  assert.deepEqual(child.signals, ["SIGTERM", "SIGKILL"]);
+  assert.deepEqual(terminal, {
+    schema: "observer.codex_process_terminal.v1",
+    status: "closed",
+    exit_code: null,
+    signal: "SIGKILL",
+  });
+});
+
+test("SIGKILL後もcloseを確認できなければ終了不明をfail loudにする", async () => {
+  const child = new FakeChild();
+  const transport = new CodexProcessTransport(child);
+  await assert.rejects(
+    transport.closeAndWait({ terminateGraceMs: 0, killGraceMs: 0 }),
+    expectCode("E_CODEX_PROCESS_TERMINATION_UNKNOWN"),
+  );
+  assert.deepEqual(child.signals, ["SIGTERM", "SIGKILL"]);
 });
 
 test("不正JSONLとoversize stderrはpendingをfail closedにする", async () => {
