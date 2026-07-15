@@ -77,12 +77,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - 成果物: `observer-wait`、`observer-read`とThroughline側test。詳細TODOはThroughline側正本で管理する。
   - 完了条件: Claude／Codex両hostでin-flight除外、即時changed、待機changed、timeout、呼出競合、thread／host switch、rollback、再起動のgateがThroughline repoでgreenになる。
 
-- [x] **P1-3 Observerからblack-box検証する。**
+- [ ] **P1-3 Observerからblack-box検証する。**
   - 成果物: Observer MCP adapterからThroughline公開CLIだけを使うcontract test。
   - 完了条件: 短縮timeout fixtureでchanged / timeout / missed-wakeup防止を再現し、Throughline実CLIを通した65秒超live callと3600秒設定が受理される。
-  - 実装: `test/throughline-black-box.integration.mjs`から実Throughline CLIだけを起動し、待機中changed、
+  - [x] `test/throughline-black-box.integration.mjs`から実Throughline CLIだけを起動し、待機中changed、
     1秒timeout、呼出前completionの即時changed、DB未projection時の`projection_pending`を2.27秒で固定した。
     Throughline側の隔離HOME black-boxで65秒超live changedと3600秒設定は確認済み。Control revision 49で親受入済み。
+  - [ ] Observer MCP adapterを実装し、同じblack-box境界をMCP tool wireから通す。
 
 **Gate:** ObserverがThroughlineのDB / WALへ依存せず、新規turnを失わず待てる。
 
