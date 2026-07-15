@@ -196,7 +196,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
           crash recoveryと非永続inputを固定した（[ADR 0036](adr/0036-cycle-generation-exact-once-transaction.md)、
           [ADR 0037](adr/0037-cycle-generation-exact-once-acceptance.md)）。
         - cursor、dedupe／cooldown receipt、boundedな未解決仮説だけを引き継ぎ、raw会話／tool logは保存しない。
-        - [ ] Claude／Codex固有のterminal stopと次generation startを接続し、旧terminal不明では新世代を起動しない。
+        - [ ] Claude／Codex固有のterminal stopと次generation startを、watch継続の短命host journalと
+          旧→新handle CASで接続し、旧terminal不明では新世代を起動しない
+          （[ADR 0038](adr/0038-generation-host-rollover-transaction.md)）。
         - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
