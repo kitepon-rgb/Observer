@@ -5,7 +5,8 @@
   "type": "module",
   "bin": {
     "observer": "bin/observer.mjs",
-    "observer-mcp": "bin/observer-mcp.mjs"
+    "observer-mcp": "bin/observer-mcp.mjs",
+    "observer-parent-stop-hook": "bin/observer-parent-stop-hook.mjs"
   },
   "engines": {
     "node": ">=22.13"

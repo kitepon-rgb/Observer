@@ -315,13 +315,26 @@ at-most-once advisory delivery
 - atomic claim後は同じmessage IDを再配送しない。
 - 正常配送後は本文を削除する。
 - claim後の不明終了は`delivery_unknown`とし、同じ本文を再配送しない。
-- 正常receiptのresultは`emitted_unacked`とする。Hook JSONを正常に出力してexit 0に到達したことだけを表し、Hostが親contextへ採用したというackを偽装しない。
+- 正常receiptのresultは`emitted_unacked`とする。Hook JSONのstdout書込が完了し、local finalizeが成功して
+  hook processが正常終了へ進める状態になったことだけを表す。Hostがstdoutを読んだこと、親contextへ採用したこと、
+  continuationが実行されたことのackは偽装しない。
 - Host ackが存在しないv1では`delivered`というresult名を使わない。
 - receiptには本文を含めず、boundedなdigestと配送metadataだけを残す。
 - 完了receiptの既定retentionは30日かつ最大1000件とし、古いものから削除する。未完了の`claimed` receiptは件数・日数cleanupで自動削除せず、明示recoveryの対象とする。
 - consumer lockはowner nonceを持つ。残留lockは観測したnonceを指定する明示recoveryだけで削除し、時刻だけを根拠に自動破棄しない。
 
-親Stop hook adapterは有効な手紙をclaimした時だけ、実証済みのhost固有wireでboundedなadvisoryを同じ親turnへ返す。Codexの`decision:"block"`と`reason`はCodex adapterだけのwireとし、Claude adapterはClaudeの正式event／payload／continuation契約をPhase 0で確定してから実装する。plain stdoutや上位roleへの偽装は使わない。
+親Stop hook adapterは有効な手紙をclaimした時だけ、実証済みのhost固有wireでboundedなadvisoryを同じ親turnへ返す。
+Codexは`decision:"block"`と`reason`、Claudeは`hookSpecificOutput.hookEventName="Stop"`と
+`additionalContext`を使う。plain stdout、exit 2、上位roleへの偽装は使わない。
+
+- 両hostのpayloadで`session_id`をraw parent thread identityとして使う。raw IDはroute照合とhook event digest生成中だけ保持し、
+  message、receipt、logへ保存しない。Codexの`turn_id`とClaudeの`prompt_id`もdigest入力に限定する。
+- `stop_hook_active=true`のStopでは新しいmessageをclaimしない。同じ親turnで複数のObserver助言を連続注入せず、
+  残りは次の通常Stopまでinboxへ残す。
+- advisoryはtitle、severity、category、body、evidence、suggested actionを固定順に描画し、全体を16 KiB以下にboundする。
+  制御文字は正規化し、message schemaの上限内でもhook contextを無制限に増やさない。
+- claim後にrender、stdout書込、final receipt更新のいずれかが失敗した場合は`delivery_unknown`へ回収し、同じ本文を再配送しない。
+  回収自体も失敗した時は非0で表面化し、claimed receiptを明示recovery対象として残す。
 
 親Stop hookは、Mailboxなしのfast pathで短時間に終了する。外部LLM、network、大規模project scan、long-pollへ同期依存しない。複数Stop hookは並行起動されるため、Throughline側のchanged判定は最終的な`task_complete`まで進めない。
 

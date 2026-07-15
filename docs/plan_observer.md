@@ -238,6 +238,20 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 - [ ] **P3-4 親Stop hook adapterを実装する。**
   - 成果物: Claude／Codex別のMailbox fast path、bounded advisory render、installer / verify / rollback。
   - 完了条件: 両hostでMailboxなしなら短時間で終了し、一件の手紙を同じ親turnへ一度だけ正式なcontinuation promptとして注入できる。
+  - [x] **P3-4a Observer所有のparent Stop hook coreを実装した（[ADR 0021](adr/0021-parent-stop-hook-core.md)）。**
+    - Claudeは正式な`Stop`の`hookSpecificOutput.additionalContext`、Codexは正式な
+      `decision:"block" + reason`だけを使う。
+    - raw `session_id`はroute照合中だけ使い、receiptにはprovider／turn相関のdigestだけを残す。
+    - `stop_hook_active=true`では新しい手紙をclaimせず、一つの親turnへObserver助言を最大一件にする。
+    - claim後のrender、stdout、finalize失敗は本文を再配送せず`delivery_unknown`へ回収する。
+    - focused gate: `node --test test/parent-stop-hook.test.mjs test/mailbox-consumer.test.mjs test/mailbox-routing.test.mjs` — 18/18 PASS。
+    - `npm run check` PASS。continued turnの実CLI fast pathはexit 0／stdoutなしを確認した。
+  - [ ] **P3-4b installer / verify / rollbackを実装する。**
+    - Observer側がhook commandと設定fragment生成／検証を所有し、dotagentsは工場配布adapterだけを所有する。
+    - 既存hookを上書きせず合成し、Codexでは`async:true`を使わず同期fast pathとして配線する。
+  - [ ] **P3-4c live host gateを実証する（H）。**
+    - Claude／Codex各一回で、Mailboxなしのfast exitと一件の同一turn continuationを確認する。
+    - Host ackが無いv1ではreceiptを`delivered`へ格上げしない。
 
 **Gate:** 手動publishした手紙が正しい親へ最大一回だけ届き、本文が残らない。
 
