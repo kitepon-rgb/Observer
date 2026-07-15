@@ -77,13 +77,16 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - 成果物: `observer-wait`、`observer-read`とThroughline側test。詳細TODOはThroughline側正本で管理する。
   - 完了条件: Claude／Codex両hostでin-flight除外、即時changed、待機changed、timeout、呼出競合、thread／host switch、rollback、再起動のgateがThroughline repoでgreenになる。
 
-- [ ] **P1-3 Observerからblack-box検証する。**
+- [x] **P1-3 Observerからblack-box検証する。**
   - 成果物: Observer MCP adapterからThroughline公開CLIだけを使うcontract test。
   - 完了条件: 短縮timeout fixtureでchanged / timeout / missed-wakeup防止を再現し、Throughline実CLIを通した65秒超live callと3600秒設定が受理される。
   - [x] `test/throughline-black-box.integration.mjs`から実Throughline CLIだけを起動し、待機中changed、
     1秒timeout、呼出前completionの即時changed、DB未projection時の`projection_pending`を2.27秒で固定した。
     Throughline側の隔離HOME black-boxで65秒超live changedと3600秒設定は確認済み。Control revision 49で親受入済み。
-  - [ ] Observer MCP adapterを実装し、同じblack-box境界をMCP tool wireから通す。
+  - [x] Observer MCP adapterを実装し、同じblack-box境界をMCP tool wireから通す。
+    - MCP 2025-11-25／2025-06-18のinitialize、固定`observer_read`／`observer_wait`、active watch identity、
+      structured/text result、cancel／stdin shutdown、stdout衛生を[ADR 0013](adr/0013-observer-mcp-stdio-contract.md)へ固定した。
+      `node --test test/mcp-server.test.mjs test/throughline-client.test.mjs`は10/10 PASS。
 
 **Gate:** ObserverがThroughlineのDB / WALへ依存せず、新規turnを失わず待てる。
 
@@ -143,6 +146,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
         job相関、terminal先行stop、raw出力非保持を実装した（[ADR 0012](adr/0012-claude-host-adapter-contract.md)）。
         検証: `node --test test/claude-host-adapter.test.mjs test/parent-launch.test.mjs` 14/14 PASS。
       - [ ] 実行層でClaude CLI／Observer MCP executableのrealpath・version・所有を検証し、spawn／observe／stopをparent-launchへ配線する。
+        Observer MCP executableと`--version`入口は実装済み。realpath／所有検証とClaude host配線は未完。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**

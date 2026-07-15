@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "bin": {
-    "observer": "bin/observer.mjs"
+    "observer": "bin/observer.mjs",
+    "observer-mcp": "bin/observer-mcp.mjs"
   },
   "engines": {
     "node": ">=22.13"
