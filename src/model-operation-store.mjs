@@ -3,7 +3,8 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { observerAiOutputDigest, parseObserverAiOutput } from "./observer-ai-contract.mjs";
 import { fail, ObserverError } from "./observer-error.mjs";
-import { acquirePrivateLock, assertPrivateDirectory, assertWithin, atomicCreatePrivateFile, atomicReplacePrivateFile, readPrivateJson, removePrivateFile } from "./private-state.mjs";
+import { acquirePrivateLock, assertPrivateDirectory, assertWithin, atomicCreatePrivateFile, atomicReplacePrivateFile, inspectPrivateLock, readPrivateJson, recoverPrivateLock, removePrivateFile } from "./private-state.mjs";
+import { readCycleState } from "./cycle-store.mjs";
 import { readGenerationState, reserveGenerationInput } from "./generation-store.mjs";
 
 export const MODEL_OPERATION_SCHEMA = "observer.model_operation.v1";
@@ -21,6 +22,13 @@ export async function prepareModelOperation(input, dependencies = {}) {
   return transaction(input.stateRoot, input.targetId, dependencies, async ({ journalPath }) => {
     const expected = create(input, now(dependencies)); const existing = await read(journalPath);
     if (existing === null) { await atomicCreatePrivateFile(journalPath, serialize(expected)); return receipt(expected, "prepared", "created"); }
+    if (existing.status === "prepared" && sameIdentityExceptGeneration(existing, expected)) {
+      if (existing.generation_id === expected.generation_id) return receipt(existing, "prepared", "existing");
+      const generation = await (dependencies.readGenerationState ?? readGenerationState)({ stateRoot: input.stateRoot, targetId: input.targetId });
+      if (generation === null || generation.provider !== input.provider || generation.watch_id !== input.watchId || generation.generation_id !== input.generationId || generation.pending_reservation !== null) fail("E_MODEL_OPERATION_GENERATION_MISMATCH", "current generationがnew prepared operationと一致しません");
+      await atomicReplacePrivateFile(journalPath, serialize(expected));
+      return receipt(expected, "prepared", "old_prepared_replaced");
+    }
     requireSameIdentity(existing, expected); return receipt(existing, existing.status === "prepared" ? "prepared" : "recover_only", "existing");
   });
 }
@@ -32,6 +40,9 @@ export async function reserveModelOperation(input, dependencies = {}) {
     if (state.status !== "prepared" && state.status !== "reserved") return receipt(state, "recover_only", "already_dispatched");
     const generation = await (dependencies.readGenerationState ?? readGenerationState)({ stateRoot: input.stateRoot, targetId: input.targetId });
     if (generation === null || generation.provider !== state.provider || generation.watch_id !== state.watch_id || generation.generation_id !== state.generation_id) fail("E_MODEL_OPERATION_GENERATION_MISMATCH", "generation identityがoperationと一致しません");
+    if (["rollover_requested", "stopping", "terminal_confirmed"].includes(generation.status) && generation.pending_reservation === null && state.status === "prepared") {
+      return receipt(state, "rollover_required", "generation_rollover_planned");
+    }
     const reserved = await (dependencies.reserveGenerationInput ?? reserveGenerationInput)({ stateRoot: input.stateRoot, targetId: input.targetId, watchId: input.watchId, cycleId: input.cycleId, inputDigest: input.inputDigest, modelVisibleBytes: input.modelVisibleBytes }, dependencies.generationDependencies ?? {});
     if (reserved.outcome !== "reserved") return receipt(state, "rollover_required", "generation_rollover_planned");
     const next = state.status === "reserved" ? state : transition(state, { status: "reserved" }, dependencies);
@@ -63,7 +74,7 @@ export async function completeModelOperation({ stateRoot, targetId, operationId,
     const state = await requireJournal(journalPath); requireOperationId(state, operationId);
     const output = parseObserverAiOutput(rawOutput); const outputDigest = `sha256:${observerAiOutputDigest(output)}`;
     if (state.status === "completed") { if (state.completed_output_digest !== outputDigest) fail("E_MODEL_OPERATION_OUTPUT_CONFLICT", "completed outputが一致しません"); return receipt(state, "recover_only", "completed"); }
-    if (!new Set(["dispatching", "accepted"]).has(state.status)) fail("E_MODEL_OPERATION_TRANSITION_INVALID", "dispatchingまたはacceptedだけをcompletedへ進められます");
+    if (state.status !== "accepted") fail("E_MODEL_OPERATION_TRANSITION_INVALID", "acceptedだけをcompletedへ進められます");
     const next = transition(state, { status: "completed", completed_output: output, completed_output_digest: outputDigest }, dependencies); await atomicReplacePrivateFile(journalPath, serialize(next)); return receipt(next, "apply_only", "completed");
   });
 }
@@ -84,7 +95,29 @@ export async function applyModelOperation({ stateRoot, targetId, operationId, ap
 }
 
 export async function readModelOperation({ stateRoot, targetId }) { const paths = await pathsFor(stateRoot, targetId); if (paths === null) return null; const state = await read(paths.journalPath); return state === null ? null : publicState(state); }
-export async function cleanupAppliedModelOperation({ stateRoot, targetId, operationId }, dependencies = {}) { return cleanup(stateRoot, targetId, operationId, new Set(["applied"]), dependencies); }
+export async function inspectModelOperationLock({ stateRoot, targetId }) {
+  if (!TARGET.test(targetId)) fail("E_MODEL_OPERATION_IDENTITY_INVALID", "target IDが不正です");
+  const paths = await pathsFor(stateRoot, targetId);
+  return paths === null ? null : inspectPrivateLock(paths.lockPath);
+}
+export async function recoverModelOperationLock({ stateRoot, targetId, expectedNonce }) {
+  if (!TARGET.test(targetId) || typeof expectedNonce !== "string" || expectedNonce.length === 0) fail("E_MODEL_OPERATION_LOCK_NONCE_REQUIRED", "expected lock nonceが必要です");
+  const paths = await pathsFor(stateRoot, targetId);
+  if (paths === null) fail("E_MODEL_OPERATION_NOT_FOUND", "target stateがありません");
+  return recoverPrivateLock(paths.lockPath, expectedNonce);
+}
+export async function cleanupAppliedModelOperation({ stateRoot, targetId, operationId }, dependencies = {}) {
+  return transaction(stateRoot, targetId, dependencies, async ({ journalPath }) => {
+    const state = await requireJournal(journalPath);
+    requireOperationId(state, operationId);
+    if (state.status !== "applied") fail("E_MODEL_OPERATION_CLEANUP_FORBIDDEN", "applied operationだけをcleanupできます");
+    const cycle = await (dependencies.readCycleState ?? readCycleState)({ stateRoot, targetId });
+    const pending = cycle?.pending_cycle;
+    if (pending === null || pending?.status !== "processed" || pending.watch_id !== state.watch_id || pending.cycle_id !== state.cycle_id || pending.input_digest !== state.input_digest || pending.model_visible_bytes !== state.model_visible_bytes || pending.result_digest !== state.applied_result_digest) fail("E_MODEL_OPERATION_CLEANUP_FORBIDDEN", "durable processed cycleがapplied operationと一致しません");
+    await removePrivateFile(journalPath);
+    return { schema: MODEL_OPERATION_RECEIPT_SCHEMA, operation_id: state.operation_id, status: state.status, action: "cleaned", reason: "processed_cycle_matched" };
+  });
+}
 export async function cleanupPreparedModelOperation({ stateRoot, targetId, operationId }, dependencies = {}) { return cleanup(stateRoot, targetId, operationId, new Set(["prepared"]), dependencies); }
 
 async function cleanup(stateRoot, targetId, operationId, allowed, dependencies) { return transaction(stateRoot, targetId, dependencies, async ({ journalPath }) => { const state = await requireJournal(journalPath); requireOperationId(state, operationId); if (!allowed.has(state.status)) fail("E_MODEL_OPERATION_CLEANUP_FORBIDDEN", "このoperation statusはcleanupできません"); await removePrivateFile(journalPath); return { schema: MODEL_OPERATION_RECEIPT_SCHEMA, operation_id: state.operation_id, status: state.status, action: "cleaned", reason: "journal_removed" }; }); }
@@ -103,6 +136,7 @@ async function requireJournal(path) { const state = await read(path); if (state 
 function validateIdentity(input) { if (!input || !TARGET.test(input.targetId) || !WATCH.test(input.watchId) || !DIGEST.test(input.generationId) || !CYCLE.test(input.cycleId) || !["claude", "codex"].includes(input.provider) || !isAbsolute(input.stateRoot)) fail("E_MODEL_OPERATION_IDENTITY_INVALID", "model operation identityが不正です"); }
 function requireMatchesInput(state, input) { const expected = create(input, state.created_at); requireSameIdentity(state, expected); }
 function requireSameIdentity(actual, expected) { for (const key of ["provider", "target_id", "watch_id", "generation_id", "cycle_id", "input_digest", "model_visible_bytes", "operation_id"]) if (actual[key] !== expected[key]) fail("E_MODEL_OPERATION_CONFLICT", "既存model operation identityが一致しません"); }
+function sameIdentityExceptGeneration(actual, expected) { return ["provider", "target_id", "watch_id", "cycle_id", "input_digest", "model_visible_bytes"].every((key) => actual[key] === expected[key]); }
 function requireOperationId(state, operationId) { requireDigest(operationId, "operation ID"); if (state.operation_id !== operationId) fail("E_MODEL_OPERATION_CONFLICT", "operation IDが一致しません"); }
 function validate(value) {
   plain(value); exact(value, KEYS);
