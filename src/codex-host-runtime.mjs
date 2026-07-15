@@ -39,6 +39,7 @@ export const CODEX_HOST_RESUME_RESULT_SCHEMA = "observer.codex_host_resume_resul
 export const CODEX_HOST_STOP_RESULT_SCHEMA = "observer.codex_host_stop_result.v1";
 export const CODEX_GENERATION_ACTIVATION_RESULT_SCHEMA = "observer.codex_generation_activation_result.v1";
 export const CODEX_GENERATION_RECOVERY_RESULT_SCHEMA = "observer.codex_generation_recovery_result.v1";
+export const CODEX_GENERATION_TERMINAL_RESULT_SCHEMA = "observer.codex_generation_terminal_result.v1";
 
 const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const JOURNAL_STATUSES = new Set([
@@ -46,6 +47,7 @@ const JOURNAL_STATUSES = new Set([
   "running", "stopping", "completed", "interrupted", "failed",
 ]);
 const TERMINAL_STATUSES = new Set(["completed", "interrupted", "failed"]);
+const GENERATION_TERMINAL_OBSERVATION_STATUSES = new Set(["running", "stopping", ...TERMINAL_STATUSES]);
 const claimedSessions = new WeakSet();
 const initializedSessions = new WeakSet();
 
@@ -231,6 +233,56 @@ export async function recoverCodexGenerationReady({ stateRoot, request, session,
     ...generationRecovery("ready", null, hostReceipt(request, "ready", journal.thread_id)),
     operation: operationFromJournal(journal),
   };
+}
+
+export async function observeCodexGenerationTerminal({ stateRoot, request, session, generationId } = {}, dependencies = {}) {
+  requireCodexLaunchRequest(request);
+  requireInitializedSession(session);
+  requireGenerationId(generationId);
+  let journal;
+  try {
+    journal = await readJournal({ stateRoot, request, generationId });
+  } catch (error) {
+    if (error instanceof ObserverError && error.code === "E_CODEX_JOURNAL_NOT_FOUND") {
+      return generationTerminalObservation(request, generationId, "unknown", "journal_missing", null);
+    }
+    return generationTerminalObservation(request, generationId, "unknown", "journal_unreadable", null);
+  }
+  if (!GENERATION_TERMINAL_OBSERVATION_STATUSES.has(journal.status)) {
+    return generationTerminalObservation(request, generationId, "unknown", journal.status, null);
+  }
+  if (journal.thread_id === null || journal.turn_id === null) {
+    return generationTerminalObservation(request, generationId, "unknown", "durable_handle_missing", null);
+  }
+  let observation;
+  try {
+    observation = await readCodexObserverThread({ request, threadId: journal.thread_id, session }, dependencies);
+  } catch {
+    return generationTerminalObservation(request, generationId, "unknown", "thread_read_failed", null);
+  }
+  const turn = observation.turns.find((entry) => entry.turn_id === journal.turn_id);
+  if (!turn) return generationTerminalObservation(request, generationId, "unknown", "durable_turn_missing", null);
+  if (TERMINAL_STATUSES.has(turn.status)) {
+    if (journal.terminal_status !== null && journal.terminal_status !== turn.status) {
+      return generationTerminalObservation(request, generationId, "unknown", "terminal_status_mismatch", null);
+    }
+    return generationTerminalObservation(request, generationId, "terminal", null, {
+      schema: "observer.codex_generation_terminal_receipt.v1",
+      provider: "codex",
+      watch_id: request.watch_id,
+      target_id: request.target_id,
+      generation_id: generationId,
+      terminal_status: turn.status,
+      observed_at: observation.observed_at,
+    });
+  }
+  if (turn.status === "inProgress") {
+    if (journal.terminal_status !== null) {
+      return generationTerminalObservation(request, generationId, "unknown", "terminal_status_mismatch", null);
+    }
+    return generationTerminalObservation(request, generationId, "pending", "turn_in_progress", null);
+  }
+  return generationTerminalObservation(request, generationId, "unknown", "turn_status_unknown", null);
 }
 
 export async function recoverCodexObserverReady({ stateRoot, request, session, generationId = null } = {}, dependencies = {}) {
@@ -504,6 +556,19 @@ function requireGenerationId(value) {
 
 function generationRecovery(outcome, reason, receipt) {
   return { schema: CODEX_GENERATION_RECOVERY_RESULT_SCHEMA, outcome, reason, receipt };
+}
+
+function generationTerminalObservation(request, generationId, outcome, reason, receipt) {
+  return {
+    schema: CODEX_GENERATION_TERMINAL_RESULT_SCHEMA,
+    provider: "codex",
+    watch_id: request.watch_id,
+    target_id: request.target_id,
+    generation_id: generationId,
+    outcome,
+    reason,
+    receipt,
+  };
 }
 
 function validateTimestamp(value) {

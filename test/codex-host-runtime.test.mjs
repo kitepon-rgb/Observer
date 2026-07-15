@@ -8,6 +8,7 @@ import {
   activateCodexObserver,
   activateCodexGenerationObserver,
   initializeCodexObserverSession,
+  observeCodexGenerationTerminal,
   readCodexObserverThread,
   recoverCodexGenerationReady,
   recoverCodexGenerationSpawn,
@@ -22,6 +23,7 @@ import { ObserverError } from "../src/observer-error.mjs";
 const ROOT = "/Users/kite/Developer/Observer";
 const THREAD_ID = "019f62a1-1111-7111-8111-111111111111";
 const TURN_ID = "019f62a2-2222-7222-8222-222222222222";
+const OTHER_TURN_ID = "019f62a6-6666-7666-8666-666666666666";
 const TARGET_ID = `p_${"a".repeat(64)}`;
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
 const NOW = "2026-07-15T05:00:00.000Z";
@@ -395,4 +397,84 @@ test("Codex generation turn_start_unknown recoveryは別turnを開始しない",
   assert.equal(recovered.reason, "turn_start_unknown");
   assert.equal(recovered.receipt, null);
   assert.equal(turns, 1);
+});
+
+test("Codex generation terminal観測は同一durable turnのterminalだけをraw handleなしでreceipt化する", async (t) => {
+  const root = await stateRoot(t);
+  const session = new FakeSession(async (method) => {
+    if (method === "thread/start") return threadResult();
+    if (method === "turn/start") return { turn: { id: TURN_ID, status: "inProgress", items: [] } };
+    if (method === "thread/read") return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: TURN_ID, status: "completed", items: [] }] } };
+    throw new Error(`unexpected ${method}`);
+  });
+  await initialize(session);
+  const spawned = await spawnCodexGenerationObserverThread({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  await activateCodexGenerationObserver({
+    stateRoot: root, request: launchRequest(), spawnResult: spawned, session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+
+  const observed = await observeCodexGenerationTerminal({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+
+  assert.deepEqual(observed, {
+    schema: "observer.codex_generation_terminal_result.v1",
+    provider: "codex",
+    watch_id: WATCH_ID,
+    target_id: TARGET_ID,
+    generation_id: GENERATION_ID,
+    outcome: "terminal",
+    reason: null,
+    receipt: {
+      schema: "observer.codex_generation_terminal_receipt.v1",
+      provider: "codex",
+      watch_id: WATCH_ID,
+      target_id: TARGET_ID,
+      generation_id: GENERATION_ID,
+      terminal_status: "completed",
+      observed_at: NOW,
+    },
+  });
+  assert.doesNotMatch(JSON.stringify(observed), new RegExp(`${THREAD_ID}|${TURN_ID}`));
+  assert.deepEqual(session.calls.map((entry) => entry[1]).filter(Boolean), ["initialize", "initialized", "thread/start", "turn/start", "thread/read"]);
+});
+
+test("Codex generation terminal観測はinProgressをpendingとして返し、別turnやjournal欠損へfallbackしない", async (t) => {
+  const root = await stateRoot(t);
+  let reads = 0;
+  const session = new FakeSession(async (method) => {
+    if (method === "thread/start") return threadResult();
+    if (method === "turn/start") return { turn: { id: TURN_ID, status: "inProgress", items: [] } };
+    if (method === "thread/read") {
+      reads += 1;
+      return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: reads === 1 ? TURN_ID : OTHER_TURN_ID, status: "inProgress", items: [] }] } };
+    }
+    throw new Error(`unexpected ${method}`);
+  });
+  await initialize(session);
+  const missing = await observeCodexGenerationTerminal({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  });
+  assert.equal(missing.outcome, "unknown");
+  assert.equal(missing.reason, "journal_missing");
+
+  const spawned = await spawnCodexGenerationObserverThread({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  await activateCodexGenerationObserver({
+    stateRoot: root, request: launchRequest(), spawnResult: spawned, session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  const pending = await observeCodexGenerationTerminal({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  assert.equal(pending.outcome, "pending");
+  assert.equal(pending.reason, "turn_in_progress");
+  const mismatched = await observeCodexGenerationTerminal({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  assert.equal(mismatched.outcome, "unknown");
+  assert.equal(mismatched.reason, "durable_turn_missing");
+  assert.deepEqual(session.calls.map((entry) => entry[1]).filter(Boolean), ["initialize", "initialized", "thread/start", "turn/start", "thread/read", "thread/read"]);
 });
