@@ -74,7 +74,7 @@ test("publishはconsumer lock中へ割り込まずfail closedにする", async (
   assert.equal(published.messageId, "obs-20260714-0001");
 });
 
-test("digest不一致、期限切れ、secretらしき本文を拒否する", async () => {
+test("digest不一致、期限切れ、secretらしき本文とdedupe keyを拒否する", async () => {
   const root = await stateRoot();
   const digestMismatch = sealMessage(messageContent());
   digestMismatch.body = "改ざん";
@@ -90,6 +90,11 @@ test("digest不一致、期限切れ、secretらしき本文を拒否する", as
 
   assert.throws(
     () => sealMessage(messageContent({ body: "-----BEGIN PRIVATE KEY-----" })),
+    (error) => error instanceof ObserverError && error.code === "E_MESSAGE_SENSITIVE_CONTENT",
+  );
+
+  assert.throws(
+    () => sealMessage(messageContent({ dedupe_key: `sk-proj-${"a".repeat(24)}` })),
     (error) => error instanceof ObserverError && error.code === "E_MESSAGE_SENSITIVE_CONTENT",
   );
 });

@@ -91,7 +91,7 @@ export function computeMessageDigest(message) {
 }
 
 function assertNoSensitiveContent(message) {
-  const text = [message.title, message.body, message.suggested_action, ...message.evidence_refs].join("\n");
+  const text = [message.dedupe_key, message.title, message.body, message.suggested_action, ...message.evidence_refs].join("\n");
   if (SENSITIVE_PATTERNS.some((pattern) => pattern.test(text))) {
     fail("E_MESSAGE_SENSITIVE_CONTENT", "手紙へsecretまたはcredentialらしき内容を保存できません");
   }
