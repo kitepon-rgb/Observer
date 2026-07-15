@@ -2,7 +2,7 @@ import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
 import { fail } from "./observer-error.mjs";
-import { ensureMailbox } from "./mailbox-store.mjs";
+import { ensureMailbox, validateConsumerReceiptEvidence, validatePublishReceipt } from "./mailbox-store.mjs";
 import { resolveAuthoritativeMailboxRoute, validateMailboxRoute } from "./mailbox-routing.mjs";
 import { validateMessage } from "./message-schema.mjs";
 import {
@@ -288,12 +288,17 @@ export async function cleanupReceipts({
   const paths = await ensureMailbox(stateRoot, targetId);
   const release = await acquirePrivateLock(join(paths.root, "consumer.lock"));
   try {
+    const protectedByPreparedPublish = new Set();
+    for (const fileName of (await readdir(paths["publish-receipts"])).filter((name) => name.endsWith(".json"))) {
+      const publishReceipt = validatePublishReceipt(await readPrivateJson(join(paths["publish-receipts"], fileName)));
+      if (publishReceipt.status === "prepared") protectedByPreparedPublish.add(`${publishReceipt.message_id}.json`);
+    }
     const completed = [];
     for (const fileName of (await readdir(paths.receipts)).filter((name) => name.endsWith(".json"))) {
       const path = join(paths.receipts, fileName);
-      const receipt = await readPrivateJson(path);
-      if (receipt.schema !== RECEIPT_SCHEMA) fail("E_RECEIPT_STATE_MISMATCH", "未知schemaのreceiptを自動削除しません");
-      if (receipt.result === "claimed") continue;
+      let receipt;
+      try { receipt = validateConsumerReceiptEvidence(await readPrivateJson(path)); } catch { fail("E_RECEIPT_STATE_MISMATCH", "不正なreceiptを自動削除しません"); }
+      if (receipt.result === "claimed" || protectedByPreparedPublish.has(fileName)) continue;
       if (typeof receipt.finished_at !== "string" || !Number.isFinite(Date.parse(receipt.finished_at))) {
         fail("E_RECEIPT_STATE_MISMATCH", "完了receiptのfinished_atが不正です");
       }
