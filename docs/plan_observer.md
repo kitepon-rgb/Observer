@@ -183,7 +183,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
         - MCP tool surfaceは実装済みの`observer_read`／`observer_wait`だけへexact固定し、wildcardを許さない。
         - [x] [ADR 0060](adr/0060-supervisor-owned-cycle-runtime.md)の所有権訂正によりproduction Observer AIの
           tool allowlistを空へ変更した。MCP server自体は削除せず、compatibility／diagnostics裁定を後続Taskへ残した。
-          - [ ] `claude-host-runtime`の旧MCP allowlist期待を空surface契約へ揃え、関連gateを再びgreenにする。
+          - [x] `claude-host-runtime`の旧MCP allowlist期待を空surface契約へ揃えた。commit `d34b119`、
+            失敗scopeのfocused 1/1がgreen。直前関連gateの他65件は同じproduct filesでgreenだったため再利用し、66/66へ収束した。
         - spawn結果不明時はwatch固有nameとcwdから回収し、同じwatchを再spawnしない。
         - 検証: focused 23件、parent-launch接続7件、`npm run check`、実binary read-only diagnosticsがgreen。
       - [x] Codex app-serverの純粋adapterとsession runtimeをparent-launchへ配線した（[ADR 0018](adr/0018-codex-host-runtime-boundary.md)）。
