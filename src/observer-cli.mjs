@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 
 import { ObserverError, fail } from "./observer-error.mjs";
 import { defaultStateRoot } from "./private-state.mjs";
+import { runObserverProductDiagnostics } from "./product-diagnostics.mjs";
 import { readRegisteredProjectTarget, registerProjectTarget } from "./project-target.mjs";
 import { runCodexSupervisorProcess } from "./supervisor-codex-process.mjs";
 import {
@@ -18,6 +19,7 @@ const PROCESS_STATUSES = new Set([
 
 export function observerUsage() {
   return [
+    "usage: observer diagnostics",
     "usage: observer watch <absolute-project-root> [--state-root <absolute-path>]",
     "       observer watch start <absolute-project-root> [--state-root <absolute-path>]",
     "       observer watch status <absolute-project-root> [--state-root <absolute-path>]",
@@ -29,6 +31,7 @@ export function observerUsage() {
 
 export function parseObserverArguments(argv) {
   if (!Array.isArray(argv)) fail("E_USAGE", observerUsage());
+  if (argv.length === 1 && argv[0] === "diagnostics") return { kind: "diagnostics" };
   if (argv[0] === "watch") return parseWatch(argv);
   if (argv[0] === "target" && argv[1] === "register") return parseTargetRegister(argv);
   if (argv[0] === "supervisor" && argv[1] === "run") return parseSupervisorRun(argv);
@@ -37,6 +40,10 @@ export function parseObserverArguments(argv) {
 
 export async function executeObserverCommand(argv, { signal, parentContext } = {}, dependencies = {}) {
   const command = parseObserverArguments(argv);
+  if (command.kind === "diagnostics") {
+    const result = await (dependencies.runObserverProductDiagnostics ?? runObserverProductDiagnostics)();
+    return { result, exitCode: result.status === "ready" ? 0 : 1 };
+  }
   if (command.kind.startsWith("watch_")) {
     const handlers = {
       watch_start: dependencies.startObserverWatch ?? startObserverWatch,

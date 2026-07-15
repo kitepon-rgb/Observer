@@ -14,6 +14,21 @@ import { defaultStateRoot } from "../src/private-state.mjs";
 
 const CLI = new URL("../bin/observer.mjs", import.meta.url).pathname;
 
+test("diagnostics CLIは引数とready／unsupported exitを固定する", async () => {
+  assert.deepEqual(parseObserverArguments(["diagnostics"]), { kind: "diagnostics" });
+  assert.throws(() => parseObserverArguments(["diagnostics", "extra"]), { code: "E_USAGE" });
+  const ready = await executeObserverCommand(["diagnostics"], {}, {
+    runObserverProductDiagnostics: async () => ({ schema: "observer.product_diagnostics.v1", status: "ready" }),
+  });
+  assert.equal(ready.exitCode, 0);
+  const unsupported = await executeObserverCommand(["diagnostics"], {}, {
+    runObserverProductDiagnostics: async () => ({
+      schema: "observer.product_diagnostics.v1", status: "unsupported_platform",
+    }),
+  });
+  assert.equal(unsupported.exitCode, 1);
+});
+
 test("target register CLIは同じprojectを同じtargetへ登録する", async () => {
   const root = await mkdtemp(join(tmpdir(), "observer-cli-"));
   const project = join(root, "project");

@@ -3,6 +3,12 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "files": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "bin/",
+    "src/"
+  ],
   "bin": {
     "observer": "bin/observer.mjs",
     "observer-mcp": "bin/observer-mcp.mjs",
