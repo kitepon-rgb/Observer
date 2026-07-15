@@ -318,8 +318,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                   result captureへ流用しない契約を[ADR 0109](adr/0109-claude-public-surface-characterization-contract.md)で固定した。
                 - [x] characterization専用の隔離Stop capture、sanitized receipt、
                   prepare／verify／cleanup harnessをfixtureで閉じた（[ADR 0110](adr/0110-claude-characterization-harness-acceptance.md)）。
-                - [ ] [専用runbook](claude-public-surface-characterization-runbook.md)に従い、
-                  一つのClaude jobで公開面の成立／不成立をlive H characterizationする。
+                - [x] [専用runbook](claude-public-surface-characterization-runbook.md)に従い、
+                  一つのClaude jobでlive H characterizationを実施した。jobは`done`、cleanupと
+                  project／host settings不変はconfirmedだが、Stop capture欠損、reply／terminal exact
+                  result非公開により接続はblockedとした（[ADR 0111](adr/0111-claude-live-characterization-blocked.md)）。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
               - 既存`publishMessage`のduplicate拒否は維持し、model operation専用`publishOperationMessage`と
@@ -602,8 +604,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       prepare／verify／cleanupをfixtureで閉じた。親Mailbox hookをresult captureへ流用しない。
       Observer `f40b672`、dotagents `78c358b`、focused 10/10、related 26/26、
       package／isolated install gateを[ADR 0110](adr/0110-claude-characterization-harness-acceptance.md)で受け入れた。
-    - [ ] **P5-1b3b live H:** [専用runbook](claude-public-surface-characterization-runbook.md)で
-      一つのbackground jobだけを起動し、公開面ごとに`confirmed | unsupported | blocked`を記録する。
+    - [x] **P5-1b3b live H:** [専用runbook](claude-public-surface-characterization-runbook.md)で
+      一つのbackground jobだけを起動した。`job_session_correlation=blocked`、
+      `stop_capture=blocked`、reply／terminal exact resultは`unsupported`、cleanupとfingerprint不変は
+      confirmedである（[ADR 0111](adr/0111-claude-live-characterization-blocked.md)）。
+      P5-1b3全体とP5-1b4は必要な公開契約が揃うまでblockedのまま維持する。
   - [ ] **P5-1b4 Claude caller core 非H:** P5-1b3で実証した公開面だけをissue／recover／cleanup、
     initial generation、Supervisor loopへ接続する。
   - [ ] **P5-1b5 dual-host live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
