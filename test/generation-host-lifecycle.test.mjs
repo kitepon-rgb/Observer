@@ -9,6 +9,7 @@ import {
   authorizeNextGenerationHostStart,
   confirmGenerationHostTerminal,
   readGenerationHostRecoveryContext,
+  readGenerationHostRolloverStatus,
   prepareGenerationHostStop,
   recordNextGenerationHostSpawn,
 } from "../src/generation-host-lifecycle.mjs";
@@ -133,12 +134,18 @@ async function rawJournal(stateRoot) {
 
 test("record-first rolloverはwatchをactiveのまま旧terminalから新handle activationへ進める", async () => {
   const stateRoot = await setup();
+  assert.equal(await readGenerationHostRolloverStatus({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID }), null);
   const prepared = await prepareGenerationHostStop({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID }, { now: () => T1 });
   assert.equal(prepared.action, "issue_once");
   assert.deepEqual(prepared.stop_request.handle, { kind: "claude.job", value: OLD_JOB });
   assert.equal((await rawWatch(stateRoot)).status, "active");
   assert.equal((await readGenerationState({ stateRoot, targetId: TARGET.targetId })).status, "stopping");
   assert.equal((await prepareGenerationHostStop({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID }, { now: () => T1 })).action, "observe_only");
+  const rollover = await readGenerationHostRolloverStatus({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID });
+  assert.equal(rollover.schema, "observer.generation_host_rollover_status.v1");
+  assert.equal(rollover.status, "stop_authorized");
+  assert.equal(rollover.action, "observe_terminal");
+  assert.equal(JSON.stringify(rollover).includes(OLD_JOB), false);
 
   const terminal = await confirmGenerationHostTerminal({
     stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, terminalReceipt: receipt("stopped"),
@@ -169,6 +176,7 @@ test("record-first rolloverはwatchをactiveのまま旧terminalから新handle 
   assert.equal(activated.generation.sequence, 2);
   assert.equal(JSON.stringify(activated.generation).includes(NEW_JOB), false);
   await assert.rejects(rawJournal(stateRoot), { code: "ENOENT" });
+  assert.equal(await readGenerationHostRolloverStatus({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID }), null);
   assert.equal((await rawWatch(stateRoot)).status, "active");
 });
 

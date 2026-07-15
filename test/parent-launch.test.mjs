@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { ObserverError } from "../src/observer-error.mjs";
 import {
+  buildGenerationLaunchRequest,
   CHILD_START_SCHEMA,
   completeParentStop,
   confirmParentHostSpawn,
@@ -128,6 +129,27 @@ test("Claude親は同じtransactionからbackground agent用requestを得る", a
     name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111",
     cwd: "/observer",
   });
+});
+
+test("planned rolloverは新watchを予約せず既存identityから同じlaunch requestを再構成する", () => {
+  const request = buildGenerationLaunchRequest({
+    target: TARGET,
+    watchId: WATCH_ID,
+    provider: "codex",
+    runtimeRoot: "/observer",
+  });
+  assert.equal(request.schema, PARENT_LAUNCH_REQUEST_SCHEMA);
+  assert.equal(request.watch_id, WATCH_ID);
+  assert.equal(request.target_id, TARGET_ID);
+  assert.equal(request.host.kind, "codex.app_server_thread.v1");
+  assert.equal(request.host.cwd, "/observer");
+  assert.equal(JSON.stringify(request).includes("launch_handle"), false);
+  assert.throws(() => buildGenerationLaunchRequest({
+    target: TARGET,
+    watchId: WATCH_ID,
+    provider: "codex",
+    runtimeRoot: "relative",
+  }), expectCode("E_PARENT_LAUNCH_SCHEMA"));
 });
 
 test("host spawn handleをlaunchingへ保存した後、同じhandleのready receiptだけでactiveへ進める", async () => {

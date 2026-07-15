@@ -5,7 +5,9 @@ import {
   startCodexAppServerTransport,
   verifyCodexAppServerRuntime,
 } from "./codex-process-transport.mjs";
+import { advanceGenerationHostProviderRollover } from "./generation-host-provider-binding.mjs";
 import { fail } from "./observer-error.mjs";
+import { buildGenerationLaunchRequest } from "./parent-launch.mjs";
 import { runSupervisorProcess } from "./supervisor-process.mjs";
 import {
   createVerifiedThroughlineClient,
@@ -42,6 +44,9 @@ export async function runCodexSupervisorProcess({
     watchId,
     client,
     createProviderRuntime: () => (dependencies.createCodexSupervisorRuntime ?? createCodexSupervisorRuntime)({
+      stateRoot,
+      target,
+      watchId,
       runtimeRoot,
       codexCommand,
     }, dependencies.codexRuntimeDependencies),
@@ -53,7 +58,10 @@ export async function runCodexSupervisorProcess({
   }, dependencies.processDependencies);
 }
 
-export async function createCodexSupervisorRuntime({ runtimeRoot, codexCommand } = {}, dependencies = {}) {
+export async function createCodexSupervisorRuntime({ stateRoot, target, watchId, runtimeRoot, codexCommand } = {}, dependencies = {}) {
+  const launchRequest = (dependencies.buildGenerationLaunchRequest ?? buildGenerationLaunchRequest)({
+    target, watchId, provider: "codex", runtimeRoot,
+  });
   const verification = await (dependencies.verifyCodexAppServerRuntime ?? verifyCodexAppServerRuntime)({
     runtimeRoot,
     codexCommand,
@@ -73,6 +81,15 @@ export async function createCodexSupervisorRuntime({ runtimeRoot, codexCommand }
         session: transport,
       },
       providerSignal: transport.terminationSignal,
+      advanceGenerationRollover: () => (
+        dependencies.advanceGenerationHostProviderRollover ?? advanceGenerationHostProviderRollover
+      )({
+        stateRoot,
+        targetId: target.targetId,
+        watchId,
+        launchRequest,
+        session: transport,
+      }, dependencies.rolloverDependencies),
       close: () => transport.closeAndWait(),
     };
   } catch (error) {

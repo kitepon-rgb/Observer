@@ -136,3 +136,26 @@ test("signal cancelとcleanup failureは別のsanitized exit contractを持つ",
   });
   assert.equal(JSON.stringify(formatted).includes("secret"), false);
 });
+
+test("supervisor CLIは内部rollover_requiredをterminal結果として受理しない", async () => {
+  await assert.rejects(executeObserverCommand([
+    "supervisor", "run", "/project",
+    "--watch-id", "w_11111111-1111-4111-8111-111111111111",
+    "--runtime-root", "/observer",
+    "--throughline-command", "/bin/throughline",
+    "--codex-command", "/bin/codex",
+    "--state-root", "/state",
+  ], {}, {
+    readRegisteredProjectTarget: async () => ({
+      schema: "observer.project_target.v1",
+      targetId: `p_${"a".repeat(64)}`,
+      projectRoot: "/project",
+    }),
+    runCodexSupervisorProcess: async () => ({
+      schema: "observer.supervisor_process_result.v1",
+      status: "rollover_required",
+      provider: "codex",
+      cycle_id: `c_${"b".repeat(64)}`,
+    }),
+  }), { code: "E_SUPERVISOR_CLI_RESULT_INVALID" });
+});

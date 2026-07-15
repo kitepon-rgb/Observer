@@ -25,6 +25,13 @@ const ACTIVE = {
   provider: "codex",
   status: "active",
 };
+const ACTIVE_GENERATION = {
+  schema: "observer.generation_state.v1",
+  target_id: TARGET_ID,
+  watch_id: WATCH_ID,
+  provider: "codex",
+  status: "active",
+};
 const TEST_STATE_ROOT = await mkdtemp(join(tmpdir(), "observer-supervisor-process-"));
 await mkdir(join(TEST_STATE_ROOT, "watches", TARGET_ID), { recursive: true, mode: 0o700 });
 await chmod(TEST_STATE_ROOT, 0o700);
@@ -39,7 +46,10 @@ function request(overrides = {}) {
     watchId: WATCH_ID,
     client: CLIENT,
     createProviderRuntime: async () => ({
-      providerRuntime: { provider: "codex" }, providerSignal: providerController.signal, close: async () => {},
+      providerRuntime: { provider: "codex" },
+      providerSignal: providerController.signal,
+      advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
+      close: async () => {},
     }),
     pollIntervalMs: 100,
     ...overrides,
@@ -52,6 +62,8 @@ function dependencies(overrides = {}) {
     value: {
       acquirePrivateLock: async () => async () => { released += 1; },
       readWatchStatus: async () => ACTIVE,
+      readGenerationState: async () => ACTIVE_GENERATION,
+      readGenerationHostRolloverStatus: async () => null,
       ...overrides,
     },
     released: () => released,
@@ -88,6 +100,7 @@ test("timeoutとcommittedは同じruntimeで次stepへ戻り、外部cancelでcl
       return {
         providerRuntime: { provider: "codex" },
         providerSignal: new AbortController().signal,
+        advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
         close: async () => { closed += 1; },
       };
     },
@@ -104,30 +117,155 @@ test("timeoutとcommittedは同じruntimeで次stepへ戻り、外部cancelでcl
   assert.equal(released(), 1);
 });
 
-test("model pendingはbounded poll後に同じoperation回収stepへ進む", async () => {
+test("model pending後のplanned rolloverは同じruntimeで回収しprepared cycleへ戻る", async () => {
+  const controller = new AbortController();
   let calls = 0;
-  let polls = 0;
+  let modelPolls = 0;
+  let rolloverPolls = 0;
+  let rolloverCalls = 0;
+  let generation = ACTIVE_GENERATION;
+  let journal = null;
   const { value, released } = dependencies({
     runSupervisorProductionStep: async () => {
       calls += 1;
-      return calls === 1 ? step("model_pending") : step("rollover_required");
+      if (calls === 1) return step("model_pending");
+      if (calls === 2) {
+        generation = { ...ACTIVE_GENERATION, status: "rollover_requested" };
+        return step("rollover_required");
+      }
+      controller.abort();
+      throw new ObserverError("E_THROUGHLINE_CANCELLED", "cancelled");
     },
     waitForModelPoll: async (milliseconds, signal) => {
       assert.equal(milliseconds, 100);
       assert.equal(signal.aborted, false);
-      polls += 1;
+      modelPolls += 1;
     },
+    waitForRolloverPoll: async () => { rolloverPolls += 1; },
+    readGenerationState: async () => generation,
+    readGenerationHostRolloverStatus: async () => journal,
   });
-  const result = await runSupervisorProcess(request(), value);
+  const result = await runSupervisorProcess(request({
+    signal: controller.signal,
+    createProviderRuntime: async () => ({
+      providerRuntime: { provider: "codex" },
+      providerSignal: new AbortController().signal,
+      advanceGenerationRollover: async () => {
+        rolloverCalls += 1;
+        journal = {
+          schema: "observer.generation_host_rollover_status.v1",
+          target_id: TARGET_ID,
+          watch_id: WATCH_ID,
+          provider: "codex",
+          status: rolloverCalls === 1 ? "stop_authorized" : "spawn_observed",
+        };
+        if (rolloverCalls === 1) return rollover("progressed", "stop_authorized", "stop_issued");
+        if (rolloverCalls === 2) return rollover("pending", "stop_authorized", "terminal_not_observed");
+        generation = ACTIVE_GENERATION;
+        journal = null;
+        return rollover("activated", "spawn_observed", "provider_ready_recovered");
+      },
+      close: async () => {},
+    }),
+  }), value);
   assert.deepEqual(result, {
     schema: "observer.supervisor_process_result.v1",
-    status: "rollover_required",
+    status: "cancelled",
     provider: "codex",
-    cycle_id: CYCLE_ID,
+    cycle_id: null,
   });
-  assert.equal(calls, 2);
-  assert.equal(polls, 1);
+  assert.equal(calls, 3);
+  assert.equal(modelPolls, 1);
+  assert.equal(rolloverPolls, 1);
+  assert.equal(rolloverCalls, 3);
   assert.equal(released(), 1);
+});
+
+test("process restartは非active generationをproduction stepより先に回収する", async () => {
+  const controller = new AbortController();
+  const order = [];
+  let generation = { ...ACTIVE_GENERATION, status: "starting" };
+  let journal = {
+    schema: "observer.generation_host_rollover_status.v1",
+    target_id: TARGET_ID,
+    watch_id: WATCH_ID,
+    provider: "codex",
+    status: "spawn_observed",
+  };
+  const { value } = dependencies({
+    readGenerationState: async () => generation,
+    readGenerationHostRolloverStatus: async () => journal,
+    runSupervisorProductionStep: async () => {
+      order.push("production");
+      controller.abort();
+      throw new ObserverError("E_THROUGHLINE_CANCELLED", "cancelled");
+    },
+  });
+  const result = await runSupervisorProcess(request({
+    signal: controller.signal,
+    createProviderRuntime: async () => ({
+      providerRuntime: { provider: "codex" },
+      providerSignal: new AbortController().signal,
+      advanceGenerationRollover: async () => {
+        order.push("rollover");
+        generation = ACTIVE_GENERATION;
+        journal = null;
+        return rollover("activated", "spawn_observed", "provider_ready_recovered");
+      },
+      close: async () => {},
+    }),
+  }), value);
+  assert.equal(result.status, "cancelled");
+  assert.deepEqual(order, ["rollover", "production"]);
+});
+
+test("activation後journal cleanup前のrestartもproduction stepより先に回収する", async () => {
+  const controller = new AbortController();
+  const order = [];
+  let journal = {
+    schema: "observer.generation_host_rollover_status.v1",
+    target_id: TARGET_ID,
+    watch_id: WATCH_ID,
+    provider: "codex",
+    status: "ready_observed",
+  };
+  const { value } = dependencies({
+    readGenerationHostRolloverStatus: async () => journal,
+    runSupervisorProductionStep: async () => {
+      order.push("production");
+      controller.abort();
+      throw new ObserverError("E_THROUGHLINE_CANCELLED", "cancelled");
+    },
+  });
+  const result = await runSupervisorProcess(request({
+    signal: controller.signal,
+    createProviderRuntime: async () => ({
+      providerRuntime: { provider: "codex" },
+      providerSignal: new AbortController().signal,
+      advanceGenerationRollover: async () => {
+        order.push("cleanup-rollover");
+        journal = null;
+        return rollover("activated", "ready_observed", "provider_ready_recovered");
+      },
+      close: async () => {},
+    }),
+  }), value);
+  assert.equal(result.status, "cancelled");
+  assert.deepEqual(order, ["cleanup-rollover", "production"]);
+});
+
+test("rollover unknownは別spawnへfallbackせずfail loudにする", async () => {
+  const { value } = dependencies({
+    readGenerationState: async () => ({ ...ACTIVE_GENERATION, status: "rollover_requested" }),
+  });
+  await assert.rejects(runSupervisorProcess(request({
+    createProviderRuntime: async () => ({
+      providerRuntime: { provider: "codex" },
+      providerSignal: new AbortController().signal,
+      advanceGenerationRollover: async () => rollover("unknown", "stop_authorized", "terminal_not_observed"),
+      close: async () => {},
+    }),
+  }), value), { code: "E_SUPERVISOR_GENERATION_ROLLOVER_UNKNOWN" });
 });
 
 test("model result unknownは永久pollせずfaultとしてfail loudにする", async () => {
@@ -141,6 +279,7 @@ test("model result unknownは永久pollせずfaultとしてfail loudにする", 
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: new AbortController().signal,
+      advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
       close: async () => { closed += 1; },
     }),
   }), value), { code: "E_SUPERVISOR_MODEL_RESULT_UNKNOWN" });
@@ -165,12 +304,25 @@ test("provider process faultはThroughline waitを取消しcycle mutation前にf
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: providerController.signal,
+      advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
       close: async () => { closed += 1; },
     }),
   }), value), { code: "E_SUPERVISOR_PROVIDER_PROCESS_TERMINATED" });
   assert.equal(closed, 1);
   assert.equal(released(), 1);
 });
+
+function rollover(outcome, phase, reason) {
+  return {
+    schema: "observer.generation_host_provider_binding_result.v1",
+    provider: "codex",
+    target_id: TARGET_ID,
+    watch_id: WATCH_ID,
+    phase,
+    outcome,
+    reason,
+  };
+}
 
 test("explicit watch stopは進行中waitを取消し、faultへ偽装しない", async () => {
   let reads = 0;

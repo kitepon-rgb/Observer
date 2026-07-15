@@ -33,6 +33,7 @@ import {
 export const GENERATION_HOST_ROLLOVER_SCHEMA = "observer.generation_host_rollover.v1";
 export const GENERATION_HOST_LIFECYCLE_RESULT_SCHEMA = "observer.generation_host_lifecycle_result.v1";
 export const GENERATION_HOST_RECOVERY_CONTEXT_SCHEMA = "observer.generation_host_recovery_context.v1";
+export const GENERATION_HOST_ROLLOVER_STATUS_SCHEMA = "observer.generation_host_rollover_status.v1";
 
 const TARGET_ID_RE = /^p_[a-f0-9]{64}$/;
 const WATCH_ID_RE = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -76,6 +77,25 @@ export async function prepareGenerationHostStop({ stateRoot, targetId, watchId }
       stop_request: stopRequest(binding, journal.previous_handle),
       from_generation_id: journal.from_generation_id,
     });
+  });
+}
+
+export async function readGenerationHostRolloverStatus({ stateRoot, targetId, watchId } = {}) {
+  validateIdentity(targetId, watchId);
+  return withRolloverLock(stateRoot, targetId, async (paths) => {
+    const journal = await readJournal(paths.journalPath);
+    if (journal === null) return null;
+    requireJournalIdentity(journal, { targetId, watchId });
+    return {
+      schema: GENERATION_HOST_ROLLOVER_STATUS_SCHEMA,
+      provider: journal.provider,
+      watch_id: journal.watch_id,
+      target_id: journal.target_id,
+      status: journal.status,
+      from_generation_id: journal.from_generation_id,
+      to_generation_id: journal.to_generation_id,
+      action: RECOVERY_ACTIONS[journal.status],
+    };
   });
 }
 

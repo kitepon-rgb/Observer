@@ -1,6 +1,8 @@
 import { isAbsolute, join, resolve } from "node:path";
 
 import { ObserverError, fail } from "./observer-error.mjs";
+import { readGenerationHostRolloverStatus } from "./generation-host-lifecycle.mjs";
+import { readGenerationState } from "./generation-store.mjs";
 import {
   acquirePrivateLock,
   assertPrivateDirectory,
@@ -15,7 +17,7 @@ export const SUPERVISOR_PROCESS_RESULT_SCHEMA = "observer.supervisor_process_res
 
 const TARGET = /^p_[a-f0-9]{64}$/;
 const WATCH = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const TERMINAL_STEP = new Set(["rollover_required", "provider_unavailable"]);
+const TERMINAL_STEP = new Set(["provider_unavailable"]);
 const RECOVERABLE_STEP = new Set(["model_pending"]);
 const CONTINUING_STEP = new Set(["timeout", "committed"]);
 const WATCH_TERMINAL = new Set(["stopping", "stopped", "faulted"]);
@@ -64,6 +66,11 @@ export async function runSupervisorProcess({
     if (afterRuntimeTerminal !== null) return processResult(afterRuntimeTerminal, initial.provider, null);
     if (signal?.aborted) return processResult("cancelled", initial.provider, null);
 
+    const initialRolloverTerminal = await resumeGenerationRollover({
+      stateRoot, target, watchId, provider: initial.provider, runtime, pollIntervalMs, signal,
+    }, dependencies);
+    if (initialRolloverTerminal !== null) return processResult(initialRolloverTerminal, initial.provider, null);
+
     while (true) {
       const observed = await runMonitoredOperation({
         stateRoot,
@@ -88,6 +95,13 @@ export async function runSupervisorProcess({
       if (observed.kind === "terminal") return processResult(observed.status, initial.provider, null);
       const step = validateStepResult(observed.value, initial.provider);
       if (TERMINAL_STEP.has(step.status)) return processResult(step.status, step.provider, step.cycle_id);
+      if (step.status === "rollover_required") {
+        const rolloverTerminal = await resumeGenerationRollover({
+          stateRoot, target, watchId, provider: initial.provider, runtime, pollIntervalMs, signal,
+        }, dependencies);
+        if (rolloverTerminal !== null) return processResult(rolloverTerminal, initial.provider, null);
+        continue;
+      }
       if (CONTINUING_STEP.has(step.status)) continue;
       if (step.status === "model_result_unknown") {
         fail("E_SUPERVISOR_MODEL_RESULT_UNKNOWN", "同じmodel operationの結果をexact回収できません");
@@ -215,9 +229,92 @@ function terminalForWatch(watch) {
 }
 
 function validateOwnedRuntime(value) {
-  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "close,providerRuntime,providerSignal" ||
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "advanceGenerationRollover,close,providerRuntime,providerSignal" ||
       !isPlainObject(value.providerRuntime) || !(value.providerSignal instanceof AbortSignal) || typeof value.close !== "function") {
     fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "Supervisor provider runtime所有権が不正です");
+  }
+  if (typeof value.advanceGenerationRollover !== "function") {
+    fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "generation rollover callbackが不正です");
+  }
+  return value;
+}
+
+async function resumeGenerationRollover({
+  stateRoot, target, watchId, provider, runtime, pollIntervalMs, signal,
+}, dependencies) {
+  while (true) {
+    const generation = await observeGeneration({ stateRoot, target, watchId, provider }, dependencies);
+    const journal = await observeGenerationRollover({ stateRoot, target, watchId, provider }, dependencies);
+    if (generation.status === "active" && journal === null) return null;
+    if (generation.status !== "rollover_requested" && journal === null) {
+      fail("E_SUPERVISOR_GENERATION_ROLLOVER_MISSING", "非active generationにrollover journalがありません");
+    }
+
+    const observed = await runMonitoredOperation({
+      stateRoot,
+      target,
+      watchId,
+      provider,
+      pollIntervalMs,
+      signal,
+      providerSignal: runtime.providerSignal,
+      operation: () => runtime.advanceGenerationRollover(),
+    }, dependencies);
+    if (observed.kind === "terminal") return observed.status;
+    const transition = validateGenerationRolloverResult(observed.value, { target, watchId, provider });
+    if (transition.outcome === "unknown") {
+      fail("E_SUPERVISOR_GENERATION_ROLLOVER_UNKNOWN", "generation rollover結果をexact回収できません");
+    }
+    if (transition.outcome === "progressed" || transition.outcome === "activated") continue;
+    if (transition.outcome !== "pending") {
+      fail("E_SUPERVISOR_GENERATION_ROLLOVER_INVALID", "generation rollover結果をprocessへ適用できません");
+    }
+    const paused = await runMonitoredOperation({
+      stateRoot,
+      target,
+      watchId,
+      provider,
+      pollIntervalMs,
+      signal,
+      providerSignal: runtime.providerSignal,
+      operation: (operationSignal) => (dependencies.waitForRolloverPoll ?? waitForModelPoll)(pollIntervalMs, operationSignal),
+    }, dependencies);
+    if (paused.kind === "terminal") return paused.status;
+  }
+}
+
+async function observeGeneration({ stateRoot, target, watchId, provider }, dependencies) {
+  const generation = await (dependencies.readGenerationState ?? readGenerationState)({ stateRoot, targetId: target.targetId });
+  if (!isPlainObject(generation) || generation.schema !== "observer.generation_state.v1" ||
+      generation.target_id !== target.targetId || generation.watch_id !== watchId || generation.provider !== provider ||
+      !["active", "rollover_requested", "stopping", "terminal_confirmed", "starting"].includes(generation.status)) {
+    fail("E_SUPERVISOR_GENERATION_CHANGED", "Supervisor processのgeneration identityが変化しました");
+  }
+  return generation;
+}
+
+async function observeGenerationRollover({ stateRoot, target, watchId, provider }, dependencies) {
+  const journal = await (dependencies.readGenerationHostRolloverStatus ?? readGenerationHostRolloverStatus)({
+    stateRoot, targetId: target.targetId, watchId,
+  });
+  if (journal === null) return null;
+  if (!isPlainObject(journal) || journal.schema !== "observer.generation_host_rollover_status.v1" ||
+      journal.target_id !== target.targetId || journal.watch_id !== watchId || journal.provider !== provider ||
+      !["stop_authorized", "terminal_observed", "spawn_authorized", "spawn_observed", "ready_observed"].includes(journal.status)) {
+    fail("E_SUPERVISOR_GENERATION_ROLLOVER_CHANGED", "generation rollover journalがprocess identityと一致しません");
+  }
+  return journal;
+}
+
+function validateGenerationRolloverResult(value, { target, watchId, provider }) {
+  if (!isPlainObject(value) ||
+      Object.keys(value).sort().join(",") !== "outcome,phase,provider,reason,schema,target_id,watch_id" ||
+      value.schema !== "observer.generation_host_provider_binding_result.v1" || value.provider !== provider ||
+      value.target_id !== target.targetId || value.watch_id !== watchId ||
+      !["stop_authorized", "terminal_observed", "spawn_authorized", "spawn_observed", "ready_observed"].includes(value.phase) ||
+      !["pending", "progressed", "activated", "unknown"].includes(value.outcome) ||
+      typeof value.reason !== "string" || value.reason.length === 0 || value.reason.length > 128) {
+    fail("E_SUPERVISOR_GENERATION_ROLLOVER_INVALID", "generation rollover binding結果が不正です");
   }
   return value;
 }

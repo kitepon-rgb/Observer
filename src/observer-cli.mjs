@@ -7,7 +7,7 @@ import { runCodexSupervisorProcess } from "./supervisor-codex-process.mjs";
 
 const WATCH = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PROCESS_STATUSES = new Set([
-  "cancelled", "faulted", "provider_unavailable", "rollover_required", "stopping", "stopped",
+  "cancelled", "faulted", "provider_unavailable", "stopping", "stopped",
 ]);
 
 export function observerUsage() {

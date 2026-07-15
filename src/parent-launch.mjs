@@ -54,6 +54,17 @@ export async function prepareParentLaunch({
   return launchRequest({ target, starting, provider, runtimeRoot: canonicalRuntimeRoot });
 }
 
+export function buildGenerationLaunchRequest({ target, watchId, provider, runtimeRoot } = {}) {
+  requirePlainObject(target, "project target", "E_PARENT_LAUNCH_SCHEMA");
+  requireExactKeys(target, ["projectRoot", "schema", "targetId"], "project target", "E_PARENT_LAUNCH_SCHEMA");
+  if (target.schema !== "observer.project_target.v1") fail("E_PARENT_LAUNCH_SCHEMA", "project target schemaが不正です");
+  validateTargetId(target.targetId);
+  validateWatchId(watchId);
+  validateAbsolutePath(target.projectRoot, "project root", "E_PARENT_LAUNCH_SCHEMA");
+  validateAbsolutePath(runtimeRoot, "runtime root", "E_PARENT_LAUNCH_SCHEMA");
+  return launchRequest({ target, starting: { watch_id: watchId }, provider, runtimeRoot });
+}
+
 export async function confirmParentLaunch({ stateRoot, request, receipt } = {}, dependencies = {}) {
   validateLaunchRequest(request);
   validateHostReceipt(receipt, "ready");
