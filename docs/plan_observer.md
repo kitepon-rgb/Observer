@@ -70,6 +70,18 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - 裁定: [ADR 0002](adr/0002-explicit-parent-launch.md)。親session単位の論理Observerとcontext generationへの
     更新は[ADR 0025](adr/0025-parent-session-observer-generation.md)を正とする。
 
+- [x] **P0-9 Observer repoへCodegraph project indexを導入する。**
+  - 発見経路: provider binding計画の構造調査で、CLI／MCP登録は済んでいる一方、Observer固有の
+    `.codegraph/`が未初期化だったため構造queryを利用できなかった。
+  - 成果物: upstream正規入口`codegraph init`が生成する、共有可能な設定と端末local index。
+  - 完了条件: `codegraph status --json`が`initialized=true`、対象projectがObserver root、
+    `pendingChanges`が空、SQLite journalが`wal`を返し、生成された設定だけが追跡候補になる。
+  - rollback: `codegraph uninit`でObserver固有の`.codegraph/`だけを除去する。
+  - 実測: Codegraph 1.4.1で60 files、1,339 nodes、5,603 edgesをindex化した。statusは
+    `initialized=true`、`journalMode=wal`、`pendingChanges=0`、`reindexRecommended=false`。
+    provider bindingの構造探索も実sourceとblast radiusを返した。DBは`.codegraph/.gitignore`により
+    端末local、生成されたignore metadataだけを追跡候補にする。
+
 **Gate:** P0-6のdaemon／adapter crash後の結果回収が未完。host-neutral coreは先行できるが、Claude live adapterのproduction採用はblockedのまま維持する。
 
 ---
