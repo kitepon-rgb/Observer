@@ -524,7 +524,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     （[ADR 0089](adr/0089-advisory-semantic-cycle-integration-acceptance.md)）。
   - [ ] **P4-3c semantic behavioral eval:** materiality、actionability、semantic timing、親が対処中かを
     文字列heuristicへ落とさず、好み／一般論／対処中を`no_advisory`にするstrict eval fixtureを固定する。
-    実provider採否はP4-4 H gateへ残し、runtime機械gateだけでP4-3を完了扱いしない。
+    実provider採否はP4-4 H gateへ残し、runtime機械gateだけでP4-3を完了扱いしない
+    （[ADR 0090](adr/0090-semantic-behavioral-eval-contract.md)）。
 
 - [ ] **P4-4 severityと最小dogfoodを完了する。**
   - 成果物: `info`、`warning`、`review_required`の実例と採否記録。
