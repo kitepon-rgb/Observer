@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 import { join } from "node:path";
 
 import { ObserverError, fail } from "./observer-error.mjs";
-import { atomicCreatePrivateFile, ensureStatePath } from "./private-state.mjs";
+import { acquirePrivateLock, atomicCreatePrivateFile, ensureStatePath } from "./private-state.mjs";
 import { validateMessage } from "./message-schema.mjs";
 
 const TARGET_ID_PATTERN = /^p_[a-f0-9]{64}$/;
@@ -34,20 +34,25 @@ export async function publishMessage({ stateRoot, message, now = new Date() }) {
   validateMessage(message, { now });
   const targetId = message.target.project_target_id;
   const paths = await ensureMailbox(stateRoot, targetId);
-  const fileName = `${message.message_id}.json`;
-  for (const directory of MAILBOX_DIRECTORIES) {
-    if (await exists(join(paths[directory], fileName))) {
-      fail("E_MESSAGE_ID_DUPLICATE", "message IDは再利用できません", { messageId: message.message_id });
-    }
-  }
-  const finalPath = join(paths.inbox, fileName);
+  const release = await acquirePrivateLock(join(paths.root, "consumer.lock"));
   try {
-    await atomicCreatePrivateFile(finalPath, `${JSON.stringify(message)}\n`);
-  } catch (error) {
-    if (error instanceof ObserverError && error.code === "E_ALREADY_EXISTS") {
-      fail("E_MESSAGE_ID_DUPLICATE", "message IDは再利用できません", { messageId: message.message_id });
+    const fileName = `${message.message_id}.json`;
+    for (const directory of MAILBOX_DIRECTORIES) {
+      if (await exists(join(paths[directory], fileName))) {
+        fail("E_MESSAGE_ID_DUPLICATE", "message IDは再利用できません", { messageId: message.message_id });
+      }
     }
-    throw error;
+    const finalPath = join(paths.inbox, fileName);
+    try {
+      await atomicCreatePrivateFile(finalPath, `${JSON.stringify(message)}\n`);
+    } catch (error) {
+      if (error instanceof ObserverError && error.code === "E_ALREADY_EXISTS") {
+        fail("E_MESSAGE_ID_DUPLICATE", "message IDは再利用できません", { messageId: message.message_id });
+      }
+      throw error;
+    }
+    return { messageId: message.message_id, targetId, path: finalPath, contentDigest: message.content_digest };
+  } finally {
+    await release();
   }
-  return { messageId: message.message_id, targetId, path: finalPath, contentDigest: message.content_digest };
 }

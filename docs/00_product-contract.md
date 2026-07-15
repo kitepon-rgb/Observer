@@ -297,11 +297,14 @@ v1のsupported platformはmacOSとする。
 MailboxはObserver所有の中央状態領域へ置き、working tree、Throughline、Claude、Codexの管理領域へ置かない。
 
 - project targetごとにinboxを物理分離する。
-- 手紙にはproject targetと観測元thread IDを持たせる。
-- 親Stop hookはpayloadの現在project / threadと一致する手紙だけをclaimする。
+- 手紙にはproject targetと観測元`thread_sha256`を持たせ、raw thread IDを保存しない。
+- 親Stop hookはpayloadのraw thread IDをその場でSHA-256化し、registered target、active watch provider、
+  committed parentのhost／thread hashと一致する手紙だけをclaimする。
 - 旧thread向けの手紙を新threadへ付け替えない。
 - 旧指摘が有効なら新thread上で再評価し、新message IDを発行する。
 - 別project、旧thread、target不明、target複数一致ではfail closedとする。
+- authoritative current hookだけが、同targetの旧thread messageを本文なし`stale_thread` receiptへ失効できる。
+  publish、current routeの再検証、stale処理、claimは同じtarget Mailbox lockへ線形化する。
 
 配送意味論:
 

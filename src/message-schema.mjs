@@ -33,8 +33,9 @@ const TOP_LEVEL_KEYS = Object.freeze([
   "title",
 ]);
 const PRODUCER_KEYS = Object.freeze(["kind", "producer_id"]);
-const TARGET_KEYS = Object.freeze(["project_target_id", "thread_id"]);
+const TARGET_KEYS = Object.freeze(["project_target_id", "thread_sha256"]);
 const TARGET_ID_PATTERN = /^p_[a-f0-9]{64}$/;
+const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const MESSAGE_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 const DIGEST_PATTERN = /^sha256:[a-f0-9]{64}$/;
 const SENSITIVE_PATTERNS = [
@@ -110,7 +111,9 @@ export function validateMessage(message, { now = new Date() } = {}) {
   requirePlainObject(message.target, "target");
   requireExactKeys(message.target, TARGET_KEYS, "target");
   if (typeof message.target.project_target_id !== "string" || !TARGET_ID_PATTERN.test(message.target.project_target_id)) fail("E_MESSAGE_SCHEMA", "project_target_idが不正です");
-  requireString(message.target.thread_id, "target.thread_id", { maxBytes: 256 });
+  if (typeof message.target.thread_sha256 !== "string" || !SHA256_PATTERN.test(message.target.thread_sha256)) {
+    fail("E_MESSAGE_SCHEMA", "target.thread_sha256が不正です");
+  }
 
   requireTimestamp(message.created_at, "created_at");
   requireTimestamp(message.expires_at, "expires_at");

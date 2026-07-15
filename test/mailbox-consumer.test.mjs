@@ -18,18 +18,20 @@ import { acquirePrivateLock, atomicCreatePrivateFile } from "../src/private-stat
 
 const NOW = new Date("2026-07-14T12:00:00Z");
 const TARGET_ID = "p_" + "b".repeat(64);
+const CURRENT_THREAD = "1".repeat(64);
+const OLD_THREAD = "2".repeat(64);
 
 async function stateRoot() {
   const parent = await mkdtemp(join(tmpdir(), "observer-consume-"));
   return join(parent, "state");
 }
 
-function message(messageId, threadId = "thread-current") {
+function message(messageId, threadSha256 = CURRENT_THREAD) {
   return sealMessage({
     schema_version: 1,
     message_id: messageId,
     producer: { producer_id: "observer", kind: "observer" },
-    target: { project_target_id: TARGET_ID, thread_id: threadId },
+    target: { project_target_id: TARGET_ID, thread_sha256: threadSha256 },
     created_at: "2026-07-14T12:00:00Z",
     expires_at: "2026-07-15T12:00:00Z",
     severity: "review_required",
@@ -44,13 +46,13 @@ function message(messageId, threadId = "thread-current") {
 
 test("対象threadの手紙だけをclaimし、finish後は本文なしreceiptだけ残す", async () => {
   const root = await stateRoot();
-  await publishMessage({ stateRoot: root, message: message("obs-old", "thread-old"), now: NOW });
+  await publishMessage({ stateRoot: root, message: message("obs-old", OLD_THREAD), now: NOW });
   await publishMessage({ stateRoot: root, message: message("obs-current"), now: NOW });
 
   const claimed = await claimNextMessage({
     stateRoot: root,
     targetId: TARGET_ID,
-    threadId: "thread-current",
+    threadSha256: CURRENT_THREAD,
     hookEventId: "stop-001",
     now: NOW,
   });
@@ -69,8 +71,8 @@ test("対象threadの手紙だけをclaimし、finish後は本文なしreceipt�
 test("claim後はfinish前でも同じ本文を再claimしない", async () => {
   const root = await stateRoot();
   await publishMessage({ stateRoot: root, message: message("obs-unknown"), now: NOW });
-  const first = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadId: "thread-current", hookEventId: "stop-002", now: NOW });
-  const second = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadId: "thread-current", hookEventId: "stop-003", now: NOW });
+  const first = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD, hookEventId: "stop-002", now: NOW });
+  const second = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD, hookEventId: "stop-003", now: NOW });
   assert.equal(second, null);
 
   const receipt = await finishClaim({ claim: first.claim, stateRoot: root, result: "delivery_unknown", now: new Date("2026-07-14T12:00:02Z") });
@@ -83,7 +85,7 @@ test("malformed messageは注入せず本文を削除してinvalid receiptへ変
   const paths = await ensureMailbox(root, TARGET_ID);
   await atomicCreatePrivateFile(join(paths.inbox, "obs-malformed.json"), "{not-json}\n");
 
-  const claimed = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadId: "thread-current", hookEventId: "stop-004", now: NOW });
+  const claimed = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD, hookEventId: "stop-004", now: NOW });
   assert.equal(claimed, null);
   await assert.rejects(access(join(paths.processing, "obs-malformed.json")), { code: "ENOENT" });
   const receipt = JSON.parse(await readFile(join(paths.receipts, "obs-malformed.json"), "utf8"));
@@ -95,12 +97,12 @@ test("malformed messageは注入せず本文を削除してinvalid receiptへ変
 test("claim後のcrash相当状態を明示recoveryし、本文を再配送しない", async () => {
   const root = await stateRoot();
   await publishMessage({ stateRoot: root, message: message("obs-crashed"), now: NOW });
-  const first = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadId: "thread-current", hookEventId: "stop-crashed", now: NOW });
+  const first = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD, hookEventId: "stop-crashed", now: NOW });
 
   const recovered = await recoverClaimAsDeliveryUnknown({ stateRoot: root, targetId: TARGET_ID, messageId: first.claim.messageId, now: new Date("2026-07-14T12:00:03Z") });
   assert.equal(recovered.result, "delivery_unknown");
   assert.equal(recovered.body_retained, false);
-  const next = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadId: "thread-current", hookEventId: "stop-after-recovery", now: NOW });
+  const next = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD, hookEventId: "stop-after-recovery", now: NOW });
   assert.equal(next, null);
 });
 
@@ -108,8 +110,8 @@ test("同時consumerでも一つのmessageを高々一回だけclaimする", asy
   const root = await stateRoot();
   await publishMessage({ stateRoot: root, message: message("obs-concurrent"), now: NOW });
   const attempts = await Promise.allSettled([
-    claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadId: "thread-current", hookEventId: "stop-concurrent-a", now: NOW }),
-    claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadId: "thread-current", hookEventId: "stop-concurrent-b", now: NOW }),
+    claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD, hookEventId: "stop-concurrent-a", now: NOW }),
+    claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD, hookEventId: "stop-concurrent-b", now: NOW }),
   ]);
   const claimed = attempts.filter((entry) => entry.status === "fulfilled" && entry.value !== null);
   assert.equal(claimed.length, 1);
@@ -119,11 +121,11 @@ test("完了receiptを件数上限で削除するがclaimed receiptは残す", a
   const root = await stateRoot();
   for (const [index, messageId] of ["obs-retain-old", "obs-retain-new"].entries()) {
     await publishMessage({ stateRoot: root, message: message(messageId), now: NOW });
-    const claimed = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadId: "thread-current", hookEventId: `stop-retain-${index}`, now: NOW });
+    const claimed = await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD, hookEventId: `stop-retain-${index}`, now: NOW });
     await finishClaim({ claim: claimed.claim, stateRoot: root, result: "emitted_unacked", now: new Date(NOW.getTime() + index * 1000) });
   }
   await publishMessage({ stateRoot: root, message: message("obs-still-claimed"), now: NOW });
-  await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadId: "thread-current", hookEventId: "stop-still-claimed", now: NOW });
+  await claimNextMessage({ stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD, hookEventId: "stop-still-claimed", now: NOW });
 
   const removed = await cleanupReceipts({ stateRoot: root, targetId: TARGET_ID, now: NOW, maxCount: 1, maxAgeMs: 24 * 60 * 60 * 1000 });
   assert.deepEqual(removed, ["obs-retain-old.json"]);

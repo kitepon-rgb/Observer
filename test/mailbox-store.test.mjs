@@ -4,19 +4,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { publishMessage } from "../src/mailbox-store.mjs";
+import { ensureMailbox, publishMessage } from "../src/mailbox-store.mjs";
 import { sealMessage } from "../src/message-schema.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
+import { acquirePrivateLock } from "../src/private-state.mjs";
 
 const NOW = new Date("2026-07-14T12:00:00Z");
 const TARGET_ID = "p_" + "a".repeat(64);
+const THREAD_SHA256 = "1".repeat(64);
 
 function messageContent(overrides = {}) {
   return {
     schema_version: 1,
     message_id: "obs-20260714-0001",
     producer: { producer_id: "observer", kind: "observer" },
-    target: { project_target_id: TARGET_ID, thread_id: "thread-001" },
+    target: { project_target_id: TARGET_ID, thread_sha256: THREAD_SHA256 },
     created_at: "2026-07-14T12:00:00Z",
     expires_at: "2026-07-15T12:00:00Z",
     severity: "warning",
@@ -54,6 +56,19 @@ test("同じmessage IDを再利用しない", async () => {
     publishMessage({ stateRoot: root, message, now: NOW }),
     (error) => error instanceof ObserverError && error.code === "E_MESSAGE_ID_DUPLICATE",
   );
+});
+
+test("publishはconsumer lock中へ割り込まずfail closedにする", async () => {
+  const root = await stateRoot();
+  const paths = await ensureMailbox(root, TARGET_ID);
+  const release = await acquirePrivateLock(join(paths.root, "consumer.lock"));
+  await assert.rejects(
+    publishMessage({ stateRoot: root, message: sealMessage(messageContent()), now: NOW }),
+    (error) => error instanceof ObserverError && error.code === "E_CONSUMER_LOCKED",
+  );
+  await release();
+  const published = await publishMessage({ stateRoot: root, message: sealMessage(messageContent()), now: NOW });
+  assert.equal(published.messageId, "obs-20260714-0001");
 });
 
 test("digest不一致、期限切れ、secretらしき本文を拒否する", async () => {

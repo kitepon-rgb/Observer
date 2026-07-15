@@ -223,11 +223,17 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [x] lock owner nonceの観測と一致確認を必須にする明示recoveryを実装する。
   - [x] claim後crash、malformed本文、重複publish、concurrent consumerの代表faultをtestで再現する。
 
-- [ ] **P3-3 誤配送防止を実装する。**
+- [x] **P3-3 誤配送防止を実装した（[ADR 0020](adr/0020-mailbox-current-parent-routing.md)）。**
   - 成果物: project target、観測host、thread IDによるrouting、旧thread／旧host手紙の失効処理。
   - 完了条件: 別project、旧thread、target不明ではclaimせず、現在project / threadだけが取得できる。
   - [x] projectごとの物理inbox分離と、target / thread完全一致時だけのclaimを実装する。
-  - [ ] 親Stop payloadからのcurrent target解決、旧thread messageの失効receiptを実装する。
+  - [x] 親Stop payloadからのcurrent target解決、旧thread messageの失効receiptを実装した。
+    - Mailbox message／receiptへraw thread IDを保存せず`thread_sha256`へ統一する。
+    - Stop payloadのraw thread IDはその場でhash化し、registered target、active watch provider、committed parentの
+      host／thread hashが全一致したauthoritative current hookだけをclaim可能にする。
+    - authoritative current hookだけが同targetの旧thread messageを本文なし`stale_thread` receiptへ失効させる。
+      target不明、watch inactive、旧host／旧thread hookはinboxを変更しない。
+    - focused gate: `node --test test/mailbox-store.test.mjs test/mailbox-consumer.test.mjs test/mailbox-routing.test.mjs` — 14/14 PASS。
 
 - [ ] **P3-4 親Stop hook adapterを実装する。**
   - 成果物: Claude／Codex別のMailbox fast path、bounded advisory render、installer / verify / rollback。
