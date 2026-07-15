@@ -136,6 +136,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     - [ ] Codex persistent app-server thread候補／Claude backgroundの親host adapter、同provider Observer role、routing検証を実装する。
       Claude backgroundはexact tool allowlistでproject readとwrite拒否、job handleの`working → done`、同handle stopを実証した。
       argvの可変長flag順序とterminal後のlogs回収不能を[ADR 0010](adr/0010-claude-background-readonly-characterization.md)でadapter契約へ固定した。
+      - [x] Claude adapterの純粋coreとして、絶対CLI path、固定prompt位置、Observer MCPのruntime-root字句境界、公開／無人許可の分離、
+        job相関、terminal先行stop、raw出力非保持を実装した（[ADR 0012](adr/0012-claude-host-adapter-contract.md)）。
+        検証: `node --test test/claude-host-adapter.test.mjs test/parent-launch.test.mjs` 14/14 PASS。
+      - [ ] 実行層でClaude CLI／Observer MCP executableのrealpath・version・所有を検証し、spawn／observe／stopをparent-launchへ配線する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
@@ -148,6 +152,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [x] 空のsetting sources、skills／Chrome無効、strict MCPの一試行で、HEAD、index、tracked／untracked、modeを含むproject fingerprint不変をcharacterizationした（[ADR 0011](adr/0011-claude-process-boundary-characterization.md)）。
   - [ ] settings／hooks／plugins隔離を独立fixtureで証明し、Observer MCP追加後もproject fingerprint不変を再検証する。
   - [x] Claude backgroundの65秒超継続、実行中stop、子process消滅をcharacterizationした。MCPは`--tools`による公開と`--allowedTools`による無人許可を分離する。
+  - [x] Claude adapter coreで`Read,Grep,Glob`と`mcp__observer__*`以外を拒否し、raw agent list／stop stderrを構造化receiptへ保持しないことを固定した（[ADR 0012](adr/0012-claude-host-adapter-contract.md)）。
   - [ ] Claude backgroundのObserver MCP限定write、再stop receipt、daemon／adapter crash後のterminal result回収をcharacterizationする。
     即時完了、terminal直前crash、実行中restart、daemon消失、失敗terminalを独立fixtureにし、`done`を結果回収済みへ丸めない。
     再stopは成功receiptを返さない実測のため、terminal stateを先に確認し、実行中stop receiptとterminal観測を分離する。
