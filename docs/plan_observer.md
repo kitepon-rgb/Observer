@@ -97,6 +97,8 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
 - [ ] **P2-3 最新親スレッド解決を実装する。**
   - 成果物: Throughlineのhost-bound確定turn時刻から現在親とhostを選ぶresolver。
   - 完了条件: 親AからBへのthread切替と、Claude／Codex間のhost切替fixtureで、Bの最初の確定turn後にだけ追跡先がBへ切り替わる。複数活動親はfail closedにする。
+  - v1境界: [ADR 0001](adr/0001-parent-resolution-boundary.md)。一般的なactive leaseをmtime／PID／TTLで
+    推測せず、一project一活動親を前提にする。Throughlineが返す`ambiguous_parent`はfail closedにする。
 
 - [ ] **P2-4 一時間wait loopとcursor回復を実装する。**
   - 成果物: host-neutralな`observer watch <absolute-project-root>`と、Claude／Codex adapterでchanged / timeout / restartを処理する監視loop。
