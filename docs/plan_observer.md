@@ -160,13 +160,15 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     - provider child前の`starting`予約、二重起動拒否、watch ID CAS、private handle非公開、
       `active → stopping → stopped`、fault、明示nonce lock回復を実装した。
     - 検証: `node --test test/watch-store.test.mjs` 7/7 PASS。commit `e0a1843`、Control revision 14。
-  - [ ] 公開`observer watch`／`watch start|status|stop`を両provider共通lifecycle handlerへ接続する
+  - [x] 公開`observer watch`／`watch start|status|stop`を両provider共通の非H lifecycle handlerへ接続する
     （[ADR 0095](adr/0095-public-watch-lifecycle-cli-contract.md)）。
-    - [ ] 利用者入力をabsolute project pathだけに保ち、現在親のprovider／runtime／authorizationとhost actionを
+    - [x] 利用者入力をabsolute project pathだけに保ち、現在親のprovider／runtime／authorizationとhost actionを
       argv外のexact contextへ分離する。
-    - [ ] startのreserve→spawn receipt耐久化→ready、sanitized status、terminal receipt後だけのstop完了を、
+    - [x] startのreserve→spawn receipt耐久化→ready、sanitized status、terminal receipt後だけのstop完了を、
       Claude／Codex共通result schemaとfake host actionで固定する。
-    - [ ] 実host action注入、live spawn／stop、session相関はP5-1bのH gateで受け入れる。
+    - 実装`a4195a3`、focused 13/13、関連37/37、static greenを
+      [ADR 0096](adr/0096-public-watch-lifecycle-cli-acceptance.md)で受け入れた。
+  - [ ] dotagents／installerから実host actionを注入し、live spawn／stop、session相関をP5-1bのH gateで受け入れる。
   - [ ] Codex／Claude親launcherと同provider child lifecycleを実装する（[ADR 0006](adr/0006-parent-owned-provider-launch.md)、起動順序の訂正=[ADR 0007](adr/0007-durable-launch-handle-before-start.md)）。
     - [x] explicit authorization、`starting → launching → active`、private provider handle、相関付きstop／fault transactionを実装した。
       検証: `node --test test/parent-launch.test.mjs test/watch-store.test.mjs` 16/16 PASS、cycle-store fixture 5/5 PASS。
