@@ -2,7 +2,7 @@
 
 **出典:** Claude Code CLI 2.1.207の`--help`／background job公開CLI、ローカル隔離repo実測
 **取得日:** 2026-07-15
-**確度:** 組込みtool allowlist・一回のwrite拒否・job lifecycle=高、CLI process全体の非変更性・実行中stop・Observer MCP write・65秒超継続・daemon crash回収=未検証
+**確度:** 組込みtool allowlist・一回のwrite拒否・75秒継続・実行中stop・一試行のproject fingerprint不変=高、任意settings／hooks／plugins隔離・再stop receipt・Observer MCP write・daemon crash回収=未検証
 
 ## 結論
 
@@ -16,6 +16,8 @@
   値として取り込む。固定長flag → prompt → 可変長flagの順を守る。
 - terminal後にbackground daemonが終了すると、`claude logs <id>`は`control.sock`不在で回収不能に
   なりうる。adapterは起動中にbounded receiptを回収・耐久化し、private job state直読を標準fallbackにしない。
+- MCP toolは`--tools`で公開するだけでは`dontAsk`下で拒否される。無人許可するObserver所有toolだけを
+  `--allowedTools`へexact指定する必要がある。
 
 ## Characterization receipt
 
@@ -24,12 +26,15 @@
   実行中stop、子process消滅、再stopは未実測。
 - 先行失敗: `200c4937`と`327b0365`。可変長flagのargv順序誤りにより初期化前exit 1。
 - late logs: daemon終了後は公開socket不在で回収失敗。成功へ丸めない。
+- process boundary job: `27a07708`は75秒時点でも`working`、80秒時点の実行中stopで`stopped`、
+  timer子process残存なし、HEAD／index／tracked／untracked／modeのfingerprint不変。
+- repeated stop: 2回目のstopはservice restartingの可能性を示す確認不能。公開`stopped`は維持。
 
 詳細な不変判断は[ADR 0010](../../docs/adr/0010-claude-background-readonly-characterization.md)。
 
 ## 設計への還流
 
 - Claude provider handleはjob IDとして型を分け、Codex thread／turn handleと統合しない。
-- production gateはsettings／hooks／plugins隔離、workspace fingerprint不変、Observer MCP限定write、
-  65秒超継続、実行中stop、即時完了／adapter／daemon crash後のreceipt回収。
+- production gateはsettings／hooks／plugins隔離の独立fixture、Observer MCP追加後のfingerprint不変と限定write、
+  再stop receipt、即時完了／adapter／daemon crash後のresult receipt回収。
 - 親の明示指示なしにbackground Observerを起動しない。
