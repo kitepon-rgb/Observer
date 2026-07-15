@@ -149,8 +149,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       - [x] Claude adapterの純粋coreとして、絶対CLI path、固定prompt位置、Observer MCPのruntime-root字句境界、公開／無人許可の分離、
         job相関、terminal先行stop、raw出力非保持を実装した（[ADR 0012](adr/0012-claude-host-adapter-contract.md)）。
         検証: `node --test test/claude-host-adapter.test.mjs test/parent-launch.test.mjs` 14/14 PASS。
-      - [ ] 実行層でClaude CLI／Observer MCP executableのrealpath・version・所有を検証し、spawn／observe／stopをparent-launchへ配線する。
-        Observer MCP executableと`--version`入口は実装済み。realpath／所有検証とClaude host配線は未完。
+      - [x] 実行層でClaude CLI／Observer MCP executableのrealpath・version・所有を検証し、spawn／observe／stopをparent-launchへ配線する。
+        `src/claude-host-runtime.mjs`でmanifest固定path、file identity／digest、Claude 2.1.210、MCP 0.0.0、
+        exact tool surfaceを検証し、handle先行耐久化を守る分離runtimeを実装した（[ADR 0015](adr/0015-claude-host-runtime-boundary.md)）。
+        - Claude `--bg`のshort IDをspawn直後に耐久化し、observe／readyを同じ関数へ畳み込まない。
+        - MCP tool surfaceは実装済みの`observer_read`／`observer_wait`だけへexact固定し、wildcardを許さない。
+        - spawn結果不明時はwatch固有nameとcwdから回収し、同じwatchを再spawnしない。
+        - 検証: focused 23件、parent-launch接続7件、`npm run check`、実binary read-only diagnosticsがgreen。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**

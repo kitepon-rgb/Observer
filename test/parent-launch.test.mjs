@@ -121,7 +121,7 @@ test("Claude親は同じtransactionからbackground agent用requestを得る", a
   assert.deepEqual(request.host, {
     kind: "claude.background_agent.v1",
     agent: "observer",
-    name: "observer-aaaaaaaaaaaa",
+    name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111",
     cwd: "/observer",
   });
 });

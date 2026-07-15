@@ -165,7 +165,7 @@ function launchRequest({ target, starting, provider, runtimeRoot }) {
     : {
         kind: "claude.background_agent.v1",
         agent: "observer",
-        name: `observer-${suffix}`,
+        name: claudeJobNameFor(target.targetId, starting.watch_id),
         cwd: runtimeRoot,
       };
   const request = {
@@ -243,9 +243,15 @@ function validateHostRequest(value, request) {
     return;
   }
   requireExactKeys(value, ["agent", "cwd", "kind", "name"], "Claude host request", "E_PARENT_LAUNCH_SCHEMA");
-  if (value.kind !== "claude.background_agent.v1" || value.agent !== "observer" || value.name !== `observer-${suffix}` || value.cwd !== request.runtime_root) {
+  if (value.kind !== "claude.background_agent.v1" || value.agent !== "observer" || value.name !== claudeJobNameFor(request.target_id, request.watch_id) || value.cwd !== request.runtime_root) {
     fail("E_PARENT_LAUNCH_SCHEMA", "Claude host requestが不正です");
   }
+}
+
+export function claudeJobNameFor(targetId, watchId) {
+  validateTargetId(targetId);
+  validateWatchId(watchId);
+  return `observer-${targetId.slice(2, 14)}-${watchId.slice(2)}`;
 }
 
 function validateStopRequest(value) {

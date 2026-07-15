@@ -5,15 +5,18 @@ import { validateParentLaunchRequest } from "./parent-launch.mjs";
 
 export const CLAUDE_JOB_OBSERVATION_SCHEMA = "observer.claude_job_observation.v1";
 export const CLAUDE_STOP_COMMAND_RECEIPT_SCHEMA = "observer.claude_stop_command_receipt.v1";
+export const CLAUDE_OBSERVER_TOOLS = Object.freeze([
+  "mcp__observer__observer_read",
+  "mcp__observer__observer_wait",
+]);
 
 const CLAUDE_JOB_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const CLAUDE_NAME_RE = /^[A-Za-z0-9_-]{1,128}$/;
-const OBSERVER_TOOL_RE = /^mcp__observer__[a-z][a-z0-9_]{0,63}$/;
 const KNOWN_STATES = new Set(["working", "blocked", "done", "stopped", "failed"]);
 const TERMINAL_STATES = new Set(["done", "stopped", "failed"]);
 const MAX_AGENT_LIST_BYTES = 1024 * 1024;
 
-export function buildClaudeBackgroundInvocation({ request, claudeCommand, mcpConfig, observerTools } = {}) {
+export function buildClaudeBackgroundInvocation({ request, claudeCommand, mcpConfig, observerTools = CLAUDE_OBSERVER_TOOLS } = {}) {
   if (request?.provider !== "claude" || request?.host?.kind !== "claude.background_agent.v1") {
     fail("E_CLAUDE_HOST_REQUEST_INVALID", "Claude background launch requestが必要です");
   }
@@ -47,6 +50,55 @@ export function buildClaudeBackgroundInvocation({ request, claudeCommand, mcpCon
     "--allowedTools", allowedTools,
   ];
   return { command: claudeCommand, args };
+}
+
+export function parseClaudeBackgroundSpawn({ stdout, expectedName } = {}) {
+  if (typeof stdout !== "string" || Buffer.byteLength(stdout, "utf8") > MAX_AGENT_LIST_BYTES ||
+      typeof expectedName !== "string" || !CLAUDE_NAME_RE.test(expectedName)) {
+    fail("E_CLAUDE_SPAWN_RECEIPT_INVALID", "Claude background spawn receiptが不正です");
+  }
+  const matches = [...stdout.matchAll(/^backgrounded · ([A-Za-z0-9_-]{1,128})(?: · ([A-Za-z0-9_-]{1,128}))?\r?$/gmu)];
+  if (matches.length !== 1 || matches[0][2] !== expectedName) {
+    fail("E_CLAUDE_SPAWN_RECEIPT_INVALID", "Claude background spawn receiptを一意に相関できません");
+  }
+  return { job_id: matches[0][1], name: expectedName };
+}
+
+export function recoverClaudeSpawnFromAgentList({ stdout, expected, observedAt } = {}) {
+  if (typeof stdout !== "string" || Buffer.byteLength(stdout, "utf8") > MAX_AGENT_LIST_BYTES) {
+    fail("E_CLAUDE_AGENT_LIST_INVALID", "Claude agent listが不正です");
+  }
+  if (!isPlainObject(expected) || !hasExactKeys(expected, ["cwd", "name"]) ||
+      typeof expected.name !== "string" || !CLAUDE_NAME_RE.test(expected.name) || !isSafeAbsolutePath(expected.cwd)) {
+    fail("E_CLAUDE_JOB_CORRELATION_FAILED", "Claude job recovery identityが不正です");
+  }
+  validateObservedAt(observedAt);
+  let entries;
+  try {
+    entries = JSON.parse(stdout);
+  } catch {
+    fail("E_CLAUDE_AGENT_LIST_INVALID", "Claude agent listがJSONではありません");
+  }
+  if (!Array.isArray(entries) || entries.some((entry) => !isPlainObject(entry))) {
+    fail("E_CLAUDE_AGENT_LIST_INVALID", "Claude agent list schemaが不正です");
+  }
+  const matches = entries.filter((entry) => entry.name === expected.name && entry.cwd === expected.cwd && entry.kind === "background");
+  if (matches.length === 0) return { status: "not_visible" };
+  if (matches.length !== 1) fail("E_CLAUDE_JOB_CORRELATION_FAILED", "Claude job recovery identityが重複しています");
+  const entry = matches[0];
+  validateJobId(entry.id, "E_CLAUDE_JOB_CORRELATION_FAILED");
+  if (typeof entry.state !== "string" || !KNOWN_STATES.has(entry.state)) fail("E_CLAUDE_JOB_STATE_UNKNOWN", "Claude job stateが未知です");
+  return {
+    status: "found",
+    observation: {
+      schema: CLAUDE_JOB_OBSERVATION_SCHEMA,
+      job_id: entry.id,
+      name: expected.name,
+      cwd: expected.cwd,
+      state: entry.state,
+      observed_at: observedAt,
+    },
+  };
 }
 
 export function observeClaudeAgentList({ stdout, expected, observedAt } = {}) {
@@ -142,12 +194,16 @@ function isPathInside(root, candidate) {
 }
 
 function validateObserverTools(value) {
-  if (!Array.isArray(value) || value.length === 0 || value.some((tool) => typeof tool !== "string" || !OBSERVER_TOOL_RE.test(tool))) {
+  if (!Array.isArray(value) || value.length !== CLAUDE_OBSERVER_TOOLS.length || value.some((tool) => typeof tool !== "string")) {
     fail("E_CLAUDE_HOST_TOOL_INVALID", "Observer MCP tool allowlistが不正です");
   }
   const unique = [...new Set(value)];
   if (unique.length !== value.length) fail("E_CLAUDE_HOST_TOOL_INVALID", "Observer MCP tool allowlistが重複しています");
-  return unique.sort();
+  const sorted = unique.sort();
+  if (sorted.some((tool, index) => tool !== CLAUDE_OBSERVER_TOOLS[index])) {
+    fail("E_CLAUDE_HOST_TOOL_INVALID", "Observer MCP tool allowlistが固定surfaceと一致しません");
+  }
+  return sorted;
 }
 
 function validateExpectedIdentity(value) {

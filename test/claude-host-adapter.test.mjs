@@ -5,8 +5,10 @@ import { ObserverError } from "../src/observer-error.mjs";
 import {
   buildClaudeBackgroundInvocation,
   observeClaudeAgentList,
+  parseClaudeBackgroundSpawn,
   planClaudeStop,
   recordClaudeStopCommandResult,
+  recoverClaudeSpawnFromAgentList,
 } from "../src/claude-host-adapter.mjs";
 
 const TARGET_ID = `p_${"a".repeat(64)}`;
@@ -24,7 +26,7 @@ function request(overrides = {}) {
     host: {
       kind: "claude.background_agent.v1",
       agent: "observer",
-      name: "observer-aaaaaaaaaaaa",
+      name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111",
       cwd: "/observer",
     },
     child_start: {
@@ -61,12 +63,12 @@ test("Claude background argvは固定promptを可変長flagより前へ置きtoo
     request: request(),
     claudeCommand: "/usr/local/bin/claude",
     mcpConfig: mcpConfig(),
-    observerTools: ["mcp__observer__wait", "mcp__observer__publish"],
+    observerTools: ["mcp__observer__observer_wait", "mcp__observer__observer_read"],
   });
   assert.equal(result.command, "/usr/local/bin/claude");
   const prompt = result.args[11];
   assert.deepEqual(result.args.slice(0, 12), [
-    "--bg", "--name", "observer-aaaaaaaaaaaa", "--agent", "observer",
+    "--bg", "--name", "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111", "--agent", "observer",
     "--permission-mode", "dontAsk", "--setting-sources", "",
     "--disable-slash-commands", "--no-chrome", prompt,
   ]);
@@ -77,49 +79,70 @@ test("Claude background argvは固定promptを可変長flagより前へ置きtoo
   assert.ok(result.args.indexOf(prompt) < mcpIndex);
   assert.ok(mcpIndex < toolsIndex && toolsIndex < allowedIndex);
   assert.equal(result.args[mcpIndex + 1], JSON.stringify(mcpConfig()));
-  assert.equal(result.args[toolsIndex + 1], "Read,Grep,Glob,mcp__observer__publish,mcp__observer__wait");
-  assert.equal(result.args[allowedIndex + 1], "mcp__observer__publish,mcp__observer__wait");
+  assert.equal(result.args[toolsIndex + 1], "Read,Grep,Glob,mcp__observer__observer_read,mcp__observer__observer_wait");
+  assert.equal(result.args[allowedIndex + 1], "mcp__observer__observer_read,mcp__observer__observer_wait");
   assert.deepEqual(Object.keys(result).sort(), ["args", "command"]);
 });
 
 test("Claude invocationは非Claude request、非Observer MCP、env付きconfigを拒否する", () => {
   assert.throws(
-    () => buildClaudeBackgroundInvocation({ request: request({ provider: "codex" }), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig(), observerTools: ["mcp__observer__wait"] }),
+    () => buildClaudeBackgroundInvocation({ request: request({ provider: "codex" }), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig() }),
     expectCode("E_CLAUDE_HOST_REQUEST_INVALID"),
   );
   assert.throws(
-    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig(), observerTools: ["mcp__other__wait"] }),
+    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig(), observerTools: ["mcp__observer__observer_read", "mcp__observer__publish"] }),
     expectCode("E_CLAUDE_HOST_TOOL_INVALID"),
   );
   assert.throws(
-    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig({ env: { TOKEN: "secret" } }), observerTools: ["mcp__observer__wait"] }),
+    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig({ env: { TOKEN: "secret" } }) }),
     expectCode("E_CLAUDE_HOST_MCP_INVALID"),
   );
   assert.throws(
-    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig({ command: "/usr/local/bin/observer-mcp" }), observerTools: ["mcp__observer__wait"] }),
+    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig({ command: "/usr/local/bin/observer-mcp" }) }),
     expectCode("E_CLAUDE_HOST_MCP_INVALID"),
   );
   assert.throws(
-    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig({ args: ["--stdio", "--unsafe"] }), observerTools: ["mcp__observer__wait"] }),
+    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig({ args: ["--stdio", "--unsafe"] }) }),
     expectCode("E_CLAUDE_HOST_MCP_INVALID"),
   );
   assert.throws(
-    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "claude", mcpConfig: mcpConfig(), observerTools: ["mcp__observer__wait"] }),
+    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "claude", mcpConfig: mcpConfig() }),
     expectCode("E_CLAUDE_HOST_COMMAND_INVALID"),
   );
 });
 
+test("background spawnは任意のservice起動行を許しshort IDと固有nameをexact相関する", () => {
+  assert.deepEqual(parseClaudeBackgroundSpawn({
+    stdout: "Starting background service…\nbackgrounded · job-1 · observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111\n  claude agents\n",
+    expectedName: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111",
+  }), { job_id: "job-1", name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111" });
+  assert.throws(() => parseClaudeBackgroundSpawn({ stdout: "backgrounded · job-1\n", expectedName: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111" }), expectCode("E_CLAUDE_SPAWN_RECEIPT_INVALID"));
+  assert.throws(() => parseClaudeBackgroundSpawn({ stdout: "backgrounded · job-1 · other\n", expectedName: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111" }), expectCode("E_CLAUDE_SPAWN_RECEIPT_INVALID"));
+});
+
+test("spawn unknown回収は固有nameとcwdの0件・1件・複数件を分離する", () => {
+  const expected = { name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111", cwd: "/observer" };
+  const observedAt = "2026-07-15T02:00:00.000Z";
+  assert.deepEqual(recoverClaudeSpawnFromAgentList({ stdout: "[]", expected, observedAt }), { status: "not_visible" });
+  const entry = { id: "job-1", name: expected.name, cwd: expected.cwd, kind: "background", state: "working", private: "drop" };
+  const found = recoverClaudeSpawnFromAgentList({ stdout: JSON.stringify([entry]), expected, observedAt });
+  assert.equal(found.status, "found");
+  assert.equal(found.observation.job_id, "job-1");
+  assert.equal(JSON.stringify(found).includes("private"), false);
+  assert.throws(() => recoverClaudeSpawnFromAgentList({ stdout: JSON.stringify([entry, { ...entry, id: "job-2" }]), expected, observedAt }), expectCode("E_CLAUDE_JOB_CORRELATION_FAILED"));
+});
+
 test("agents JSONはjob identityを相関しallowlist fieldだけへ縮約する", () => {
-  const stdout = JSON.stringify([{ id: "job-1", name: "observer-aaaaaaaaaaaa", cwd: "/observer", kind: "background", state: "working", sessionId: "private-session", startedAt: 123, extra: "drop" }]);
+  const stdout = JSON.stringify([{ id: "job-1", name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111", cwd: "/observer", kind: "background", state: "working", sessionId: "private-session", startedAt: 123, extra: "drop" }]);
   const observation = observeClaudeAgentList({
     stdout,
-    expected: { jobId: "job-1", name: "observer-aaaaaaaaaaaa", cwd: "/observer" },
+    expected: { jobId: "job-1", name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111", cwd: "/observer" },
     observedAt: "2026-07-15T02:00:00.000Z",
   });
   assert.deepEqual(observation, {
     schema: "observer.claude_job_observation.v1",
     job_id: "job-1",
-    name: "observer-aaaaaaaaaaaa",
+    name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111",
     cwd: "/observer",
     state: "working",
     observed_at: "2026-07-15T02:00:00.000Z",
@@ -128,8 +151,8 @@ test("agents JSONはjob identityを相関しallowlist fieldだけへ縮約する
 });
 
 test("agents JSONはmissing、identity mismatch、未知stateをfail loudにする", () => {
-  const base = { id: "job-1", name: "observer-aaaaaaaaaaaa", cwd: "/observer", kind: "background", state: "working" };
-  const input = (entry) => ({ stdout: JSON.stringify(entry ? [entry] : []), expected: { jobId: "job-1", name: "observer-aaaaaaaaaaaa", cwd: "/observer" }, observedAt: "2026-07-15T02:00:00.000Z" });
+  const base = { id: "job-1", name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111", cwd: "/observer", kind: "background", state: "working" };
+  const input = (entry) => ({ stdout: JSON.stringify(entry ? [entry] : []), expected: { jobId: "job-1", name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111", cwd: "/observer" }, observedAt: "2026-07-15T02:00:00.000Z" });
   assert.throws(() => observeClaudeAgentList(input(null)), expectCode("E_CLAUDE_JOB_NOT_FOUND"));
   assert.throws(() => observeClaudeAgentList(input({ ...base, cwd: "/other" })), expectCode("E_CLAUDE_JOB_CORRELATION_FAILED"));
   assert.throws(() => observeClaudeAgentList(input({ ...base, state: "mystery" })), expectCode("E_CLAUDE_JOB_STATE_UNKNOWN"));
@@ -137,7 +160,7 @@ test("agents JSONはmissing、identity mismatch、未知stateをfail loudにす�
 });
 
 test("stop計画は非terminalだけへcommandを発行しterminalへ再stopしない", () => {
-  const observation = (state) => ({ schema: "observer.claude_job_observation.v1", job_id: "job-1", name: "observer-aaaaaaaaaaaa", cwd: "/observer", state, observed_at: "2026-07-15T02:00:00.000Z" });
+  const observation = (state) => ({ schema: "observer.claude_job_observation.v1", job_id: "job-1", name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111", cwd: "/observer", state, observed_at: "2026-07-15T02:00:00.000Z" });
   assert.deepEqual(planClaudeStop(observation("working"), { claudeCommand: "/usr/local/bin/claude" }), { action: "issue_stop", command: "/usr/local/bin/claude", args: ["stop", "job-1"] });
   assert.deepEqual(planClaudeStop(observation("blocked"), { claudeCommand: "/usr/local/bin/claude" }), { action: "issue_stop", command: "/usr/local/bin/claude", args: ["stop", "job-1"] });
   for (const outcome of ["command_confirmed", "command_unknown"]) {
