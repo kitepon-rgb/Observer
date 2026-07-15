@@ -322,8 +322,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                   一つのClaude jobでlive H characterizationを実施した。jobは`done`、cleanupと
                   project／host settings不変はconfirmedだが、Stop capture欠損、reply／terminal exact
                   result非公開により接続はblockedとした（[ADR 0111](adr/0111-claude-live-characterization-blocked.md)）。
-                - [ ] Stop未発火とpayload／result不正を区別するraw-free diagnostic receiptを
-                  [ADR 0112](adr/0112-claude-characterization-diagnostic-receipt-contract.md)どおり非Hで実装する。
+                - [x] Stop未発火とpayload／result不正を区別するraw-free diagnostic receiptを
+                  非Hで実装し、focused 9/9、related 29/29で受け入れた
+                  （[ADR 0113](adr/0113-claude-characterization-diagnostic-receipt-acceptance.md)）。
                 - [ ] diagnostic receipt受入後、別H承認で一つのjobだけを再characterizeする。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
@@ -612,9 +613,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       `stop_capture=blocked`、reply／terminal exact resultは`unsupported`、cleanupとfingerprint不変は
       confirmedである（[ADR 0111](adr/0111-claude-live-characterization-blocked.md)）。
       P5-1b3全体とP5-1b4は必要な公開契約が揃うまでblockedのまま維持する。
-    - [ ] **P5-1b3c 非H diagnostic receipt:** Stop未発火とstdin／payload／result不正をraw-freeに
+    - [x] **P5-1b3c 非H diagnostic receipt:** Stop未発火とstdin／payload／result不正をraw-freeに
       分離し、direct shebang CLI、verify、cleanupをfocused／related gateで閉じる
-      （[ADR 0112](adr/0112-claude-characterization-diagnostic-receipt-contract.md)）。
+      （実装 `f239a07`、focused 9/9、related 29/29、`npm run check` green、
+      [ADR 0113](adr/0113-claude-characterization-diagnostic-receipt-acceptance.md)）。
     - [ ] **P5-1b3d live H再characterization:** P5-1b3c受入後、別H承認で一つのbackground jobだけを
       起動し、hook invocation、job/session相関、result capture、terminal、cleanupを再判定する。
   - [ ] **P5-1b4 Claude caller core 非H:** P5-1b3で実証した公開面だけをissue／recover／cleanup、
