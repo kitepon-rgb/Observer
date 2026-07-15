@@ -2,6 +2,7 @@ import { isAbsolute, join, resolve } from "node:path";
 
 import { ObserverError, fail } from "./observer-error.mjs";
 import { readGenerationHostRolloverStatus } from "./generation-host-lifecycle.mjs";
+import { readGenerationParentRebindStatus } from "./generation-parent-rebind.mjs";
 import { readGenerationState } from "./generation-store.mjs";
 import {
   acquirePrivateLock,
@@ -66,17 +67,23 @@ export async function runSupervisorProcess({
     if (afterRuntimeTerminal !== null) return processResult(afterRuntimeTerminal, initial.provider, null);
     if (signal?.aborted) return processResult("cancelled", initial.provider, null);
 
-    const initialRolloverTerminal = await resumeGenerationRollover({
-      stateRoot, target, watchId, provider: initial.provider, runtime, pollIntervalMs, signal,
+    let provider = initial.provider;
+    const initialRebind = await resumeGenerationParentRebind({
+      stateRoot, target, watchId, provider, runtime, pollIntervalMs, signal,
     }, dependencies);
-    if (initialRolloverTerminal !== null) return processResult(initialRolloverTerminal, initial.provider, null);
+    if (initialRebind.terminal !== null) return processResult(initialRebind.terminal, provider, null);
+    provider = initialRebind.provider;
+    const initialRolloverTerminal = await resumeGenerationRollover({
+      stateRoot, target, watchId, provider, runtime, pollIntervalMs, signal,
+    }, dependencies);
+    if (initialRolloverTerminal !== null) return processResult(initialRolloverTerminal, provider, null);
 
     while (true) {
       const observed = await runMonitoredOperation({
         stateRoot,
         target,
         watchId,
-        provider: initial.provider,
+        provider,
         pollIntervalMs,
         signal,
         providerSignal: runtime.providerSignal,
@@ -86,20 +93,29 @@ export async function runSupervisorProcess({
           watchId,
           client,
           providerRuntime: runtime.providerRuntime,
+          prepareGenerationParentRebind: runtime.prepareGenerationParentRebind,
           planRefs,
           testReceipts,
           timeoutSeconds,
           signal: operationSignal,
         }, dependencies.stepDependencies),
       }, dependencies);
-      if (observed.kind === "terminal") return processResult(observed.status, initial.provider, null);
-      const step = validateStepResult(observed.value, initial.provider);
+      if (observed.kind === "terminal") return processResult(observed.status, provider, null);
+      const step = validateStepResult(observed.value, provider);
       if (TERMINAL_STEP.has(step.status)) return processResult(step.status, step.provider, step.cycle_id);
+      if (step.status === "rebind_required") {
+        const rebind = await resumeGenerationParentRebind({
+          stateRoot, target, watchId, provider, runtime, pollIntervalMs, signal,
+        }, dependencies);
+        if (rebind.terminal !== null) return processResult(rebind.terminal, provider, null);
+        provider = rebind.provider;
+        continue;
+      }
       if (step.status === "rollover_required") {
         const rolloverTerminal = await resumeGenerationRollover({
-          stateRoot, target, watchId, provider: initial.provider, runtime, pollIntervalMs, signal,
+          stateRoot, target, watchId, provider, runtime, pollIntervalMs, signal,
         }, dependencies);
-        if (rolloverTerminal !== null) return processResult(rolloverTerminal, initial.provider, null);
+        if (rolloverTerminal !== null) return processResult(rolloverTerminal, provider, null);
         continue;
       }
       if (CONTINUING_STEP.has(step.status)) continue;
@@ -113,13 +129,13 @@ export async function runSupervisorProcess({
         stateRoot,
         target,
         watchId,
-        provider: initial.provider,
+        provider,
         pollIntervalMs,
         signal,
         providerSignal: runtime.providerSignal,
         operation: (operationSignal) => (dependencies.waitForModelPoll ?? waitForModelPoll)(pollIntervalMs, operationSignal),
       }, dependencies);
-      if (paused.kind === "terminal") return processResult(paused.status, initial.provider, null);
+      if (paused.kind === "terminal") return processResult(paused.status, provider, null);
     }
   } catch (error) {
     primary = error;
@@ -212,9 +228,10 @@ async function monitorWatch({ stateRoot, target, watchId, provider, pollInterval
 
 async function observeWatch({ stateRoot, target, watchId, provider = null }, dependencies) {
   const watch = await (dependencies.readWatchStatus ?? readWatchStatus)({ stateRoot, targetId: target.targetId });
+  const providerMatches = provider === null || (Array.isArray(provider) ? provider.includes(watch?.provider) : watch?.provider === provider);
   if (!isPlainObject(watch) || watch.target_id !== target.targetId || watch.watch_id !== watchId ||
       watch.project_root !== target.projectRoot || !["claude", "codex"].includes(watch.provider) ||
-      (provider !== null && watch.provider !== provider) ||
+      !providerMatches ||
       !["starting", "launching", "active", "stopping", "stopped", "faulted"].includes(watch.status)) {
     fail("E_SUPERVISOR_PROCESS_WATCH_CHANGED", "Supervisor processのwatch identityが変化しました");
   }
@@ -229,20 +246,86 @@ function terminalForWatch(watch) {
 }
 
 function validateOwnedRuntime(value) {
-  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "advanceGenerationRollover,close,providerRuntime,providerSignal" ||
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !==
+      "advanceGenerationParentRebind,advanceGenerationRollover,close,prepareGenerationParentRebind,providerRuntime,providerSignal" ||
       !isPlainObject(value.providerRuntime) || !(value.providerSignal instanceof AbortSignal) || typeof value.close !== "function") {
     fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "Supervisor provider runtime所有権が不正です");
   }
   if (typeof value.advanceGenerationRollover !== "function") {
     fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "generation rollover callbackが不正です");
   }
+  if (typeof value.prepareGenerationParentRebind !== "function" || typeof value.advanceGenerationParentRebind !== "function") {
+    fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "generation parent rebind callbackが不正です");
+  }
   return value;
+}
+
+async function resumeGenerationParentRebind({
+  stateRoot, target, watchId, provider, runtime, pollIntervalMs, signal,
+}, dependencies) {
+  while (true) {
+    const journal = await observeGenerationParentRebind({ stateRoot, target, watchId }, dependencies);
+    const rollover = await observeGenerationRollover({ stateRoot, target, watchId, provider: null }, dependencies);
+    if (journal !== null && rollover !== null) {
+      fail("E_SUPERVISOR_GENERATION_TRANSITION_CONFLICT", "parent rebindとplanned rollover journalが同居しています");
+    }
+    if (journal === null) {
+      if (rollover !== null) return { terminal: null, provider };
+      const generation = await observeAnyGeneration({ stateRoot, target, watchId }, dependencies);
+      if (generation.status === "rollover_requested") return { terminal: null, provider };
+      if (generation.status !== "active") {
+        fail("E_SUPERVISOR_PARENT_REBIND_MISSING", "非active generationにparent rebind journalがありません");
+      }
+      const watch = await observeWatch({ stateRoot, target, watchId, provider: generation.provider }, dependencies);
+      const terminal = terminalForWatch(watch);
+      if (terminal !== null) return { terminal, provider };
+      return { terminal: null, provider: generation.provider };
+    }
+    await observeParentRebindGeneration({ stateRoot, target, watchId, journal }, dependencies);
+    if (![journal.from_provider, journal.to_provider].includes(provider)) {
+      fail("E_SUPERVISOR_PARENT_REBIND_CHANGED", "process providerがparent rebind identityと一致しません");
+    }
+    const observed = await runMonitoredOperation({
+      stateRoot,
+      target,
+      watchId,
+      provider: [journal.from_provider, journal.to_provider],
+      pollIntervalMs,
+      signal,
+      providerSignal: runtime.providerSignal,
+      operation: () => runtime.advanceGenerationParentRebind(),
+    }, dependencies);
+    if (observed.kind === "terminal") return { terminal: observed.status, provider };
+    const transition = validateGenerationParentRebindResult(observed.value, { target, watchId, journal });
+    if (transition.outcome === "unknown") {
+      fail("E_SUPERVISOR_PARENT_REBIND_UNKNOWN", "parent rebind結果をexact回収できません");
+    }
+    if (transition.outcome === "progressed" || transition.outcome === "activated") continue;
+    if (transition.outcome !== "pending") {
+      fail("E_SUPERVISOR_PARENT_REBIND_INVALID", "parent rebind結果をprocessへ適用できません");
+    }
+    const paused = await runMonitoredOperation({
+      stateRoot,
+      target,
+      watchId,
+      provider: [journal.from_provider, journal.to_provider],
+      pollIntervalMs,
+      signal,
+      providerSignal: runtime.providerSignal,
+      operation: (operationSignal) => (dependencies.waitForRebindPoll ?? waitForModelPoll)(pollIntervalMs, operationSignal),
+    }, dependencies);
+    if (paused.kind === "terminal") return { terminal: paused.status, provider };
+  }
 }
 
 async function resumeGenerationRollover({
   stateRoot, target, watchId, provider, runtime, pollIntervalMs, signal,
 }, dependencies) {
   while (true) {
+    const rebind = await observeGenerationParentRebind({ stateRoot, target, watchId }, dependencies);
+    if (rebind !== null) {
+      fail("E_SUPERVISOR_GENERATION_TRANSITION_CONFLICT", "planned rollover中にparent rebind journalがあります");
+    }
     const generation = await observeGeneration({ stateRoot, target, watchId, provider }, dependencies);
     const journal = await observeGenerationRollover({ stateRoot, target, watchId, provider }, dependencies);
     if (generation.status === "active" && journal === null) return null;
@@ -293,15 +376,85 @@ async function observeGeneration({ stateRoot, target, watchId, provider }, depen
   return generation;
 }
 
+async function observeAnyGeneration({ stateRoot, target, watchId }, dependencies) {
+  const generation = await (dependencies.readGenerationState ?? readGenerationState)({ stateRoot, targetId: target.targetId });
+  if (!isPlainObject(generation) || generation.schema !== "observer.generation_state.v1" ||
+      generation.target_id !== target.targetId || generation.watch_id !== watchId ||
+      !["claude", "codex"].includes(generation.provider) ||
+      !["active", "rollover_requested", "rebind_required", "stopping", "terminal_confirmed", "starting"].includes(generation.status)) {
+    fail("E_SUPERVISOR_GENERATION_CHANGED", "Supervisor processのgeneration identityが変化しました");
+  }
+  return generation;
+}
+
+async function observeParentRebindGeneration({ stateRoot, target, watchId, journal }, dependencies) {
+  const generation = await observeAnyGeneration({ stateRoot, target, watchId }, dependencies);
+  const expected = {
+    rebind_required: ["rebind_required", journal.from_provider],
+    stop_authorized: ["stopping", journal.from_provider],
+    terminal_observed: ["terminal_confirmed", journal.from_provider],
+    spawn_authorized: ["starting", journal.to_provider],
+    spawn_observed: ["starting", journal.to_provider],
+    ready_observed: ["starting", journal.to_provider],
+  }[journal.status];
+  const activationCleanup = journal.status === "ready_observed" && generation.status === "active" &&
+    generation.provider === journal.to_provider && generation.generation_id === journal.to_generation_id &&
+    generation.parent_epoch_id === journal.to_parent_epoch_id;
+  const expectedParentEpoch = ["rebind_required", "stop_authorized", "terminal_observed"].includes(journal.status)
+    ? journal.from_parent_epoch_id
+    : journal.to_parent_epoch_id;
+  if (!activationCleanup && (generation.status !== expected[0] || generation.provider !== expected[1] ||
+      generation.generation_id !== (journal.status === "rebind_required" || journal.status === "stop_authorized" ||
+        journal.status === "terminal_observed" ? journal.from_generation_id : journal.to_generation_id) ||
+      generation.parent_epoch_id !== expectedParentEpoch)) {
+    fail("E_SUPERVISOR_PARENT_REBIND_CHANGED", "generationとparent rebind journalが一致しません");
+  }
+  return generation;
+}
+
 async function observeGenerationRollover({ stateRoot, target, watchId, provider }, dependencies) {
   const journal = await (dependencies.readGenerationHostRolloverStatus ?? readGenerationHostRolloverStatus)({
     stateRoot, targetId: target.targetId, watchId,
   });
   if (journal === null) return null;
   if (!isPlainObject(journal) || journal.schema !== "observer.generation_host_rollover_status.v1" ||
-      journal.target_id !== target.targetId || journal.watch_id !== watchId || journal.provider !== provider ||
+      journal.target_id !== target.targetId || journal.watch_id !== watchId || !["claude", "codex"].includes(journal.provider) ||
+      (provider !== null && journal.provider !== provider) ||
       !["stop_authorized", "terminal_observed", "spawn_authorized", "spawn_observed", "ready_observed"].includes(journal.status)) {
     fail("E_SUPERVISOR_GENERATION_ROLLOVER_CHANGED", "generation rollover journalがprocess identityと一致しません");
+  }
+  return journal;
+}
+
+async function observeGenerationParentRebind({ stateRoot, target, watchId }, dependencies) {
+  const journal = await (dependencies.readGenerationParentRebindStatus ?? readGenerationParentRebindStatus)({
+    stateRoot, targetId: target.targetId, watchId,
+  });
+  if (journal === null) return null;
+  const actions = {
+    rebind_required: "authorize_stop",
+    stop_authorized: "observe_terminal",
+    terminal_observed: "authorize_start",
+    spawn_authorized: "recover_spawn",
+    spawn_observed: "recover_ready",
+    ready_observed: "finish_activation",
+  };
+  const keys = [
+    "action", "from_generation_id", "from_parent_epoch_id", "from_provider", "schema", "status", "target_id",
+    "to_generation_id", "to_parent_epoch_id", "to_provider", "watch_id",
+  ].sort();
+  const actual = isPlainObject(journal) ? Object.keys(journal).sort() : [];
+  if (!isPlainObject(journal) || actual.length !== keys.length || actual.some((key, index) => key !== keys[index]) ||
+      journal.schema !== "observer.generation_parent_rebind_status.v1" ||
+      journal.target_id !== target.targetId || journal.watch_id !== watchId ||
+      !["claude", "codex"].includes(journal.from_provider) || !["claude", "codex"].includes(journal.to_provider) ||
+      actions[journal.status] !== journal.action || !/^sha256:[a-f0-9]{64}$/.test(journal.from_parent_epoch_id) ||
+      !/^sha256:[a-f0-9]{64}$/.test(journal.to_parent_epoch_id) || !/^sha256:[a-f0-9]{64}$/.test(journal.from_generation_id) ||
+      !(journal.to_generation_id === null || /^sha256:[a-f0-9]{64}$/.test(journal.to_generation_id)) ||
+      (["rebind_required", "stop_authorized", "terminal_observed"].includes(journal.status)
+        ? journal.to_generation_id !== null
+        : journal.to_generation_id === null)) {
+    fail("E_SUPERVISOR_PARENT_REBIND_CHANGED", "parent rebind journalがprocess identityと一致しません");
   }
   return journal;
 }
@@ -319,10 +472,25 @@ function validateGenerationRolloverResult(value, { target, watchId, provider }) 
   return value;
 }
 
+function validateGenerationParentRebindResult(value, { target, watchId, journal }) {
+  if (!isPlainObject(value) ||
+      Object.keys(value).sort().join(",") !== "outcome,phase,provider,reason,schema,target_id,watch_id" ||
+      value.schema !== "observer.generation_parent_rebind_provider_binding_result.v1" ||
+      !isPlainObject(value.provider) || Object.keys(value.provider).sort().join(",") !== "from,to" ||
+      value.provider.from !== journal.from_provider || value.provider.to !== journal.to_provider ||
+      value.target_id !== target.targetId || value.watch_id !== watchId ||
+      !["rebind_required", "stop_authorized", "terminal_observed", "spawn_authorized", "spawn_observed", "ready_observed", "active"].includes(value.phase) ||
+      !["pending", "progressed", "activated", "unknown"].includes(value.outcome) ||
+      typeof value.reason !== "string" || value.reason.length === 0 || value.reason.length > 128) {
+    fail("E_SUPERVISOR_PARENT_REBIND_INVALID", "parent rebind binding結果が不正です");
+  }
+  return value;
+}
+
 function validateStepResult(value, provider) {
   if (!isPlainObject(value) || value.schema !== "observer.supervisor_production_result.v1" ||
       value.provider !== provider || ![
-        "timeout", "rollover_required", "model_result_unknown", "model_pending", "committed", "provider_unavailable",
+        "timeout", "rollover_required", "rebind_required", "model_result_unknown", "model_pending", "committed", "provider_unavailable",
       ].includes(value.status) ||
       (value.cycle_id !== null && (typeof value.cycle_id !== "string" || !/^c_[a-f0-9]{64}$/.test(value.cycle_id)))) {
     fail("E_SUPERVISOR_PROCESS_STEP_INVALID", "Supervisor step結果が不正です");

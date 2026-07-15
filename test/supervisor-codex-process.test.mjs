@@ -15,6 +15,16 @@ const TARGET = {
   projectRoot: "/project",
 };
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
+const CYCLE_ID = `c_${"b".repeat(64)}`;
+const PROPOSED = {
+  schema: "observer.parent_state.v1",
+  status: "ready",
+  target_id: TARGET.targetId,
+  project_root: TARGET.projectRoot,
+  host: "codex",
+  thread_sha256: "c".repeat(64),
+  cursor: "tlc1.parent",
+};
 
 test("verified Throughline clientとCodex runtime factoryをprocess lease内へ渡す", async () => {
   const calls = [];
@@ -40,6 +50,8 @@ test("verified Throughline clientとCodex runtime factoryをprocess lease内へ�
       return {
         providerRuntime: { provider: "codex" },
         providerSignal: new AbortController().signal,
+        prepareGenerationParentRebind: async () => {},
+        advanceGenerationParentRebind: async () => {},
         advanceGenerationRollover: async () => {},
         close: async () => {},
       };
@@ -92,6 +104,17 @@ test("Codex runtimeはapp-serverを一度initializeし、closeAndWait所有権�
       calls.push(["rollover", input]);
       return { outcome: "pending" };
     },
+    authorizeGenerationParentRebind: async (input) => {
+      calls.push(["prepare-rebind", input]);
+      return { authorization: { marker: "authorization" } };
+    },
+    readCycleState: async () => ({
+      pending_cycle: { status: "prepared", cycle_id: CYCLE_ID, proposed_state: PROPOSED },
+    }),
+    advanceGenerationParentRebindProviderBinding: async (input) => {
+      calls.push(["advance-rebind", input]);
+      return { outcome: "pending" };
+    },
   });
   assert.deepEqual(owned.providerRuntime, { provider: "codex", runtime_root: ROOT, session: transport });
   assert.equal(owned.providerSignal, transport.terminationSignal);
@@ -103,8 +126,41 @@ test("Codex runtimeはapp-serverを一度initializeし、closeAndWait所有権�
   assert.equal(rollover.session, transport);
   assert.equal(rollover.launchRequest.host.kind, "codex.app_server_thread.v1");
   assert.equal(rollover.launchRequest.runtime_root, ROOT);
+  await owned.prepareGenerationParentRebind({ cycleId: CYCLE_ID, proposedParent: PROPOSED });
+  await owned.advanceGenerationParentRebind();
+  const rebind = calls.find(([name]) => name === "advance-rebind")[1];
+  assert.equal(rebind.authorization.marker, "authorization");
+  assert.equal(rebind.launchRequest.provider, "codex");
+  assert.equal(rebind.oldSession, transport);
+  assert.equal(rebind.newSession, transport);
   await owned.close();
-  assert.deepEqual(calls.map((entry) => Array.isArray(entry) ? entry[0] : entry), ["verify", "start", "initialize", "rollover", "close"]);
+  assert.deepEqual(calls.map((entry) => Array.isArray(entry) ? entry[0] : entry), [
+    "verify", "start", "initialize", "rollover", "prepare-rebind", "prepare-rebind", "advance-rebind", "close",
+  ]);
+});
+
+test("Codex runtimeはcross-provider capability欠損をauthorization前に拒否する", async () => {
+  let authorizations = 0;
+  const transport = {
+    request: async () => {},
+    notify: async () => {},
+    closeAndWait: async () => {},
+    terminationSignal: new AbortController().signal,
+  };
+  const owned = await createCodexSupervisorRuntime({
+    stateRoot: "/state", target: TARGET, watchId: WATCH_ID, runtimeRoot: ROOT, codexCommand: CODEX,
+  }, {
+    verifyCodexAppServerRuntime: async () => ({ runtime_root: ROOT }),
+    startCodexAppServerTransport: async () => transport,
+    initializeCodexObserverSession: async () => {},
+    authorizeGenerationParentRebind: async () => { authorizations += 1; },
+  });
+  await assert.rejects(owned.prepareGenerationParentRebind({
+    cycleId: CYCLE_ID,
+    proposedParent: { ...PROPOSED, host: "claude" },
+  }), { code: "E_SUPERVISOR_CODEX_REBIND_PROVIDER_UNAVAILABLE" });
+  assert.equal(authorizations, 0);
+  await owned.close();
 });
 
 test("initialize失敗時もtransport terminal cleanupを確認してから失敗する", async () => {

@@ -33,12 +33,16 @@ export async function runSupervisorProductionStep({
   watchId,
   client,
   providerRuntime = null,
+  prepareGenerationParentRebind = null,
   planRefs = [],
   testReceipts = [],
   timeoutSeconds = 3600,
   signal,
 } = {}, dependencies = {}) {
-  validateRequest({ stateRoot, target, watchId, client, planRefs, testReceipts, timeoutSeconds });
+  validateRequest({
+    stateRoot, target, watchId, client, prepareGenerationParentRebind,
+    planRefs, testReceipts, timeoutSeconds,
+  });
   const acquire = dependencies.acquirePrivateLock ?? acquirePrivateLock;
   let release;
   try {
@@ -68,60 +72,74 @@ export async function runSupervisorProductionStep({
     const runtime = validateProviderRuntime(providerRuntime, generation.provider, binding);
     let cycleInput = null;
     const run = dependencies.runSupervisorCycle ?? runSupervisorCycle;
-    const result = await run({
-      stateRoot,
-      target,
-      watchId,
-      client,
-      timeoutSeconds,
-      signal,
-      prepareCycleInput: async ({ cycle_id: cycleId, proposed_state: proposedState, turns }) => {
-        validateProposedParent({ proposedState, generation, target, watchId, cycleId });
-        const cycleState = await (dependencies.readCycleState ?? readCycleState)({ stateRoot, targetId: target.targetId });
-        const pending = cycleState?.pending_cycle;
-        if (!pending || pending.status !== "prepared" || pending.cycle_id !== cycleId ||
-            JSON.stringify(pending.proposed_state) !== JSON.stringify(proposedState)) {
-          fail("E_SUPERVISOR_PENDING_MISMATCH", "prepared cycleがevidence inputと一致しません");
-        }
-        const evidence = await (dependencies.collectEvidenceSnapshot ?? collectEvidenceSnapshot)({
-          context: {
-            after_cursor_sha256: pending.base_cursor === null ? null : cursorDigest(pending.base_cursor),
-            cycle_id: cycleId,
-            parent_host: proposedState.host,
-            parent_thread_sha256: proposedState.thread_sha256,
-            target_id: target.targetId,
-            through_cursor_sha256: cursorDigest(proposedState.cursor),
-            watch_id: watchId,
-          },
-          turns,
-          project_root: target.projectRoot,
-          plan_refs: planRefs,
-          test_receipts: testReceipts,
-        }, dependencies.evidenceDependencies);
-        cycleInput = (dependencies.buildCycleInput ?? buildCycleInput)(evidence);
-        return cycleInput;
-      },
-      issueModelOperation: ({ operation, value }) => (dependencies.issueCodexModelOperation ?? issueCodexModelOperation)({
+    let result;
+    try {
+      result = await run({
         stateRoot,
-        operation,
-        value,
-        runtime: { thread_id: runtime.threadId, cwd: runtime.runtimeRoot },
-      }, {
-        threadRead: (params) => runtime.session.request("thread/read", params),
-        turnStart: (params) => runtime.session.request("turn/start", params),
-      }),
-      recoverModelOperation: ({ operation }) => (dependencies.recoverCodexModelOperation ?? recoverCodexModelOperation)({
-        stateRoot,
-        operation,
-        threadRead: (params) => runtime.session.request("thread/read", params),
-      }),
-      cleanupProviderOperation: ({ operation }) => (dependencies.cleanupCodexModelOperation ?? cleanupCodexModelOperation)({ stateRoot, operation }),
-      applyCycle: ({ operation, output }) => {
-        if (cycleInput === null) fail("E_SUPERVISOR_CYCLE_INPUT_MISSING", "cycle applicationへcanonical inputを再構成できません");
-        return (dependencies.applyCycleOutput ?? applyCycleOutput)({ stateRoot, operation, output, cycleInput, now: currentDate(dependencies) });
-      },
-      finalizeAppliedCycle: ({ operation }) => (dependencies.finalizeCycleApplication ?? finalizeCycleApplication)({ stateRoot, operation }),
-    });
+        target,
+        watchId,
+        client,
+        timeoutSeconds,
+        signal,
+        prepareCycleInput: async ({ cycle_id: cycleId, proposed_state: proposedState, turns }) => {
+          validateProposedParentShape({ proposedState, target, watchId, cycleId });
+          if (!matchesCurrentParent({ proposedState, generation, target, watchId, cycleId })) {
+            if (typeof prepareGenerationParentRebind !== "function") {
+              fail("E_SUPERVISOR_PARENT_REBIND_UNAVAILABLE", "parent rebind runtimeが利用できません");
+            }
+            const prepared = await prepareGenerationParentRebind({ cycleId, proposedParent: proposedState });
+            validateParentRebindPreparation(prepared, { generation, target, watchId, cycleId, proposedState });
+            throw new ParentRebindRequired(cycleId);
+          }
+          const cycleState = await (dependencies.readCycleState ?? readCycleState)({ stateRoot, targetId: target.targetId });
+          const pending = cycleState?.pending_cycle;
+          if (!pending || pending.status !== "prepared" || pending.cycle_id !== cycleId ||
+              JSON.stringify(pending.proposed_state) !== JSON.stringify(proposedState)) {
+            fail("E_SUPERVISOR_PENDING_MISMATCH", "prepared cycleがevidence inputと一致しません");
+          }
+          const evidence = await (dependencies.collectEvidenceSnapshot ?? collectEvidenceSnapshot)({
+            context: {
+              after_cursor_sha256: pending.base_cursor === null ? null : cursorDigest(pending.base_cursor),
+              cycle_id: cycleId,
+              parent_host: proposedState.host,
+              parent_thread_sha256: proposedState.thread_sha256,
+              target_id: target.targetId,
+              through_cursor_sha256: cursorDigest(proposedState.cursor),
+              watch_id: watchId,
+            },
+            turns,
+            project_root: target.projectRoot,
+            plan_refs: planRefs,
+            test_receipts: testReceipts,
+          }, dependencies.evidenceDependencies);
+          cycleInput = (dependencies.buildCycleInput ?? buildCycleInput)(evidence);
+          return cycleInput;
+        },
+        issueModelOperation: ({ operation, value }) => (dependencies.issueCodexModelOperation ?? issueCodexModelOperation)({
+          stateRoot,
+          operation,
+          value,
+          runtime: { thread_id: runtime.threadId, cwd: runtime.runtimeRoot },
+        }, {
+          threadRead: (params) => runtime.session.request("thread/read", params),
+          turnStart: (params) => runtime.session.request("turn/start", params),
+        }),
+        recoverModelOperation: ({ operation }) => (dependencies.recoverCodexModelOperation ?? recoverCodexModelOperation)({
+          stateRoot,
+          operation,
+          threadRead: (params) => runtime.session.request("thread/read", params),
+        }),
+        cleanupProviderOperation: ({ operation }) => (dependencies.cleanupCodexModelOperation ?? cleanupCodexModelOperation)({ stateRoot, operation }),
+        applyCycle: ({ operation, output }) => {
+          if (cycleInput === null) fail("E_SUPERVISOR_CYCLE_INPUT_MISSING", "cycle applicationへcanonical inputを再構成できません");
+          return (dependencies.applyCycleOutput ?? applyCycleOutput)({ stateRoot, operation, output, cycleInput, now: currentDate(dependencies) });
+        },
+        finalizeAppliedCycle: ({ operation }) => (dependencies.finalizeCycleApplication ?? finalizeCycleApplication)({ stateRoot, operation }),
+      });
+    } catch (error) {
+      if (!(error instanceof ParentRebindRequired)) throw error;
+      return productionResult({ status: "rebind_required", cycle_id: error.cycleId }, generation.provider);
+    }
     return productionResult(result, generation.provider);
   } catch (error) {
     primary = error;
@@ -147,10 +165,11 @@ export async function recoverSupervisorProductionLock({ stateRoot, targetId, exp
   return (dependencies.recoverPrivateLock ?? recoverPrivateLock)(await supervisorLockPath(stateRoot, targetId), expectedNonce);
 }
 
-function validateRequest({ stateRoot, target, watchId, client, planRefs, testReceipts, timeoutSeconds }) {
+function validateRequest({ stateRoot, target, watchId, client, prepareGenerationParentRebind, planRefs, testReceipts, timeoutSeconds }) {
   if (typeof stateRoot !== "string" || !isAbsolute(stateRoot) || !isPlainObject(target) ||
       target.schema !== "observer.project_target.v1" || !TARGET.test(target.targetId) || !isAbsolute(target.projectRoot) ||
       !WATCH.test(watchId) || !client || typeof client.read !== "function" || typeof client.wait !== "function" ||
+      (prepareGenerationParentRebind !== null && typeof prepareGenerationParentRebind !== "function") ||
       !Array.isArray(planRefs) || !Array.isArray(testReceipts) || !Number.isSafeInteger(timeoutSeconds) ||
       timeoutSeconds < 1 || timeoutSeconds > 3600) {
     fail("E_SUPERVISOR_PRODUCTION_INPUT_INVALID", "Supervisor production step入力が不正です");
@@ -180,13 +199,61 @@ function validateProviderRuntime(runtime, provider, binding) {
   return { session: runtime.session, runtimeRoot: runtime.runtime_root, threadId: binding.launch_handle.value };
 }
 
-function validateProposedParent({ proposedState, generation, target, watchId, cycleId }) {
-  if (!isPlainObject(proposedState) || proposedState.status !== "ready" || proposedState.target_id !== target.targetId ||
-      proposedState.project_root !== target.projectRoot || proposedState.host !== generation.provider ||
-      generationParentEpochId(proposedState.host, proposedState.thread_sha256) !== generation.parent_epoch_id ||
-      typeof proposedState.cursor !== "string" || !/^c_[a-f0-9]{64}$/.test(cycleId) || !WATCH.test(watchId)) {
-    fail("E_SUPERVISOR_PARENT_REBIND_REQUIRED", "proposed parentはcurrent generationと一致しません");
+function matchesCurrentParent({ proposedState, generation, target, watchId, cycleId }) {
+  return proposedState.target_id === target.targetId && WATCH.test(watchId) && /^c_[a-f0-9]{64}$/.test(cycleId) &&
+    proposedState.host === generation.provider &&
+    generationParentEpochId(proposedState.host, proposedState.thread_sha256) === generation.parent_epoch_id;
+}
+
+function validateProposedParentShape({ proposedState, target, watchId, cycleId }) {
+  const keys = ["cursor", "host", "project_root", "schema", "status", "target_id", "thread_sha256"].sort();
+  const actual = isPlainObject(proposedState) ? Object.keys(proposedState).sort() : [];
+  if (!isPlainObject(proposedState) || actual.length !== keys.length || actual.some((key, index) => key !== keys[index]) ||
+      proposedState.schema !== "observer.parent_state.v1" || proposedState.status !== "ready" ||
+      proposedState.target_id !== target.targetId || proposedState.project_root !== target.projectRoot ||
+      !["claude", "codex"].includes(proposedState.host) ||
+      typeof proposedState.thread_sha256 !== "string" || !/^[a-f0-9]{64}$/.test(proposedState.thread_sha256) ||
+      typeof proposedState.cursor !== "string" || proposedState.cursor.length === 0 || proposedState.cursor.length > 4096 ||
+      !WATCH.test(watchId) || !/^c_[a-f0-9]{64}$/.test(cycleId)) {
+    fail("E_SUPERVISOR_PARENT_STATE_INVALID", "prepared cycleのparent stateが不正です");
   }
+}
+
+function validateParentRebindPreparation(value, { generation, target, watchId, cycleId, proposedState }) {
+  const authorization = value?.authorization;
+  const resultKeys = [
+    "action", "authorization", "from_generation_id", "from_parent_epoch_id", "from_provider", "outcome", "schema",
+    "status", "target_id", "to_generation_id", "to_parent_epoch_id", "to_provider", "watch_id",
+  ].sort();
+  const authorizationKeys = [
+    "cycle_id", "from_generation_id", "from_parent_epoch_id", "from_provider", "schema", "target_id",
+    "through_cursor_sha256", "to_parent_epoch_id", "to_parent_thread_sha256", "to_provider", "watch_id",
+  ].sort();
+  const resultActual = isPlainObject(value) ? Object.keys(value).sort() : [];
+  const authorizationActual = isPlainObject(authorization) ? Object.keys(authorization).sort() : [];
+  const expectedEpoch = generationParentEpochId(proposedState.host, proposedState.thread_sha256);
+  if (!isPlainObject(value) || resultActual.length !== resultKeys.length ||
+      resultActual.some((key, index) => key !== resultKeys[index]) ||
+      value.schema !== "observer.generation_parent_rebind_result.v1" ||
+      !["recorded", "existing"].includes(value.outcome) || value.status !== "rebind_required" ||
+      value.action !== "authorize_stop" || value.target_id !== target.targetId || value.watch_id !== watchId ||
+      value.from_provider !== generation.provider || value.to_provider !== proposedState.host ||
+      value.from_generation_id !== generation.generation_id || value.from_parent_epoch_id !== generation.parent_epoch_id ||
+      value.to_generation_id !== null || value.to_parent_epoch_id !== expectedEpoch || !isPlainObject(authorization) ||
+      authorizationActual.length !== authorizationKeys.length ||
+      authorizationActual.some((key, index) => key !== authorizationKeys[index]) ||
+      authorization.schema !== "observer.parent_rebind_authorization.v1" || authorization.target_id !== target.targetId ||
+      authorization.watch_id !== watchId || authorization.cycle_id !== cycleId ||
+      authorization.from_provider !== generation.provider || authorization.to_provider !== proposedState.host ||
+      authorization.from_generation_id !== generation.generation_id ||
+      authorization.from_parent_epoch_id !== generation.parent_epoch_id ||
+      authorization.to_parent_epoch_id !== value.to_parent_epoch_id ||
+      authorization.to_parent_thread_sha256 !== proposedState.thread_sha256 ||
+      typeof authorization.through_cursor_sha256 !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/.test(authorization.through_cursor_sha256)) {
+    fail("E_SUPERVISOR_PARENT_REBIND_PREPARATION_INVALID", "parent rebind authorization結果が不正です");
+  }
+  return value;
 }
 
 async function supervisorLockPath(stateRoot, targetId) {
@@ -211,7 +278,7 @@ function unavailable(provider) {
 }
 
 function productionResult(value, provider) {
-  if (!isPlainObject(value) || !["timeout", "rollover_required", "model_result_unknown", "model_pending", "committed"].includes(value.status)) {
+  if (!isPlainObject(value) || !["timeout", "rollover_required", "rebind_required", "model_result_unknown", "model_pending", "committed"].includes(value.status)) {
     fail("E_SUPERVISOR_PRODUCTION_RESULT_INVALID", "Supervisor cycle resultが不正です");
   }
   const cycleId = value.status === "timeout" ? null : value.cycle_id;
@@ -219,6 +286,13 @@ function productionResult(value, provider) {
     fail("E_SUPERVISOR_PRODUCTION_RESULT_INVALID", "Supervisor cycle IDが不正です");
   }
   return { schema: SUPERVISOR_PRODUCTION_RESULT_SCHEMA, status: value.status, provider, cycle_id: cycleId };
+}
+
+class ParentRebindRequired extends Error {
+  constructor(cycleId) {
+    super("parent rebind required");
+    this.cycleId = cycleId;
+  }
 }
 
 function currentDate(dependencies) {

@@ -94,6 +94,37 @@ function baseDependencies(overrides = {}) {
   return { dependencies, released: () => released };
 }
 
+function parentRebindPreparation(proposedState) {
+  const toParentEpochId = generationParentEpochId(proposedState.host, proposedState.thread_sha256);
+  return {
+    schema: "observer.generation_parent_rebind_result.v1",
+    outcome: "recorded",
+    target_id: TARGET_ID,
+    watch_id: WATCH_ID,
+    from_provider: GENERATION.provider,
+    to_provider: proposedState.host,
+    from_parent_epoch_id: GENERATION.parent_epoch_id,
+    to_parent_epoch_id: toParentEpochId,
+    from_generation_id: GENERATION.generation_id,
+    to_generation_id: null,
+    status: "rebind_required",
+    action: "authorize_stop",
+    authorization: {
+      schema: "observer.parent_rebind_authorization.v1",
+      target_id: TARGET_ID,
+      watch_id: WATCH_ID,
+      cycle_id: CYCLE_ID,
+      from_provider: GENERATION.provider,
+      to_provider: proposedState.host,
+      from_parent_epoch_id: GENERATION.parent_epoch_id,
+      to_parent_epoch_id: toParentEpochId,
+      to_parent_thread_sha256: proposedState.thread_sha256,
+      from_generation_id: GENERATION.generation_id,
+      through_cursor_sha256: `sha256:${"e".repeat(64)}`,
+    },
+  };
+}
+
 test("Codex一stepはcanonical inputを作りprovider／application callbackを同じidentityへroutingする", async () => {
   const calls = [];
   const { dependencies, released } = baseDependencies({
@@ -181,15 +212,63 @@ test("ClaudeまたはCodex runtime欠損はwait／pending cycleより前にprovi
   }
 });
 
-test("proposed parentがgeneration epochと違えばprovider request前にrebind requiredで止める", async () => {
+test("proposed parent mismatchはauthorizationをrecordしてevidence／provider request前にrebind requiredを返す", async () => {
   let issued = 0;
+  let evidence = 0;
+  let prepared = 0;
   const switched = { ...PROPOSED, thread_sha256: "0".repeat(64) };
   const { dependencies, released } = baseDependencies({
     readCycleState: async () => ({ pending_cycle: { status: "prepared", cycle_id: CYCLE_ID, base_cursor: "tlc1.after", proposed_state: switched } }),
+    collectEvidenceSnapshot: async () => { evidence += 1; },
     issueCodexModelOperation: async () => { issued += 1; },
     runSupervisorCycle: async (input) => input.prepareCycleInput({ cycle_id: CYCLE_ID, proposed_state: switched, turns: [] }),
   });
-  await assert.rejects(runSupervisorProductionStep(request(), dependencies), { code: "E_SUPERVISOR_PARENT_REBIND_REQUIRED" });
+  const result = await runSupervisorProductionStep(request({
+    prepareGenerationParentRebind: async (input) => {
+      prepared += 1;
+      assert.deepEqual(input, { cycleId: CYCLE_ID, proposedParent: switched });
+      return parentRebindPreparation(switched);
+    },
+  }), dependencies);
+  assert.deepEqual(result, {
+    schema: "observer.supervisor_production_result.v1",
+    status: "rebind_required",
+    provider: "codex",
+    cycle_id: CYCLE_ID,
+  });
+  assert.equal(prepared, 1);
+  assert.equal(evidence, 0);
+  assert.equal(issued, 0);
+  assert.equal(released(), 1);
+});
+
+test("parent rebind capability欠損はauthorizationを捏造せずmodel request前にfail loudにする", async () => {
+  let issued = 0;
+  const switched = { ...PROPOSED, thread_sha256: "0".repeat(64) };
+  const { dependencies, released } = baseDependencies({
+    issueCodexModelOperation: async () => { issued += 1; },
+    runSupervisorCycle: async (input) => input.prepareCycleInput({ cycle_id: CYCLE_ID, proposed_state: switched, turns: [] }),
+  });
+  await assert.rejects(runSupervisorProductionStep(request(), dependencies), {
+    code: "E_SUPERVISOR_PARENT_REBIND_UNAVAILABLE",
+  });
+  assert.equal(issued, 0);
+  assert.equal(released(), 1);
+});
+
+test("parent rebind authorization receipt不正はevidence／model requestへ進めない", async () => {
+  let evidence = 0;
+  let issued = 0;
+  const switched = { ...PROPOSED, thread_sha256: "0".repeat(64) };
+  const { dependencies, released } = baseDependencies({
+    collectEvidenceSnapshot: async () => { evidence += 1; },
+    issueCodexModelOperation: async () => { issued += 1; },
+    runSupervisorCycle: async (input) => input.prepareCycleInput({ cycle_id: CYCLE_ID, proposed_state: switched, turns: [] }),
+  });
+  await assert.rejects(runSupervisorProductionStep(request({
+    prepareGenerationParentRebind: async () => ({ outcome: "recorded" }),
+  }), dependencies), { code: "E_SUPERVISOR_PARENT_REBIND_PREPARATION_INVALID" });
+  assert.equal(evidence, 0);
   assert.equal(issued, 0);
   assert.equal(released(), 1);
 });

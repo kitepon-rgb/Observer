@@ -1,11 +1,16 @@
 import { isAbsolute } from "node:path";
 
 import { initializeCodexObserverSession } from "./codex-host-runtime.mjs";
+import { readCycleState } from "./cycle-store.mjs";
 import {
   startCodexAppServerTransport,
   verifyCodexAppServerRuntime,
 } from "./codex-process-transport.mjs";
 import { advanceGenerationHostProviderRollover } from "./generation-host-provider-binding.mjs";
+import {
+  authorizeGenerationParentRebind,
+} from "./generation-parent-rebind.mjs";
+import { advanceGenerationParentRebindProviderBinding } from "./generation-parent-rebind-provider-binding.mjs";
 import { fail } from "./observer-error.mjs";
 import { buildGenerationLaunchRequest } from "./parent-launch.mjs";
 import { runSupervisorProcess } from "./supervisor-process.mjs";
@@ -74,6 +79,18 @@ export async function createCodexSupervisorRuntime({ stateRoot, target, watchId,
       fail("E_SUPERVISOR_CODEX_RUNTIME_INVALID", "Codex app-server transport所有権が不正です");
     }
     await (dependencies.initializeCodexObserverSession ?? initializeCodexObserverSession)({ session: transport }, dependencies.initializeDependencies);
+    const prepareGenerationParentRebind = async ({ cycleId, proposedParent } = {}) => {
+      if (proposedParent?.host !== "codex") {
+        fail("E_SUPERVISOR_CODEX_REBIND_PROVIDER_UNAVAILABLE", "Codex runtimeはcross-provider rebindをまだ実行できません");
+      }
+      return (dependencies.authorizeGenerationParentRebind ?? authorizeGenerationParentRebind)({
+        stateRoot,
+        target,
+        watchId,
+        cycleId,
+        proposedParent,
+      }, dependencies.parentRebindDependencies);
+    };
     return {
       providerRuntime: {
         provider: "codex",
@@ -90,6 +107,27 @@ export async function createCodexSupervisorRuntime({ stateRoot, target, watchId,
         launchRequest,
         session: transport,
       }, dependencies.rolloverDependencies),
+      prepareGenerationParentRebind,
+      advanceGenerationParentRebind: async () => {
+        const cycle = await (dependencies.readCycleState ?? readCycleState)({ stateRoot, targetId: target.targetId });
+        const pending = cycle?.pending_cycle;
+        if (!pending || pending.status !== "prepared" || pending.proposed_state?.host !== "codex") {
+          fail("E_SUPERVISOR_CODEX_REBIND_CYCLE_INVALID", "Codex parent rebindにprepared cycleが必要です");
+        }
+        const authorized = await prepareGenerationParentRebind({
+          cycleId: pending.cycle_id,
+          proposedParent: pending.proposed_state,
+        });
+        return (dependencies.advanceGenerationParentRebindProviderBinding ?? advanceGenerationParentRebindProviderBinding)({
+          stateRoot,
+          target,
+          watchId,
+          authorization: authorized.authorization,
+          launchRequest,
+          oldSession: transport,
+          newSession: transport,
+        }, dependencies.parentRebindBindingDependencies);
+      },
       close: () => transport.closeAndWait(),
     };
   } catch (error) {
