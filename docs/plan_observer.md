@@ -315,7 +315,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               実provider commandのH受入はPhase O2 gateへ残す。
           - [ ] parent epoch切替を旧generationへのmodel requestなしで明示
             `rebind_required` transition／receiptへ記録し、parent authorizationと
-            terminal確認後だけ新epochを開始する。
+            terminal確認後だけ新epochを開始する（[ADR 0072](adr/0072-parent-epoch-rebind-transaction.md)）。
+            - [ ] host-neutral rebind transaction、new epoch generation、watch provider／handle CASを実装する。
+            - [ ] Claude／Codex provider bindingを一command一stepで接続する。
+            - [ ] Supervisor processへ接続し、new epoch activation後にprepared cycleへ戻る。
+            - [ ] 実thread／host switchとcrash recoveryをPhase O2 H gateで受け入れる。
           - [ ] watch／provider faultをterminal確認済みのfault transition／receiptへ記録し、
             unknown outcomeを自動restart、takeover、別handle探索で隠さない。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
