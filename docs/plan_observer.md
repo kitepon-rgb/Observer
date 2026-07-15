@@ -256,10 +256,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       - Host設定を変更せず、fragment／診断のstdout以外へstateを書かない。
       - focused gate: `node --test test/parent-stop-hook-config.test.mjs` — 7/7 PASS。`npm run check` PASS。
       - 実装者ReportはControl revision 28でstrict import、revision 29で親受入した。
-    - [ ] **P3-4b2 dotagents transactional applierを実装する。**
+    - [x] **P3-4b2 dotagents transactional applierを実装した（[ADR 0024](adr/0024-dotagents-hook-config-adapter-receipt.md)）。**
       - Observerのcanonical fragmentをconsumeし、Claude `settings.json`とCodex `hooks.json`へstandalone Stop entryを各一件に正規化する。
       - dry-runを既定にし、apply時は二設定をbackup／prepare／atomic replaceし、途中失敗は両方rollbackする。
       - 既存hook、matcher group、trust、model、effort、permission、credentialを変更しない。
+      - dotagents commit `2fb48cb`、Worker Report strict import revision 45、parent accept revision 46。
+      - focused gate `bash tests/install/observer-hook-config.sh`と`make lint-py` PASS。実HOME applyとhost実火は未実施。
   - [ ] **P3-4c live host gateを実証する（H）。**
     - Claude／Codex各一回で、Mailboxなしのfast exitと一件の同一turn continuationを確認する。
     - Host ackが無いv1ではreceiptを`delivered`へ格上げしない。
