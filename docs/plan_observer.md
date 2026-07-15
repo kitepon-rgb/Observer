@@ -339,13 +339,17 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               [ADR 0077](adr/0077-supervisor-parent-rebind-acceptance.md)）。
               実装commit `107d2ca`。focused 33/33、関連122/122、`npm run check`、`git diff --check`がgreen。
             - [ ] 実thread／host switchとcrash recoveryをPhase O2 H gateで受け入れる。
-          - [ ] watch／provider faultをterminal確認済みのfault transition／receiptへ記録し、
+          - [x] watch／provider faultをterminal確認済みのfault transition／receiptへ記録し、
             unknown outcomeを自動restart、takeover、別handle探索で隠さない
             （[ADR 0078](adr/0078-generation-fault-transaction.md)）。
-            - [ ] host-neutral generation fault journal／専用transitionを実装する。
-            - [ ] Claude／Codexの一command一step terminal bindingを実装する。
-            - [ ] Supervisorへrecord-first faultとfault-first restart gateを接続する。
-            - [ ] focused／関連gateと静的検査を一度ずつ通し、受入ADRへ証拠を固定する。
+            - [x] host-neutral generation fault journal／専用transitionを実装する。
+            - [x] Claude／Codexの一command一step terminal bindingを実装する。
+            - [x] Supervisorへrecord-first faultとfault-first restart gateを接続する。
+            - [x] focused／関連gateと静的検査を一度ずつ通し、受入ADRへ証拠を固定する。
+              - design `e83970c`、implementation `22cf33a`。focused 22/22、関連107/107、
+                current HEADの`npm run check`、`git diff --check`がgreen。
+                [ADR 0082](adr/0082-generation-fault-transaction-acceptance.md)で受け入れ、
+                実host fault／terminal／crash recoveryはPhase O2 H gateへ残す。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
