@@ -23,7 +23,7 @@ tool logをdurable stateへ保存することもできない。
    `generation-host-rollover.json`／lock、provider固有journal、cycle pendingとは別schema・別lock・別受入にする。
 2. journal schemaは`observer.model_operation.v1`とし、provider、target／watch／generation／cycle ID、
    input digest、model-visible bytes、決定的operation ID、status、provider operation receipt digest、
-   strict parse済みcanonical AI output、output／applied result digest、timestampsだけを持つ。
+   strict parse済みcanonical AI outputとdigest、exact `observer.cycle_result.v1`、timestampsだけを持つ。
    prompt、input value、turn本文、raw provider output、raw provider handle、tool logは保存しない。
 3. operation IDは上記identityをdomain separationしたdigestとする。同じcycleでもgenerationまたはinputが違えば
    別operationになり、既存journalとの不一致はconflictとしてfail closedにする。
@@ -53,7 +53,7 @@ tool logをdurable stateへ保存することもできない。
    completed recoveryは未実装として止める。
 9. `completed` recoveryはmodelを呼ばずcanonical outputをidempotentな`applyCycle`へ再適用する。
    callbackにはoperation IDを渡し、外部効果はそのIDから決定したdedupe identityでexact replayできなければならない。
-   `applied`へはcallbackのexact cycle resultだけを保存する。
+   `applied`へはcallbackのexact `observer.cycle_result.v1`を保存し、digestだけから結果objectを再構成しない。
 10. `markCycleProcessed`がmatching input／applied resultをdurable化した後にだけmodel operation journalを削除する。
    以後の正本はpending cycle v2である。processed recoveryは残存するmatching applied journalを先に削除してから、
    既存のcursor／generation commitを再開する。prepared／reserved／dispatching／accepted／completedを
