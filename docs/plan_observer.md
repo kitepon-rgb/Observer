@@ -178,6 +178,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
         - focused gate: `node --test test/codex-host-adapter.test.mjs test/codex-host-runtime.test.mjs test/parent-launch.test.mjs` — 23/23 PASS。
         - app-server process transport、実model turn、UI、65秒超wait、crash後のunknown reconciliation、Observer MCP限定writeは
           未検証のH／後続gateであり、production採用済みとはしない。
+      - [x] Codex app-serverのbounded JSONL process transportを実装した（[ADR 0019](adr/0019-codex-process-transport.md)）。
+        - Codex executable identityとversionをObserver rootで確認し、`codex app-server`をshellなし・環境allowlistで生成する。
+        - request IDとresponseをexact相関し、未知／重複ID、oversize／不正JSONL、stderr／process終了をfail closedにする。
+        - pending requestの切断は成功や自動retryへ丸めずunknownとして返し、同じlogical operationの再実行判断は
+          `codex-host-runtime`のdurable journalへ委ねる。
+        - fake child processのfocused testだけをこのTODOのgateとし、実Codex process／model turnは起動しない。
+        - focused gate: `node --test test/codex-process-transport.test.mjs test/codex-host-runtime.test.mjs` — 15/15 PASS。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
