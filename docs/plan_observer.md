@@ -334,6 +334,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 - [ ] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
   - 完了条件: 空Mailboxと通常waitが開発体験を阻害せず、clean環境で導入・撤去を再現できる。
+  - [x] project-ownedな`.codex-sidecar.yml`を追加し、read-only presetと隔離worktree writer、
+    Observer製品面だけのpath allowlist、明示model policyを正規dry-runで検証した。
+    - `codex-sidecar diagnostics --project .`: `status=ok`。
+    - `codex-sidecar review --project . --preset review --dry-run ...`: `status=dry-run`、App Server未呼出。
+    - `codex-sidecar factory-diagnostics --project . --preset review`: 0.3.7三package一致、`overall=ready`。
 
 - [ ] **P5-3 最終監査とknowledge returnを完了する。**
   - 成果物: Find → Dedup → 反証 → Critic → 親裁定、RAG / caveat / docsへの還流記録。

@@ -1,0 +1,48 @@
+project: observer
+
+defaults:
+  readonly: true
+  result_format: json
+  model: gpt-5.6-terra
+  model_reasoning_effort: medium
+
+safety_profile: generic
+
+allowed_paths:
+  - AGENTS.md
+  - CLAUDE.md
+  - README.md
+  - package.json
+  - .codex-sidecar.yml
+  - bin/
+  - docs/
+  - src/
+  - test/
+
+deny_paths:
+  - .env
+  - .env.*
+  - "**/*.key"
+  - "**/*.pem"
+  - "**/*.token"
+  - "**/*.tokens"
+
+presets:
+  review:
+    workflow: review
+    readonly: true
+    prompt: "Review Observer changes for read-only boundary regressions, parent/target routing errors, lifecycle races, and missing focused tests."
+  explore:
+    workflow: explore
+    readonly: true
+    prompt: "Answer with Observer codebase evidence and file references. Do not modify files."
+  risk-check:
+    workflow: risk-check
+    readonly: true
+    prompt: "Analyze Observer changes for credential leakage, project writes, duplicate watches, delivery ambiguity, and context growth."
+  work:
+    workflow: work
+    readonly: false
+    require_worktree: true
+    prompt: "Implement one scoped Observer change inside the allowed paths, run the listed focused verification, and report changed files and residual risks."
+
