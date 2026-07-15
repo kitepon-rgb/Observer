@@ -129,6 +129,11 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
       `active → stopping → stopped`、fault、明示nonce lock回復を実装した。
     - 検証: `node --test test/watch-store.test.mjs` 7/7 PASS。commit `e0a1843`、Control revision 14。
   - [ ] Codex／Claude親launcherと同provider child lifecycleを実装する（[ADR 0006](adr/0006-parent-owned-provider-launch.md)、起動順序の訂正=[ADR 0007](adr/0007-durable-launch-handle-before-start.md)）。
+    - [x] explicit authorization、`starting → launching → active`、private provider handle、相関付きstop／fault transactionを実装した。
+      検証: `node --test test/parent-launch.test.mjs test/watch-store.test.mjs` 16/16 PASS、cycle-store fixture 5/5 PASS。
+      commits `1ed545c`、`ed4f077`、Control revision 32。
+    - [ ] Codex native／Claude backgroundの親host adapter、同provider Observer role、routing検証を実装する。
+      P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
   - 成果物: project read-only、Observer state / Mailbox write-onlyの実行profileと拒否test。
