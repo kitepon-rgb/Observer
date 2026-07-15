@@ -262,6 +262,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                   [ADR 0057](adr/0057-supervisor-provider-cleanup-acceptance.md)で固定した。
               - Claude job `sessionId`／Stop `session_id`の一致、Codex hook trustとin-progress item再読はlive H gateで
                 version固定し、未実証をproduction対応済みにしない。
+              - [x] host-neutral canonical cycle requestとCodexの
+                `thread/read baseline -> turn/steer -> ACK -> accepted journal` fixtureをcommit `1bb7b07`、
+                focused 22/22、Supervisor関連16/16、[ADR 0059](adr/0059-codex-cycle-request-delivery-acceptance.md)で
+                受け入れた。provider journal欠損とaccepted-before-generic-accepted回収も同じ単位で補正した。
+              - [ ] Codex production Supervisor caller／Stop hookを接続し、session／turn／baseline順序をlive H gateで固定する。
+              - [ ] Claude background jobへの公開非対話reply ACKと隔離`--settings` Stop hookをlive H gateで実証して接続する。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
               - 既存`publishMessage`のduplicate拒否は維持し、model operation専用`publishOperationMessage`と

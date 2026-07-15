@@ -293,6 +293,12 @@ provider／target／watch／cycleの自己申告を許さない。それらの�
 AIへ一cycleで渡すhost非依存evidenceは`observer.evidence_snapshot.v1`へ固定し、canonical JSONのUTF-8で
 32 KiB以下とする。snapshotは一時入力であり、raw JSONや本文をdurable stateへ保存しない。
 
+providerへ配送する一cycle入力は、strict検証済みsnapshotを含む`observer.cycle_request.v1`一件の
+canonical JSON文字列へ固定する。`observer.cycle_input.v1` receiptは、その文字列のexact UTF-8 byte数と
+`observer.cycle_input.v1\0<value>`のSHA-256だけを耐久境界へ渡し、raw request本文は保存しない。
+provider adapterはrequest送信直前にvalue、digest、bytesを再照合し、host lifecycleのrunning状態を
+request acceptedの代用にしない。
+
 - 信頼済みcycle contextはtarget、watch、parent host／thread digest、cycle ID、cursor digestを持つ。
   opaque cursor本文、raw parent session ID、targetの絶対pathをAI自己申告またはevidence refへ複製しない。
 - `turns`、`plan`、`git`、`tests`を別sectionにし、各entryへstable ref、source digest、truncated／redacted／availableを持たせる。
