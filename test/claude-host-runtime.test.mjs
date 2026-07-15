@@ -128,7 +128,8 @@ test("spawnはshort ID receiptだけを返しcwdとbounded envを固定する", 
   assert.equal(result.observation, undefined);
   assert.equal(calls[0].options.cwd, ROOT);
   assert.equal(calls[0].options.env.SECRET, undefined);
-  assert.equal(calls[0].args.includes("mcp__observer__observer_read,mcp__observer__observer_wait"), true);
+  assert.equal(calls[0].args[calls[0].args.indexOf("--tools") + 1], "");
+  assert.equal(calls[0].args[calls[0].args.indexOf("--allowedTools") + 1], "");
   assert.equal(JSON.stringify(result).includes("account text"), false);
 });
 
