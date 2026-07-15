@@ -362,9 +362,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     Mailbox writeは外部Supervisorの固定callbackだけが所有する。
   - [x] Codex native custom agentのTOML指定だけではunrestricted親のoverrideを防げないことを実測した。
   - [x] app-server persistent threadのper-thread read-only、project write拒否、別processからの`thread/read`／`thread/list`回収をcharacterizationした（[ADR 0009](adr/0009-codex-appserver-characterization.md)）。
-  - [ ] **非H:** Claude exact-empty tool surface／既存隔離flagとCodex runtime-root read-only envelopeを固定し、
+  - [x] **非H:** Claude exact-empty tool surface／既存隔離flagとCodex runtime-root read-only envelopeを固定し、
     同じSupervisor cycleでHEAD／index／tracked・untracked／modeを含むproject fingerprint不変と
     Observer state root配下のMailbox publish成功をfixture化する。
+    commit `2168199`。focused 3/3、関連60/60、`npm run check`を通し、
+    [ADR 0084](adr/0084-read-only-execution-profile-fixture-acceptance.md)で非H部分だけを受け入れた。
   - [ ] **Codex live H:** アプリ内表示、65秒超turn、adapter crash後のturn resume、明示interrupt／停止、
     project write拒否をcharacterizationする。
   - [x] Claude backgroundを`Read,Grep,Glob`だけで起動し、組込みtool surface上のproject read成功、Write tool不在による一回のwrite拒否、公開job lifecycleをcharacterizationした（[ADR 0010](adr/0010-claude-background-readonly-characterization.md)）。
