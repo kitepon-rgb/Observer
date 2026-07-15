@@ -168,6 +168,16 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
         - MCP tool surfaceは実装済みの`observer_read`／`observer_wait`だけへexact固定し、wildcardを許さない。
         - spawn結果不明時はwatch固有nameとcwdから回収し、同じwatchを再spawnしない。
         - 検証: focused 23件、parent-launch接続7件、`npm run check`、実binary read-only diagnosticsがgreen。
+      - [x] Codex app-serverの純粋adapterとsession runtimeをparent-launchへ配線した（[ADR 0018](adr/0018-codex-host-runtime-boundary.md)）。
+        - `thread/start`結果不明は同一cwdの候補へattachせず`thread_start_unknown`、`turn/start`結果不明は
+          `turn_start_unknown`として耐久化し、同じwatch／cycleの再実行を拒否する。
+        - thread IDをwatch handle、turn IDを別operation journalへ保存し、親stateへthread handleを耐久化してからだけ
+          `turn/start`する。`thread/read`と`thread/resume`をterminal照合／継続購読に分離する。
+        - interrupt ACKではwatchを閉じず、同じthread／turnのterminal receiptをparent-launchで必須化した。
+          interrupt結果不明でも送信前に`stopping`を耐久化し、同じturnへ再送しない。
+        - focused gate: `node --test test/codex-host-adapter.test.mjs test/codex-host-runtime.test.mjs test/parent-launch.test.mjs` — 23/23 PASS。
+        - app-server process transport、実model turn、UI、65秒超wait、crash後のunknown reconciliation、Observer MCP限定writeは
+          未検証のH／後続gateであり、production採用済みとはしない。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**

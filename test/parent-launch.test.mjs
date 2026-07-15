@@ -18,6 +18,7 @@ import {
 
 const TARGET_ID = `p_${"a".repeat(64)}`;
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
+const THREAD_ID = "019f62a1-1111-7111-8111-111111111111";
 const TARGET = { schema: "observer.project_target.v1", targetId: TARGET_ID, projectRoot: "/project" };
 const STATUS = {
   schema: "observer.watch_status.v1",
@@ -79,7 +80,7 @@ test("明示start authorizationが無ければstate操作より先に拒否す�
   assert.equal(touched, false);
 });
 
-test("Codex親はstarting予約後にnative agent用の構造化requestを得る", async () => {
+test("Codex親はstarting予約後にapp-server thread用の構造化requestを得る", async () => {
   const calls = [];
   const request = await prepareParentLaunch({
     stateRoot: "/state",
@@ -90,12 +91,14 @@ test("Codex親はstarting予約後にnative agent用の構造化requestを得る
   assert.deepEqual(calls.map(([name]) => name), ["runtime", "target", "reserve"]);
   assert.equal(request.schema, PARENT_LAUNCH_REQUEST_SCHEMA);
   assert.equal(request.provider, "codex");
-  assert.equal(request.required_handle_kind, "codex.agent");
+  assert.equal(request.required_handle_kind, "codex.thread");
   assert.deepEqual(request.host, {
-    kind: "codex.native_agent.v1",
-    agent_type: "observer",
-    fork_turns: "none",
-    task_name: "observer_aaaaaaaaaaaa",
+    kind: "codex.app_server_thread.v1",
+    cwd: "/observer",
+    approval_policy: "never",
+    sandbox: "read-only",
+    ephemeral: false,
+    service_name: "observer",
   });
   assert.deepEqual(request.child_start, {
     schema: CHILD_START_SCHEMA,
@@ -143,21 +146,21 @@ test("host spawn handleをlaunchingへ保存した後、同じhandleのready rec
   const launching = await confirmParentHostSpawn({
     stateRoot: "/state",
     request,
-    receipt: receipt(request, { kind: "codex.agent", value: "/root/observer_agent" }),
+    receipt: receipt(request, { kind: "codex.thread", value: THREAD_ID }),
   }, dependencies);
   assert.equal(launching.status, "launching");
-  assert.deepEqual(attached, [{ stateRoot: "/state", targetId: TARGET_ID, watchId: WATCH_ID, launchHandle: { kind: "codex.agent", value: "/root/observer_agent" } }]);
+  assert.deepEqual(attached, [{ stateRoot: "/state", targetId: TARGET_ID, watchId: WATCH_ID, launchHandle: { kind: "codex.thread", value: THREAD_ID } }]);
   await assert.rejects(
-    confirmParentLaunch({ stateRoot: "/state", request, receipt: { ...receipt(request, { kind: "codex.agent", value: "/root/observer_agent" }, "ready"), watch_id: "w_22222222-2222-4222-8222-222222222222" } }, dependencies),
+    confirmParentLaunch({ stateRoot: "/state", request, receipt: { ...receipt(request, { kind: "codex.thread", value: THREAD_ID }, "ready"), watch_id: "w_22222222-2222-4222-8222-222222222222" } }, dependencies),
     expectCode("E_PARENT_HOST_RECEIPT_MISMATCH"),
   );
   const active = await confirmParentLaunch({
     stateRoot: "/state",
     request,
-    receipt: receipt(request, { kind: "codex.agent", value: "/root/observer_agent" }, "ready"),
+    receipt: receipt(request, { kind: "codex.thread", value: THREAD_ID }, "ready"),
   }, dependencies);
   assert.equal(active.status, "active");
-  assert.deepEqual(activated, [{ stateRoot: "/state", targetId: TARGET_ID, watchId: WATCH_ID, launchHandle: { kind: "codex.agent", value: "/root/observer_agent" } }]);
+  assert.deepEqual(activated, [{ stateRoot: "/state", targetId: TARGET_ID, watchId: WATCH_ID, launchHandle: { kind: "codex.thread", value: THREAD_ID } }]);
 });
 
 test("host handle取得前のlaunch failureだけを固定codeでstartingからfaultへ閉じる", async () => {
@@ -210,7 +213,7 @@ test("stopは明示authorizationとprovider一致を要求しprivate handleを�
     readWatchStatus: async () => STATUS,
     requestWatchStop: async () => {
       stopped = true;
-      return { status: { ...STATUS, status: "stopping" }, launchHandle: { kind: "codex.agent", value: "/root/observer_agent" } };
+      return { status: { ...STATUS, status: "stopping" }, launchHandle: { kind: "codex.thread", value: THREAD_ID } };
     },
   };
   await assert.rejects(
@@ -220,7 +223,7 @@ test("stopは明示authorizationとprovider一致を要求しprivate handleを�
   assert.equal(stopped, false);
   const request = await requestParentStop({ stateRoot: "/state", targetId: TARGET_ID, watchId: WATCH_ID, authorization: auth("codex", "stop_observer") }, dependencies);
   assert.equal(request.schema, "observer.parent_stop_request.v1");
-  assert.deepEqual(request.handle, { kind: "codex.agent", value: "/root/observer_agent" });
+  assert.deepEqual(request.handle, { kind: "codex.thread", value: THREAD_ID });
   assert.equal(request.terminal, "stopped");
   assert.equal(request.fault_code, null);
 });
@@ -249,4 +252,36 @@ test("stop completeは同じstored handleのconfirmed receipt後だけstoppedへ
   const stopped = await completeParentStop({ stateRoot: "/state", request, receipt: receipt(request, request.handle, "stopped") }, dependencies);
   assert.equal(stopped.status, "stopped");
   assert.equal(completed, 1);
+});
+
+test("Codex stopはinterrupt ACKで閉じず同じthread turnのterminal証拠を要求する", async () => {
+  const request = {
+    schema: "observer.parent_stop_request.v1",
+    provider: "codex",
+    watch_id: WATCH_ID,
+    target_id: TARGET_ID,
+    project_root: "/project",
+    handle: { kind: "codex.thread", value: THREAD_ID },
+    terminal: "stopped",
+    fault_code: null,
+  };
+  const dependencies = {
+    requestWatchStop: async () => ({ status: { ...STATUS, status: "stopping" }, launchHandle: request.handle }),
+    completeWatchStop: async () => ({ ...STATUS, status: "stopped" }),
+  };
+  await assert.rejects(
+    completeParentStop({ stateRoot: "/state", request, receipt: receipt(request, request.handle, "stopped") }, dependencies),
+    expectCode("E_PARENT_HOST_RECEIPT"),
+  );
+  const terminalReceipt = {
+    ...receipt(request, request.handle, "stopped"),
+    terminal: {
+      schema: "observer.codex_turn_terminal.v1",
+      thread_id: THREAD_ID,
+      turn_id: "019f62a2-2222-7222-8222-222222222222",
+      status: "interrupted",
+      observed_at: "2026-07-15T05:00:00.000Z",
+    },
+  };
+  assert.equal((await completeParentStop({ stateRoot: "/state", request, receipt: terminalReceipt }, dependencies)).status, "stopped");
 });

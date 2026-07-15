@@ -95,7 +95,18 @@ DBファイル自体のmtime、`sessions.updated_at`、`bodies`の件数を親�
 - 利用者が親へ明示的に停止を依頼した時は、親がchildを停止してactive watchを閉じる。
 - fault時は継続と自動再起動を止め、親が原因を利用者へ報告する。
 
-正本は[ADR 0002](adr/0002-explicit-parent-launch.md)とする。
+Codex hostはpersistent app-server threadを使い、thread IDをwatchのprivate provider handle、active turn IDを
+Observer所有のdurable operation journalへ分離して保存する。`thread/start`または`turn/start`の結果が不明な時は、
+同じObserver `cwd`に見えるthreadやturnを推測でattachせず、`*_start_unknown`を保持して再実行を止める。
+`thread/read`は保存済みIDのterminal照合、`thread/resume`は再接続後の継続とevent購読にだけ使う。
+
+Codex停止では`turn/interrupt`の空ACKを終端証拠にしない。同じthread ID／turn IDの
+`completed | interrupted | failed`観測をCodex固有terminal receiptへ束縛し、そのreceiptをparent launch coreが
+検証した後だけwatchを閉じる。app-server process／connectionは再作成可能なtransportであり、provider handleにしない。
+thread／turnの`cwd`は常にcanonical Observer rootで、target `project_root`はchild envelopeにだけ保持する。
+
+親の明示起動契約は[ADR 0002](adr/0002-explicit-parent-launch.md)、Codex hostの耐久境界は
+[ADR 0018](adr/0018-codex-host-runtime-boundary.md)を正本とする。
 
 ---
 

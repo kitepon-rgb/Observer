@@ -18,11 +18,13 @@ export const PARENT_AUTHORIZATION_SCHEMA = "observer.parent_authorization.v1";
 export const PARENT_LAUNCH_REQUEST_SCHEMA = "observer.parent_launch_request.v1";
 export const CHILD_START_SCHEMA = "observer.child_start.v1";
 export const HOST_RECEIPT_SCHEMA = "observer.host_receipt.v1";
+export const CODEX_TURN_TERMINAL_SCHEMA = "observer.codex_turn_terminal.v1";
 export const PARENT_STOP_REQUEST_SCHEMA = "observer.parent_stop_request.v1";
 
 const TARGET_ID_RE = /^p_[a-f0-9]{64}$/;
 const WATCH_ID_RE = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const CODEX_AGENT_PATH_RE = /^\/root(?:\/[a-z0-9_]+)+$/;
+const CODEX_THREAD_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const CODEX_TURN_ID_RE = CODEX_THREAD_ID_RE;
 const CLAUDE_JOB_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const LAUNCH_FAULT_CODES = new Set([
   "E_OBSERVER_LAUNCH_FAILED",
@@ -145,7 +147,6 @@ export function validateParentStopRequest(value) {
 }
 
 function launchRequest({ target, starting, provider, runtimeRoot }) {
-  const suffix = target.targetId.slice(2, 14);
   const childStart = {
     schema: CHILD_START_SCHEMA,
     mode: "observe",
@@ -157,10 +158,12 @@ function launchRequest({ target, starting, provider, runtimeRoot }) {
   };
   const host = provider === "codex"
     ? {
-        kind: "codex.native_agent.v1",
-        agent_type: "observer",
-        fork_turns: "none",
-        task_name: `observer_${suffix}`,
+        kind: "codex.app_server_thread.v1",
+        cwd: runtimeRoot,
+        approval_policy: "never",
+        sandbox: "read-only",
+        ephemeral: false,
+        service_name: "observer",
       }
     : {
         kind: "claude.background_agent.v1",
@@ -234,10 +237,10 @@ function validateChildStart(value, request) {
 
 function validateHostRequest(value, request) {
   requirePlainObject(value, "host launch request", "E_PARENT_LAUNCH_SCHEMA");
-  const suffix = request.target_id.slice(2, 14);
   if (request.provider === "codex") {
-    requireExactKeys(value, ["agent_type", "fork_turns", "kind", "task_name"], "Codex host request", "E_PARENT_LAUNCH_SCHEMA");
-    if (value.kind !== "codex.native_agent.v1" || value.agent_type !== "observer" || value.fork_turns !== "none" || value.task_name !== `observer_${suffix}`) {
+    requireExactKeys(value, ["approval_policy", "cwd", "ephemeral", "kind", "sandbox", "service_name"], "Codex host request", "E_PARENT_LAUNCH_SCHEMA");
+    if (value.kind !== "codex.app_server_thread.v1" || value.cwd !== request.runtime_root || value.approval_policy !== "never" ||
+        value.sandbox !== "read-only" || value.ephemeral !== false || value.service_name !== "observer") {
       fail("E_PARENT_LAUNCH_SCHEMA", "Codex host requestが不正です");
     }
     return;
@@ -272,12 +275,14 @@ function validateStopRequest(value) {
 
 function validateHostReceipt(value, expectedOutcome) {
   requirePlainObject(value, "host receipt", "E_PARENT_HOST_RECEIPT");
-  requireExactKeys(value, ["handle", "outcome", "provider", "schema", "target_id", "watch_id"], "host receipt", "E_PARENT_HOST_RECEIPT");
   const accepted = Array.isArray(expectedOutcome) ? expectedOutcome : [expectedOutcome];
+  const codexTerminal = value?.provider === "codex" && value?.outcome === "stopped";
+  requireExactKeys(value, ["handle", "outcome", "provider", "schema", "target_id", "watch_id", ...(codexTerminal ? ["terminal"] : [])], "host receipt", "E_PARENT_HOST_RECEIPT");
   if (value.schema !== HOST_RECEIPT_SCHEMA || !accepted.includes(value.outcome) || !isProvider(value.provider)) fail("E_PARENT_HOST_RECEIPT", "host receiptが不正です");
   validateTargetId(value.target_id);
   validateWatchId(value.watch_id);
   validateHandle(value.handle, value.provider, "E_PARENT_HOST_RECEIPT");
+  if (codexTerminal) validateCodexTerminal(value.terminal, value.handle.value);
 }
 
 function requireReceiptMatches(request, receipt) {
@@ -286,6 +291,9 @@ function requireReceiptMatches(request, receipt) {
   }
   const expected = request.required_handle_kind ?? handleKindFor(request.provider);
   if (receipt.handle.kind !== expected) fail("E_PARENT_HOST_RECEIPT_MISMATCH", "host receipt handle kindがrequestと一致しません");
+  if (receipt.terminal !== undefined && receipt.terminal.thread_id !== receipt.handle.value) {
+    fail("E_PARENT_STOP_HANDLE_MISMATCH", "Codex terminal threadが保存済みhandleと一致しません");
+  }
   if (request.handle !== undefined && !sameHandle(request.handle, receipt.handle)) {
     fail("E_PARENT_STOP_HANDLE_MISMATCH", "stop receipt handleがrequestと一致しません");
   }
@@ -295,7 +303,17 @@ function validateHandle(value, provider, code) {
   requirePlainObject(value, "host handle", code);
   requireExactKeys(value, ["kind", "value"], "host handle", code);
   if (value.kind !== handleKindFor(provider) || typeof value.value !== "string") fail(code, "host handleがproviderと一致しません");
-  if (provider === "codex" ? !CODEX_AGENT_PATH_RE.test(value.value) : !CLAUDE_JOB_ID_RE.test(value.value)) fail(code, "host handle valueが不正です");
+  if (provider === "codex" ? !CODEX_THREAD_ID_RE.test(value.value) : !CLAUDE_JOB_ID_RE.test(value.value)) fail(code, "host handle valueが不正です");
+}
+
+function validateCodexTerminal(value, expectedThreadId) {
+  requirePlainObject(value, "Codex turn terminal", "E_PARENT_HOST_RECEIPT");
+  requireExactKeys(value, ["observed_at", "schema", "status", "thread_id", "turn_id"], "Codex turn terminal", "E_PARENT_HOST_RECEIPT");
+  if (value.schema !== CODEX_TURN_TERMINAL_SCHEMA || value.thread_id !== expectedThreadId ||
+      !CODEX_THREAD_ID_RE.test(value.thread_id) || !CODEX_TURN_ID_RE.test(value.turn_id) ||
+      !["completed", "interrupted", "failed"].includes(value.status) || !isCanonicalTimestamp(value.observed_at)) {
+    fail("E_PARENT_HOST_RECEIPT", "Codex turn terminalが不正です");
+  }
 }
 
 function publicTarget(value) {
@@ -303,7 +321,7 @@ function publicTarget(value) {
 }
 
 function handleKindFor(provider) {
-  return provider === "codex" ? "codex.agent" : "claude.job";
+  return provider === "codex" ? "codex.thread" : "claude.job";
 }
 
 function isProvider(value) {
@@ -324,6 +342,12 @@ function validateAbsolutePath(value, field, code) {
 
 function sameHandle(left, right) {
   return left?.kind === right?.kind && left?.value === right?.value;
+}
+
+function isCanonicalTimestamp(value) {
+  if (typeof value !== "string") return false;
+  const parsed = new Date(value);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString() === value;
 }
 
 function requirePlainObject(value, field, code) {
