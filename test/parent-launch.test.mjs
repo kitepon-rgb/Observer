@@ -14,6 +14,7 @@ import {
   recordParentLaunchFailure,
   requestParentLaunchFailureCleanup,
   requestParentStop,
+  validateParentHostReceipt,
 } from "../src/parent-launch.mjs";
 
 const TARGET_ID = `p_${"a".repeat(64)}`;
@@ -161,6 +162,13 @@ test("host spawn handleをlaunchingへ保存した後、同じhandleのready rec
   }, dependencies);
   assert.equal(active.status, "active");
   assert.deepEqual(activated, [{ stateRoot: "/state", targetId: TARGET_ID, watchId: WATCH_ID, launchHandle: { kind: "codex.thread", value: THREAD_ID } }]);
+});
+
+test("host receipt validatorを副作用なしの共通入口として公開する", () => {
+  const ready = receipt({ provider: "codex", watch_id: WATCH_ID, target_id: TARGET_ID }, { kind: "codex.thread", value: THREAD_ID }, "ready");
+  assert.equal(validateParentHostReceipt(ready, "ready"), ready);
+  assert.throws(() => validateParentHostReceipt({ ...ready, unknown: true }, "ready"), expectCode("E_PARENT_HOST_RECEIPT"));
+  assert.throws(() => validateParentHostReceipt(ready, "stopped"), expectCode("E_PARENT_HOST_RECEIPT"));
 });
 
 test("host handle取得前のlaunch failureだけを固定codeでstartingからfaultへ閉じる", async () => {

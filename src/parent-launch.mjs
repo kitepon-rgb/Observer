@@ -147,6 +147,11 @@ export function validateParentStopRequest(value) {
   return validateStopRequest(value);
 }
 
+export function validateParentHostReceipt(value, expectedOutcome) {
+  validateHostReceipt(value, expectedOutcome);
+  return value;
+}
+
 function launchRequest({ target, starting, provider, runtimeRoot }) {
   const childStart = {
     schema: CHILD_START_SCHEMA,
