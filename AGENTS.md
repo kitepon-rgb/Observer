@@ -66,9 +66,9 @@ Observer stateをThroughline、Claude、Codex、Throughline以外の他製品の
 - 仕様固定済みのschema、CLI、test、installer、fixture等はAとして委譲できる。
 - ライブhook設定、常駐設定、credential、本番publish / deploy、意図的な実環境障害試験はHとする。
 - ThroughlineのDB、WAL、mtimeをObserverから直接読む実装へfallbackしない。
-- Observer自身の継続はhost別のObserver project-local Stop hook、親への配送は中央Mailboxを読むhost別の親Stop hook adapterとして分離する。
-- Stop hookの待機は行わない。長時間待機はObserverのread-only MCP adapterからThroughline公開wait CLIへ委ね、Stop hookは監視サイクルの再開promptだけを返す。
-- Stop continuationは正常なchanged処理完了またはtimeout後だけ許可する。MCP / CLI / schema / state failureではwatchをfaultedにし、hookによる高速な自己再開を止める。
+- Throughline wait／read、evidence収集、model request／result、Mailbox apply、cursor commitは外部Supervisorだけが所有する。production Observer AI自身へObserver MCPを公開せず、一cycle一件のcanonical inputだけを評価させる。
+- project-local Stop hookはmatching provider resultのcaptureだけを行い、待機、次cycleの開始、block continuationを行わない。親への配送は中央Mailboxを読むhost別の親Stop hook adapterとして分離する。
+- timeout後の次waitは外部Supervisorが同じcursorから開始する。CLI / schema / state failureではwatchをfaultedにし、provider requestの再送、自動restart、Stop hookによる自己再開を行わない。
 - Observerのmodel providerは監視対象の親hostと一致させる。Codex親にはCodex、Claude親にはClaudeを使い、一般Workerのrate-aware配置や異社相談役の規則を適用しない。
 - Observerを継続的な反証役として実装しない。既定は沈黙であり、伴走者として価値のある時だけ一観測サイクル最大一件を提案する。
 - promptだけでread-onlyを保証しない。実行権限と拒否testで強制する。

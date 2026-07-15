@@ -298,6 +298,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                     signal cancel、explicit stop、faultのJSON／exit contractをfocused fixtureで固定する。
                   - [x] focused／related gateを通し、[ADR 0069](adr/0069-supervisor-process-cli-acceptance.md)と
                     独立commitへ固定する。corrective変更後の最終関連gateは70/70、static gateはgreen。
+                  - [x] repo正典に残っていた旧AI-owned wait／Stop continuation／Observer MCP公開の記述を、
+                    ADR 0060の外部Supervisor単一所有とproduction AI exact-empty tool surfaceへ補正する。
               - [ ] Claude background jobへの公開非対話reply ACKと隔離`--settings` Stop hookをlive H gateで実証して接続する。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
