@@ -371,6 +371,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [x] ADR 0060によりproduction AIのThroughline／Observer MCP／Mailbox tool surfaceを空にし、
     Observer MCP `observer_read`／`observer_wait`はread-only diagnostics／compatibilityへ分離した。
     Mailbox writeは外部Supervisorの固定callbackだけが所有する。
+  - [ ] Observer MCPをread-only compatibility／diagnosticsとして維持する裁定を実装する
+    （[ADR 0097](adr/0097-observer-mcp-compatibility-diagnostics-contract.md)）。
+    - [ ] `--diagnostics`の決定的なsanitized JSON、package bin、既存stdio／version互換を固定する。
+    - [ ] active watch exact照合、write API不在、cancel、stdout hygieneをfocused／関連gateで再確認する。
+    - [ ] production AIのtool surface空を維持し、MCP greenをlive provider成功へ読み替えない。
   - [x] Codex native custom agentのTOML指定だけではunrestricted親のoverrideを防げないことを実測した。
   - [x] app-server persistent threadのper-thread read-only、project write拒否、別processからの`thread/read`／`thread/list`回収をcharacterizationした（[ADR 0009](adr/0009-codex-appserver-characterization.md)）。
   - [x] **非H:** Claude exact-empty tool surface／既存隔離flagとCodex runtime-root read-only envelopeを固定し、
