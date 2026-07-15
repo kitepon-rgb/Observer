@@ -569,9 +569,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       [ADR 0093](adr/0093-provider-cleanup-replay-binding.md)どおり補正する。
     - 実装 `ddd768a`／`e203190`／`f6b296b`、focused 6/6、関連178/178、`npm run check` greenを
       [ADR 0094](adr/0094-host-neutral-core-e2e-acceptance.md)で受け入れた。
-  - [ ] **P5-1b-preflight 非H:** dual-host live H campaignのread-only prerequisite、
+  - [x] **P5-1b-preflight 非H:** dual-host live H campaignのread-only prerequisite、
     必須証拠、停止条件、rollback、収集禁止情報をversioned receiptとrunbookへ固定する
-    （[ADR 0103](adr/0103-live-campaign-preflight-contract.md)）。
+    （[ADR 0103](adr/0103-live-campaign-preflight-contract.md)）。実装 `bbe407d`、focused
+    13/13、related 40/40、actual read-only preflight `h_required`、`npm run check` greenを
+    [ADR 0104](adr/0104-live-campaign-preflight-acceptance.md)で受け入れた。
   - [ ] **P5-1b live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
     65秒超wait、実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。
 
