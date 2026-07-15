@@ -189,10 +189,15 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       - [ ] parent session epochごとに一論理Observerを束縛し、同epoch内のcontext budget到達では
         一つの物理host generationだけをterminal確認付きで世代交代する。
         - watch authorizationは維持し、新しいwatchやtarget別projectを生成しない。
-        - generation counter、completed cycle count、累積bounded input bytesをdurable stateに持ち、P4-2の
-          snapshot上限確定後にhard rollover thresholdを固定する。providerの非公開token推測だけに依存しない。
+        - [x] generation counter、completed cycle count、累積bounded input bytesを独立durable stateに持ち、
+          8 completed cycle／262,144 model-visible UTF-8 bytesのhard thresholdとmodel前reservationを固定した
+          （[ADR 0034](adr/0034-generation-budget-and-planned-rollover.md)、[ADR 0035](adr/0035-generation-state-store-acceptance.md)）。
+        - [x] cycle pending v2、input reservation、cursor／generation commitをexact-once接続し、各write間の
+          crash recoveryと非永続inputを固定した（[ADR 0036](adr/0036-cycle-generation-exact-once-transaction.md)、
+          [ADR 0037](adr/0037-cycle-generation-exact-once-acceptance.md)）。
         - cursor、dedupe／cooldown receipt、boundedな未解決仮説だけを引き継ぎ、raw会話／tool logは保存しない。
-        - parent rebind、planned rollover、fault recoveryを別transition／receiptにし、旧terminal不明では新世代を起動しない。
+        - [ ] Claude／Codex固有のterminal stopと次generation startを接続し、旧terminal不明では新世代を起動しない。
+        - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
