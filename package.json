@@ -11,7 +11,8 @@
     "node": ">=22.13"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test test/*.test.mjs",
+    "test:throughline-integration": "node --test test/throughline-black-box.integration.mjs",
     "syntax": "node --check bin/*.mjs && node --check src/*.mjs && node --check test/*.mjs",
     "check": "npm run syntax && git diff --check"
   }

@@ -88,6 +88,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       structured/text result、cancel／stdin shutdown、stdout衛生を[ADR 0013](adr/0013-observer-mcp-stdio-contract.md)へ固定した。
       `node --test test/mcp-server.test.mjs test/throughline-client.test.mjs`は10/10 PASS。
 
+- [x] **P1-4 標準testと実Throughline統合testの実行境界を分離する。**
+  - 成果物: 外部CLIなしでgreenになる標準`npm test`と、実CLI pathを明示してfail loudに実行する統合test script。
+  - 完了条件: 標準gateが統合testをskip扱いで隠さず除外し、明示統合gateでは既存black-box 1件が実Throughline CLIでPASSする。
+
 **Gate:** ObserverがThroughlineのDB / WALへ依存せず、新規turnを失わず待てる。
 
 ---
