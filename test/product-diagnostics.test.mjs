@@ -15,7 +15,7 @@ import {
 
 const ROOT = new URL("..", import.meta.url).pathname;
 
-test("source package diagnosticsはsanitized manifestと4 binaryを固定する", async () => {
+test("source package diagnosticsはsanitized manifestと5 binaryを固定する", async () => {
   const result = await runObserverProductDiagnostics({ platform: "darwin", nodeVersion: "22.13.0" });
   assert.equal(result.schema, OBSERVER_PRODUCT_DIAGNOSTICS_SCHEMA);
   assert.equal(result.status, "ready");

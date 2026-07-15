@@ -19,6 +19,7 @@ const PACKAGE_BINS = Object.freeze({
   "observer-mcp": "bin/observer-mcp.mjs",
   "observer-parent-stop-hook": "bin/observer-parent-stop-hook.mjs",
   "observer-hook-config": "bin/observer-hook-config.mjs",
+  "observer-claude-characterization": "bin/observer-claude-characterization.mjs",
 });
 const MINIMUM_NODE = Object.freeze([22, 13, 0]);
 

@@ -13,7 +13,8 @@
     "observer": "bin/observer.mjs",
     "observer-mcp": "bin/observer-mcp.mjs",
     "observer-parent-stop-hook": "bin/observer-parent-stop-hook.mjs",
-    "observer-hook-config": "bin/observer-hook-config.mjs"
+    "observer-hook-config": "bin/observer-hook-config.mjs",
+    "observer-claude-characterization": "bin/observer-claude-characterization.mjs"
   },
   "engines": {
     "node": ">=22.13"
