@@ -216,7 +216,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
           - [x] raw handleを出さないrecovery contextと、watchを再遷移させないCodex generation runtimeを先行実装した
             （[ADR 0042](adr/0042-generation-provider-binding-recovery-contract.md)、
             [ADR 0043](adr/0043-generation-recovery-surface-acceptance.md)）。
-          - [ ] recovery contextを使うClaude／Codex provider bindingを実装する。
+          - [ ] recovery contextを使うClaude／Codex provider bindingを、一command一stepで実装する
+            （[ADR 0044](adr/0044-generation-provider-binding-step-contract.md)）。
+            - [ ] Codexの再送なしterminal観測APIを実装する。
+            - [ ] host-neutral provider binding step machineを実装する。
+            - [ ] 隔離した2 Workerの成果を本線へ統合し、focused gateを通す。
           - [ ] model request送信結果不明をhost lifecycleと別journalで回収する。
         - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
