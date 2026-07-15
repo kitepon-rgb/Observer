@@ -315,9 +315,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
             - 実装commit `2bfc09c`。focused 43/43、関連gate 103/103、`npm run check`、
               `git diff --check`を通し、[ADR 0071](adr/0071-supervisor-planned-rollover-acceptance.md)で受け入れた。
               実provider commandのH受入はPhase O2 gateへ残す。
-            - [ ] Codex terminal観測時にraw-free receiptをhost terminalへ再構成せず、
+            - [x] Codex terminal観測時にraw-free receiptをhost terminalへ再構成せず、
               already-terminal stop経路のexact receiptだけをcoreへ渡す
               （[ADR 0080](adr/0080-codex-rollover-terminal-receipt-correction.md)）。
+              - 補正前focused 4/5で`E_PARENT_HOST_RECEIPT`を再現し、commit `fe4f743`で修正した。
+                focused 6/6、`npm run check`、`git diff --check`を通し、
+                [ADR 0081](adr/0081-codex-rollover-terminal-receipt-acceptance.md)で受け入れた。
           - [ ] parent epoch切替を旧generationへのmodel requestなしで明示
             `rebind_required` transition／receiptへ記録し、parent authorizationと
             terminal確認後だけ新epochを開始する（[ADR 0072](adr/0072-parent-epoch-rebind-transaction.md)）。
