@@ -334,7 +334,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               実装commit `107d2ca`。focused 33/33、関連122/122、`npm run check`、`git diff --check`がgreen。
             - [ ] 実thread／host switchとcrash recoveryをPhase O2 H gateで受け入れる。
           - [ ] watch／provider faultをterminal確認済みのfault transition／receiptへ記録し、
-            unknown outcomeを自動restart、takeover、別handle探索で隠さない。
+            unknown outcomeを自動restart、takeover、別handle探索で隠さない
+            （[ADR 0078](adr/0078-generation-fault-transaction.md)）。
+            - [ ] host-neutral generation fault journal／専用transitionを実装する。
+            - [ ] Claude／Codexの一command一step terminal bindingを実装する。
+            - [ ] Supervisorへrecord-first faultとfault-first restart gateを接続する。
+            - [ ] focused／関連gateと静的検査を一度ずつ通し、受入ADRへ証拠を固定する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
