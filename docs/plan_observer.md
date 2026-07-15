@@ -306,10 +306,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               - commit `0e7a005`。focused 15/15、`npm run check`、scoped diff-checkを通し、
                 [ADR 0052](adr/0052-mailbox-operation-publish-replay-acceptance.md)で受け入れた。
         - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
-          - [ ] planned rolloverを既存generation host journal／provider bindingから
+          - [x] planned rolloverを既存generation host journal／provider bindingから
             Supervisor processへ接続し、同じverified runtimeで一stepずつ回収して
             新generation activation後にprepared cycleへ戻る
             （[ADR 0070](adr/0070-supervisor-planned-rollover-integration.md)）。
+            - 実装commit `2bfc09c`。focused 43/43、関連gate 103/103、`npm run check`、
+              `git diff --check`を通し、[ADR 0071](adr/0071-supervisor-planned-rollover-acceptance.md)で受け入れた。
+              実provider commandのH受入はPhase O2 gateへ残す。
           - [ ] parent epoch切替を旧generationへのmodel requestなしで明示
             `rebind_required` transition／receiptへ記録し、parent authorizationと
             terminal確認後だけ新epochを開始する。
@@ -456,6 +459,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     - [ ] provider別host terminal確認と次generation activationを接続する。
       - [x] host-neutral journal／watch handle CAS／provider recovery補助をfake fixtureで実装した
         （[ADR 0040](adr/0040-generation-host-rollover-core-acceptance.md)）。
+      - [x] Supervisor processから既存provider bindingを同じverified runtimeで回収する非live統合を実装した
+        （[ADR 0071](adr/0071-supervisor-planned-rollover-acceptance.md)）。
       - [ ] coreが返すauthorization／receiptを実Claude／Codex commandへ結ぶbindingとH受入を完了する。
 
 - [ ] **P4-3 過剰指摘抑制を実装する。**
