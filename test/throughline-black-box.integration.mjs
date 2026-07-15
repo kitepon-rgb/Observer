@@ -39,6 +39,24 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+function runProcessTurn({ env, project, sessionId, transcriptPath }) {
+  return new Promise((resolve, reject) => {
+    const child = spawnChild(THROUGHLINE_BIN, ["process-turn"], {
+      cwd: project,
+      env: { ...process.env, ...env, THROUGHLINE_NO_VSCODE: "1" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("close", (code, signal) => {
+      if (code === 0 && signal === null) resolve();
+      else reject(new Error(`throughline process-turn failed: code=${code} signal=${signal} stderr=${stderr}`));
+    });
+    child.stdin.end(JSON.stringify({ session_id: sessionId, cwd: project, transcript_path: transcriptPath }));
+  });
+}
+
 test("実Throughline CLIはcompleted-only cursor、wait、projection pendingをObserver client経由で守る", async () => {
   const root = await mkdtemp(join(tmpdir(), "observer-throughline-black-box-"));
   const project = join(root, "project");
@@ -95,6 +113,71 @@ test("実Throughline CLIはcompleted-only cursor、wait、projection pendingをO
       { command: THROUGHLINE_BIN, args: ["observer-wait", "--project", project, "--after-cursor", firstChange.throughCursor, "--timeout-seconds", "1", "--json"], options: { shell: false, stdio: ["ignore", "pipe", "pipe"] } },
       { command: THROUGHLINE_BIN, args: ["observer-read", "--project", project, "--after-cursor", firstChange.throughCursor, "--through-cursor", missedWakeup.throughCursor, "--json"], options: { shell: false, stdio: ["ignore", "pipe", "pipe"] } },
     ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("実Throughline CLIはClaude process-turnとCodex task_completeを65秒超の並列waitで検知する", async () => {
+  const root = await mkdtemp(join(tmpdir(), "observer-throughline-dual-host-"));
+  const claudeProject = join(root, "claude-project");
+  const codexProject = join(root, "codex-project");
+  const home = join(root, "home");
+  const state = join(root, "state");
+  const codexHome = join(root, "codex");
+  const isolatedEnv = { HOME: home, USERPROFILE: home, XDG_STATE_HOME: state, CODEX_HOME: codexHome };
+  const claudeSpawnCalls = [];
+  const codexSpawnCalls = [];
+  const makeClient = (spawnCalls) => createThroughlineClient({
+    command: THROUGHLINE_BIN,
+    spawn(command, args, options) {
+      spawnCalls.push({ command, args, options });
+      return spawnChild(command, args, { ...options, env: { ...process.env, ...isolatedEnv } });
+    },
+  });
+  const claudeClient = makeClient(claudeSpawnCalls);
+  const codexClient = makeClient(codexSpawnCalls);
+  const transcriptPath = join(claudeProject, "transcript.jsonl");
+  const codexThreadId = "019dfaba-f87e-7f41-a144-d5ca7c6dd7fa";
+
+  try {
+    await Promise.all([mkdir(claudeProject), mkdir(codexProject), mkdir(home), mkdir(state), mkdir(codexHome)]);
+    await writeFile(transcriptPath, [
+      { type: "user", message: { role: "user", content: [{ type: "text", text: "Claude fixture request" }] } },
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "Claude fixture answer" }] } },
+    ].map(JSON.stringify).join("\n"));
+
+    const [claudeInitial, codexInitial] = await Promise.all([
+      claudeClient.read({ projectPath: claudeProject }),
+      codexClient.read({ projectPath: codexProject }),
+    ]);
+    assert.equal(claudeInitial.status, "snapshot");
+    assert.equal(codexInitial.status, "snapshot");
+
+    const startedAt = Date.now();
+    const claudeWaiting = claudeClient.wait({ projectPath: claudeProject, afterCursor: claudeInitial.throughCursor, timeoutSeconds: 3600 });
+    const codexWaiting = codexClient.wait({ projectPath: codexProject, afterCursor: codexInitial.throughCursor, timeoutSeconds: 3600 });
+    await sleep(65_100);
+    assert.ok(Date.now() - startedAt > 65_000, "両hostのfixture投入前に65秒超待機する");
+
+    await Promise.all([
+      runProcessTurn({ env: isolatedEnv, project: claudeProject, sessionId: "claude-fixture-session", transcriptPath }),
+      writeRollout(codexHome, codexProject, codexThreadId, completedTurn(1)),
+    ]);
+    const [claudeChanged, codexChanged] = await Promise.all([claudeWaiting, codexWaiting]);
+    assert.equal(claudeChanged.status, "changed");
+    assert.equal(codexChanged.status, "changed");
+
+    assert.deepEqual(claudeSpawnCalls.at(-1), {
+      command: THROUGHLINE_BIN,
+      args: ["observer-wait", "--project", claudeProject, "--after-cursor", claudeInitial.throughCursor, "--timeout-seconds", "3600", "--json"],
+      options: { shell: false, stdio: ["ignore", "pipe", "pipe"] },
+    });
+    assert.deepEqual(codexSpawnCalls.at(-1), {
+      command: THROUGHLINE_BIN,
+      args: ["observer-wait", "--project", codexProject, "--after-cursor", codexInitial.throughCursor, "--timeout-seconds", "3600", "--json"],
+      options: { shell: false, stdio: ["ignore", "pipe", "pipe"] },
+    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
