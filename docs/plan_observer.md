@@ -294,6 +294,18 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 - [ ] **P4-2 bounded evidence収集を実装する。**
   - 成果物: 新規turn、plan、diff、git、test evidenceの最小snapshot。
   - 完了条件: prompt全文、secret、巨大logを保存せず、手紙のclaimを検証できる参照を作れる。
+  - [x] `observer.evidence_snapshot.v1`の32 KiB全体上限、section別上限、redaction／truncation、
+    digest-only receiptを固定した（[ADR 0027](adr/0027-bounded-evidence-snapshot.md)）。
+    - generation hard ceilingは最大8 completed cycleまたはObserver所有model-visible payload累積256 KiBとし、
+      次cycleの開始前にplanned rolloverする。
+  - [ ] host-neutral snapshot builderとstrict validatorを実装する。
+    - Throughline turn itemをexact検証し、最新側から最大12 KiBへboundする。
+    - plan最大4 refs／6 KiB、git最大8 KiB、test receipt最大16件／4 KiB、全体32 KiBを強制する。
+    - raw snapshotを保存せず、digest、bytes、件数、truncation／redaction flagsだけのreceiptを生成する。
+  - [ ] read-only collectorを実装し、承認済みplan ref、git HEAD／status／diff evidence、既存test receiptを
+    snapshot builderへ渡す。collector unavailableを空の成功へ丸めず、利用不能refとして明示する。
+  - [ ] generation stateへcycle数とmodel-visible byte数を耐久化し、8 cycle／256 KiB到達前の
+    terminal確認付きplanned rolloverへ接続する。
 
 - [ ] **P4-3 過剰指摘抑制を実装する。**
   - 成果物: materiality、evidence、novelty、actionability、timing gateとdedupe / cooldown。

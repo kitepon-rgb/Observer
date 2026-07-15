@@ -277,6 +277,25 @@ provider／target／watch／cycleの自己申告を許さない。それらの�
 - raw出力は16 KiB以下、evidenceは1〜16件とし、文字列fieldはMailbox message以下のbyte上限へ揃える。
 - digestはschema検証・固定順正規化後にSupervisor側で計算し、AIが返したdigestを信用しない。
 
+AIへ一cycleで渡すhost非依存evidenceは`observer.evidence_snapshot.v1`へ固定し、canonical JSONのUTF-8で
+32 KiB以下とする。snapshotは一時入力であり、raw JSONや本文をdurable stateへ保存しない。
+
+- 信頼済みcycle contextはtarget、watch、parent host／thread digest、cycle ID、cursor digestを持つ。
+  opaque cursor本文、raw parent session ID、targetの絶対pathをAI自己申告またはevidence refへ複製しない。
+- `turns`、`plan`、`git`、`tests`を別sectionにし、各entryへstable ref、source digest、truncated／redacted／availableを持たせる。
+- Throughline turnは最新側から最大12 KiB、承認済みplanは最大4 refs／6 KiB、git status／diff evidenceは8 KiB、
+  test receiptは最大16件／4 KiBを上限とし、snapshot全体32 KiBを最終hard gateにする。
+- secret patternは固定markerへ置換して`redacted=true`とする。元secret、元secretだけのdigest、raw prompt、
+  full patch、巨大logをsnapshot receiptへ保存しない。
+- omission、upstream truncation、redaction、collector unavailableを明示し、advisoryは`available=true`かつ
+  非truncated／非redactedなrefだけを根拠にできる。不足を完全な証拠へ丸めない。
+- durable receiptはsnapshotのcanonical digest、serialized bytes、section件数、truncation／redaction flags、
+  相関IDだけを保存する。
+
+一つの物理host generationは最大8 completed observation cycle、かつObserver所有のmodel-visible payload累積
+256 KiB未満に制限する。protocol prompt、MCP response、evidence snapshot、AI outputのserialized bytesを数え、
+次のcycleで上限へ達する場合は開始前にplanned rolloverする。provider非公開token量の推測をhard gateにしない。
+
 手紙には次の全てが必要。
 
 1. 具体的なclaim
