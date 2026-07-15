@@ -249,6 +249,15 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [ ] **P3-4b installer / verify / rollbackを実装する。**
     - Observer側がhook commandと設定fragment生成／検証を所有し、dotagentsは工場配布adapterだけを所有する。
     - 既存hookを上書きせず合成し、Codexでは`async:true`を使わず同期fast pathとして配線する。
+    - [ ] **P3-4b1 Observer `hook-config`契約を実装する（[ADR 0022](adr/0022-parent-stop-hook-install-boundary.md)）。**
+      - provider別canonical `Stop` entryのJSON生成と、candidate configの
+        `missing` / `duplicate` / `noncanonical` / `canonical`判定だけを行う。
+      - macOS v1では、実在するabsolute executable pathを明示入力し、空白、制御文字、引用符を含むcommandを拒否する。
+      - Host設定を変更せず、fragment／診断のstdout以外へstateを書かない。
+    - [ ] **P3-4b2 dotagents transactional applierを実装する。**
+      - Observerのcanonical fragmentをconsumeし、Claude `settings.json`とCodex `hooks.json`へstandalone Stop entryを各一件に正規化する。
+      - dry-runを既定にし、apply時は二設定をbackup／prepare／atomic replaceし、途中失敗は両方rollbackする。
+      - 既存hook、matcher group、trust、model、effort、permission、credentialを変更しない。
   - [ ] **P3-4c live host gateを実証する（H）。**
     - Claude／Codex各一回で、Mailboxなしのfast exitと一件の同一turn continuationを確認する。
     - Host ackが無いv1ではreceiptを`delivered`へ格上げしない。
