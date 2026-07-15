@@ -16,14 +16,15 @@ import { runFixedThroughReplay, runWatchCycle } from "./watch-cycle.mjs";
 
 export const CYCLE_RESULT_SCHEMA = "observer.cycle_result.v1";
 export const MODEL_OPERATION_CALLBACK_SCHEMA = "observer.model_operation_callback.v1";
+export const MODEL_OPERATION_CLEANUP_SCHEMA = "observer.model_operation_cleanup.v1";
 export const DEFAULT_PROJECTION_RETRIES = 3;
 
 export async function runSupervisorCycle({
   stateRoot, target, watchId, client, prepareCycleInput,
-  issueModelOperation, recoverModelOperation, applyCycle, finalizeAppliedCycle,
+  issueModelOperation, recoverModelOperation, cleanupProviderOperation, applyCycle, finalizeAppliedCycle,
   timeoutSeconds = 3600, projectionRetries = DEFAULT_PROJECTION_RETRIES, signal, store = defaultStore,
 } = {}) {
-  for (const callback of [prepareCycleInput, issueModelOperation, recoverModelOperation, applyCycle, finalizeAppliedCycle]) {
+  for (const callback of [prepareCycleInput, issueModelOperation, recoverModelOperation, cleanupProviderOperation, applyCycle, finalizeAppliedCycle]) {
     if (typeof callback !== "function") fail("E_SUPERVISOR_CALLBACK", "必須callbackが不正です");
   }
   if (!Number.isSafeInteger(projectionRetries) || projectionRetries < 0) fail("E_SUPERVISOR_RETRY_CONFIG", "projection retry設定が不正です");
@@ -75,19 +76,19 @@ export async function runSupervisorCycle({
     await store.dispatchModelOperation({ stateRoot, targetId: target.targetId, operationId: operation.operation_id });
     operation = await requireOperation(store, stateRoot, target.targetId);
     const callback = await issueModelOperation({ operation: publicOperation(operation), value: input.value, signal });
-    return handleProviderCallback({ callback, operation, identity, committed, prepared, cycle, store, applyCycle, finalizeAppliedCycle, signal });
+    return handleProviderCallback({ callback, operation, identity, committed, prepared, cycle, store, cleanupProviderOperation, applyCycle, finalizeAppliedCycle, signal });
   }
   if (operation.status === "dispatching" || operation.status === "accepted") {
     const callback = await recoverModelOperation({ operation: publicOperation(operation, "recover_only"), signal });
-    return handleProviderCallback({ callback, operation, identity, committed, prepared, cycle, store, applyCycle, finalizeAppliedCycle, signal });
+    return handleProviderCallback({ callback, operation, identity, committed, prepared, cycle, store, cleanupProviderOperation, applyCycle, finalizeAppliedCycle, signal });
   }
   if (operation.status === "completed" || operation.status === "applied") {
-    return applyAndFinalize({ operation, identity, committed, prepared, cycle, store, applyCycle, finalizeAppliedCycle, signal });
+    return applyAndFinalize({ operation, identity, committed, prepared, cycle, store, cleanupProviderOperation, applyCycle, finalizeAppliedCycle, signal });
   }
   fail("E_SUPERVISOR_MODEL_OPERATION", "model operation statusが不正です");
 }
 
-async function handleProviderCallback({ callback, operation, identity, committed, prepared, cycle, store, applyCycle, finalizeAppliedCycle, signal }) {
+async function handleProviderCallback({ callback, operation, identity, committed, prepared, cycle, store, cleanupProviderOperation, applyCycle, finalizeAppliedCycle, signal }) {
   const result = validateModelCallback(callback);
   if (result.outcome === "unknown") return modelResultUnknown(committed, prepared.cycle_id);
   if (result.outcome === "pending") {
@@ -101,12 +102,13 @@ async function handleProviderCallback({ callback, operation, identity, committed
   await store.acceptModelOperation({ stateRoot: identity.stateRoot, targetId: identity.targetId, operationId: operation.operation_id, providerOperationReceiptDigest: result.provider_operation_receipt_digest });
   await store.completeModelOperation({ stateRoot: identity.stateRoot, targetId: identity.targetId, operationId: operation.operation_id, rawOutput: result.raw_output });
   const completed = await requireOperation(store, identity.stateRoot, identity.targetId);
-  return applyAndFinalize({ operation: completed, identity, committed, prepared, cycle, store, applyCycle, finalizeAppliedCycle, signal });
+  return applyAndFinalize({ operation: completed, identity, committed, prepared, cycle, store, cleanupProviderOperation, applyCycle, finalizeAppliedCycle, signal });
 }
 
-async function applyAndFinalize({ operation, identity, committed, prepared, cycle, store, applyCycle, finalizeAppliedCycle, signal }) {
+async function applyAndFinalize({ operation, identity, committed, prepared, cycle, store, cleanupProviderOperation, applyCycle, finalizeAppliedCycle, signal }) {
   let applied = operation;
   if (operation.status === "completed") {
+    validateProviderCleanupCallback(await cleanupProviderOperation({ operation: providerCleanupOperation(operation), signal }));
     const result = await applyCycle({ operation: publicOperation(operation), output: structuredClone(operation.completed_output), signal });
     validateCycleResult(result);
     await store.applyModelOperation({ stateRoot: identity.stateRoot, targetId: identity.targetId, operationId: operation.operation_id, appliedResult: result });
@@ -151,6 +153,11 @@ export function validateModelCallback(value) {
   fail("E_SUPERVISOR_MODEL_CALLBACK", "model callback resultが不正です");
 }
 
+export function validateProviderCleanupCallback(value) {
+  if (!plain(value) || Object.keys(value).sort().join(",") !== "outcome,schema" || value.schema !== MODEL_OPERATION_CLEANUP_SCHEMA || value.outcome !== "cleaned") fail("E_SUPERVISOR_PROVIDER_CLEANUP", "provider cleanup resultが不正です");
+  return value;
+}
+
 function publicOperation(operation, action = operation.status === "dispatching" ? "issue_once" : "recover_only") {
   return {
     schema: "observer.model_operation_receipt.v1", action,
@@ -159,6 +166,11 @@ function publicOperation(operation, action = operation.status === "dispatching" 
     model_visible_bytes: operation.model_visible_bytes, status: operation.status,
     provider_operation_receipt_digest: operation.provider_operation_receipt_digest,
   };
+}
+
+function providerCleanupOperation(operation) {
+  if (operation.status !== "completed" || !digest(operation.provider_operation_receipt_digest) || !digest(operation.completed_output_digest)) fail("E_SUPERVISOR_PROVIDER_CLEANUP", "completed provider cleanup証拠が不正です");
+  return { ...publicOperation(operation, "cleanup_only"), completed_output_digest: operation.completed_output_digest };
 }
 
 function finalizedOperation(operation) { return { ...publicOperation(operation), applied_result: structuredClone(operation.applied_result), completed_output_digest: operation.completed_output_digest }; }

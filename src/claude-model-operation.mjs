@@ -8,6 +8,7 @@ import { readModelOperation } from "./model-operation-store.mjs";
 
 export const CLAUDE_MODEL_OPERATION_SCHEMA = "observer.claude_model_operation.v1";
 export const MODEL_OPERATION_CALLBACK_SCHEMA = "observer.model_operation_callback.v1";
+export const MODEL_OPERATION_CLEANUP_SCHEMA = "observer.model_operation_cleanup.v1";
 const KEYS = ["canonical_output", "canonical_output_digest", "created_at", "cwd", "generation_id", "job_id", "name", "operation_id", "provider", "receipt_digest", "schema", "session_id", "status", "target_id", "updated_at"];
 const TARGET = /^p_[a-f0-9]{64}$/; const DIGEST = /^sha256:[a-f0-9]{64}$/;
 
@@ -60,12 +61,12 @@ export async function recoverClaudeModelOperation({ stateRoot, targetId, operati
   });
 }
 
-export async function cleanupClaudeModelOperation({ stateRoot, targetId, operationId } = {}, dependencies = {}) {
+export async function cleanupClaudeModelOperation({ stateRoot, targetId, operationId, cleanupEvidence = null } = {}, dependencies = {}) {
   return transaction(stateRoot, targetId, dependencies, async ({ journalPath }) => {
     const state = await read(journalPath);
     if (state === null) {
       const generic = await (dependencies.readModelOperation ?? readModelOperation)({ stateRoot, targetId });
-      if (generic?.status === "completed" && generic.operation_id === operationId && generic.provider === "claude") return { schema: "observer.claude_model_operation_cleanup.v1", outcome: "cleaned", reason: "already_cleaned" };
+      if (generic?.status === "completed" && generic.operation_id === operationId && generic.provider === "claude" && cleanupEvidence?.provider_operation_receipt_digest === generic.provider_operation_receipt_digest && cleanupEvidence?.completed_output_digest === generic.completed_output_digest) return cleanupResult();
       fail("E_CLAUDE_OPERATION_CLEANUP_FORBIDDEN", "generic completed証拠なしに欠損journalをcleanup成功にできません");
     }
     requireOperation(state, operationId);
@@ -73,11 +74,12 @@ export async function cleanupClaudeModelOperation({ stateRoot, targetId, operati
     const generic = await (dependencies.readModelOperation ?? readModelOperation)({ stateRoot, targetId });
     if (generic === null || generic.status !== "completed" || generic.operation_id !== state.operation_id || generic.provider_operation_receipt_digest !== state.receipt_digest || generic.completed_output_digest !== state.canonical_output_digest) fail("E_CLAUDE_OPERATION_CLEANUP_FORBIDDEN", "generic completed operationがprovider journalと一致しません");
     await removePrivateFile(journalPath);
-    return { schema: "observer.claude_model_operation_cleanup.v1", outcome: "cleaned", reason: "generic_completed_matched" };
+    return cleanupResult();
   });
 }
 
 function callback(outcome, { receiptDigest, rawOutput, reason } = {}) { if (outcome === "accepted") return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome, provider_operation_receipt_digest: receiptDigest }; if (outcome === "pending") return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome }; if (outcome === "completed") return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome, provider_operation_receipt_digest: receiptDigest, raw_output: rawOutput }; return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome: "unknown", reason }; }
+function cleanupResult() { return { schema: MODEL_OPERATION_CLEANUP_SCHEMA, outcome: "cleaned" }; }
 function parseAgents(stdout) { try { const value = JSON.parse(stdout); if (!Array.isArray(value) || value.some((entry) => !plainAgent(entry))) throw new Error(); return value; } catch { fail("E_CLAUDE_OPERATION_AGENTS_INVALID", "agents JSONが不正です"); } }
 async function paths(stateRoot, targetId) { if (!isAbsolute(stateRoot) || !TARGET.test(targetId)) fail("E_CLAUDE_OPERATION_IDENTITY_INVALID", "state rootまたはtarget IDが不正です"); const root = resolve(stateRoot); const directory = assertWithin(root, join(root, "watches", targetId)); try { await assertPrivateDirectory(root); await assertPrivateDirectory(assertWithin(root, join(root, "watches"))); await assertPrivateDirectory(directory); } catch (error) { if (error instanceof ObserverError && error.code === "E_STATE_DIRECTORY_MISSING") return null; throw error; } const providers = join(directory, "provider-operations"); return { providers, journalPath: join(providers, "claude-model-operation.json"), lockPath: join(providers, "claude-model-operation.lock") }; }
 async function transaction(stateRoot, targetId, dependencies, operation) { const p = await paths(stateRoot, targetId); if (p === null) fail("E_CLAUDE_OPERATION_NOT_FOUND", "target stateがありません"); try { await assertPrivateDirectory(p.providers); } catch (error) { if (error instanceof ObserverError && error.code === "E_STATE_DIRECTORY_MISSING") { const { mkdir } = await import("node:fs/promises"); await mkdir(p.providers, { mode: 0o700 }).catch((cause) => { if (cause.code !== "EEXIST") throw cause; }); await assertPrivateDirectory(p.providers); } else throw error; } const release = await acquirePrivateLock(p.lockPath); try { return await operation(p); } finally { await release(); } }

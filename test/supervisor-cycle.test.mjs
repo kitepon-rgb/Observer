@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { cycleIdFor } from "../src/cycle-store.mjs";
-import { runSupervisorCycle, validateModelCallback } from "../src/supervisor-cycle.mjs";
+import { runSupervisorCycle, validateModelCallback, validateProviderCleanupCallback } from "../src/supervisor-cycle.mjs";
 
 const TARGET = { schema: "observer.project_target.v1", targetId: `p_${"a".repeat(64)}`, projectRoot: "/project" };
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
@@ -14,6 +14,7 @@ const RESULT = { schema: "observer.cycle_result.v1", result_digest: "d".repeat(6
 function parent(cursor) { return { schema: "observer.parent_state.v1", target_id: TARGET.targetId, project_root: TARGET.projectRoot, status: "ready", host: "claude", thread_sha256: "b".repeat(64), cursor }; }
 function client() { return { wait: async () => ({ schema: "throughline.observer_wait.v1", status: "changed", afterCursor: CURRENT.cursor, throughCursor: "tlc1.fixed" }), read: async () => ({ schema: "throughline.observer_read.v1", status: "delta", afterCursor: CURRENT.cursor, throughCursor: "tlc1.fixed", host: "claude", thread_sha256: "b".repeat(64), turns: [{ n: 1 }], historyTruncated: false, page: { complete: true, nextToken: null } }) }; }
 function callback(outcome, fields = {}) { return { schema: "observer.model_operation_callback.v1", outcome, ...fields }; }
+function cleanupCallback() { return { schema: "observer.model_operation_cleanup.v1", outcome: "cleaned" }; }
 function operation(identity, status = "prepared") { return { schema: "observer.model_operation.v1", provider: identity.provider, target_id: identity.targetId, watch_id: identity.watchId, generation_id: identity.generationId, cycle_id: identity.cycleId, input_digest: identity.inputDigest, model_visible_bytes: identity.modelVisibleBytes, operation_id: `sha256:${"c".repeat(64)}`, status, provider_operation_receipt_digest: status === "accepted" || status === "completed" || status === "applied" ? PROVIDER_RECEIPT : null, completed_output: status === "completed" || status === "applied" ? { schema: "observer.ai_output.v1", outcome: "no_advisory" } : null, completed_output_digest: status === "completed" || status === "applied" ? `sha256:${"1".repeat(64)}` : null, applied_result: status === "applied" ? RESULT : null, applied_result_digest: status === "applied" ? RESULT.result_digest : null }; }
 
 function fakeStore({ pendingCycle = null, initialOperation = undefined, generationReservation = null, rollover = false, generationTargetId = TARGET.targetId } = {}) {
@@ -45,6 +46,7 @@ function callbacks({ issue = callback("accepted", { provider_operation_receipt_d
     prepareCycleInput: async () => structuredClone(INPUT),
     issueModelOperation: async input => issue,
     recoverModelOperation: async input => recover,
+    cleanupProviderOperation: async () => cleanupCallback(),
     applyCycle: async input => apply,
     finalizeAppliedCycle: async () => undefined,
   };
@@ -70,12 +72,12 @@ test("dispatching recoveryはvalueなしでrecoverだけを呼び、pendingを�
   assert.equal(recovered.operation.action, "recover_only");
 });
 
-test("completed callbackはreceiptを必須にaccept→complete→apply→finalize→processed→cleanup→commitする", async () => {
+test("completed callbackはaccept→complete→provider cleanup→apply→finalize→processed→cleanup→commitする", async () => {
   const store = fakeStore(); const order = [];
-  const result = await runSupervisorCycle({ stateRoot: "/state", target: TARGET, watchId: WATCH_ID, client: client(), store, ...callbacks({ issue: callback("completed", { provider_operation_receipt_digest: PROVIDER_RECEIPT, raw_output: '{"schema":"observer.ai_output.v1","outcome":"no_advisory"}' }) }), applyCycle: async input => { order.push("apply-callback"); assert.equal(input.operation.action, "recover_only"); return RESULT; }, finalizeAppliedCycle: async input => { order.push("finalize"); assert.deepEqual(input.operation.applied_result, RESULT); assert.equal("completed_output" in input.operation, false); } });
+  const result = await runSupervisorCycle({ stateRoot: "/state", target: TARGET, watchId: WATCH_ID, client: client(), store, ...callbacks({ issue: callback("completed", { provider_operation_receipt_digest: PROVIDER_RECEIPT, raw_output: '{"schema":"observer.ai_output.v1","outcome":"no_advisory"}' }) }), cleanupProviderOperation: async input => { store.calls.push("cleanup-provider"); order.push("cleanup-provider"); assert.equal(input.operation.action, "cleanup_only"); assert.equal(input.operation.status, "completed"); assert.equal(input.operation.provider_operation_receipt_digest, PROVIDER_RECEIPT); assert.equal(input.operation.completed_output_digest, `sha256:${"1".repeat(64)}`); assert.equal("completed_output" in input.operation, false); return cleanupCallback(); }, applyCycle: async input => { order.push("apply-callback"); assert.equal(input.operation.action, "recover_only"); return RESULT; }, finalizeAppliedCycle: async input => { order.push("finalize"); assert.deepEqual(input.operation.applied_result, RESULT); assert.equal("completed_output" in input.operation, false); } });
   assert.equal(result.status, "committed");
-  assert.deepEqual(order, ["apply-callback", "finalize"]);
-  assert.deepEqual(store.calls.slice(-8), ["accept", "complete", "read-model", "apply-store", "read-model", "processed", "cleanup-applied", "commit"]);
+  assert.deepEqual(order, ["cleanup-provider", "apply-callback", "finalize"]);
+  assert.deepEqual(store.calls.slice(-9), ["accept", "complete", "read-model", "cleanup-provider", "apply-store", "read-model", "processed", "cleanup-applied", "commit"]);
 });
 
 test("既存reservationとjournal欠損はmodel_result_unknown、planned rolloverはpreparedだけcleanupする", async () => {
@@ -176,6 +178,18 @@ test("callback schemaはreceipt、raw output、unknown enumをfail closedにす�
     { ...callback("pending"), extra: true },
   ];
   for (const value of invalid) assert.throws(() => validateModelCallback(value), { code: "E_SUPERVISOR_MODEL_CALLBACK" });
+  assert.deepEqual(validateProviderCleanupCallback(cleanupCallback()), cleanupCallback());
+  for (const value of [undefined, { ...cleanupCallback(), extra: true }, { ...cleanupCallback(), outcome: "pending" }]) assert.throws(() => validateProviderCleanupCallback(value), { code: "E_SUPERVISOR_PROVIDER_CLEANUP" });
+});
+
+test("provider cleanup失敗や不正結果はapplyせずそのまま停止する", async () => {
+  const invalid = fakeStore();
+  await assert.rejects(runSupervisorCycle({ stateRoot: "/state", target: TARGET, watchId: WATCH_ID, client: client(), store: invalid, ...callbacks({ issue: callback("completed", { provider_operation_receipt_digest: PROVIDER_RECEIPT, raw_output: '{"schema":"observer.ai_output.v1","outcome":"no_advisory"}' }) }), cleanupProviderOperation: async () => undefined }), { code: "E_SUPERVISOR_PROVIDER_CLEANUP" });
+  assert.equal(invalid.calls.includes("apply-store"), false);
+
+  const thrown = fakeStore();
+  await assert.rejects(runSupervisorCycle({ stateRoot: "/state", target: TARGET, watchId: WATCH_ID, client: client(), store: thrown, ...callbacks({ issue: callback("completed", { provider_operation_receipt_digest: PROVIDER_RECEIPT, raw_output: '{"schema":"observer.ai_output.v1","outcome":"no_advisory"}' }) }), cleanupProviderOperation: async () => { throw new Error("cleanup failed"); } }), /cleanup failed/);
+  assert.equal(thrown.calls.includes("apply-store"), false);
 });
 
 test("store strict parserが拒否するinvalid raw outputはaccept後もcompletedへ進めない", async () => {

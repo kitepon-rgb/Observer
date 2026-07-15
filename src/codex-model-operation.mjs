@@ -9,6 +9,7 @@ import { readModelOperation } from "./model-operation-store.mjs";
 
 export const CODEX_MODEL_OPERATION_SCHEMA = "observer.codex_model_operation.v1";
 export const MODEL_OPERATION_CALLBACK_SCHEMA = "observer.model_operation_callback.v1";
+export const MODEL_OPERATION_CLEANUP_SCHEMA = "observer.model_operation_cleanup.v1";
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const TARGET = /^p_[a-f0-9]{64}$/;
 
@@ -75,7 +76,7 @@ export async function cleanupCodexModelOperation({ stateRoot, operation, cleanup
     try { current = validateJournal(await readPrivateJson(paths.file)); } catch (error) {
       if (error?.code !== "ENOENT") throw error;
       const generic = await (dependencies.readModelOperation ?? readModelOperation)({ stateRoot, targetId: operation.target_id });
-      if (generic?.status === "completed" && generic.operation_id === operation.operation_id && cleanupEvidence?.provider_operation_receipt_digest === generic.provider_operation_receipt_digest && cleanupEvidence?.completed_output_digest === generic.completed_output_digest) return { cleaned: true, replayed: true };
+      if (generic?.status === "completed" && generic.operation_id === operation.operation_id && cleanupEvidence?.provider_operation_receipt_digest === generic.provider_operation_receipt_digest && cleanupEvidence?.completed_output_digest === generic.completed_output_digest) return cleanupResult();
       fail("E_CODEX_CLEANUP_FORBIDDEN", "pre-complete provider journal欠損をcleanupできません");
     }
     requireIdentity(current, operation);
@@ -83,12 +84,13 @@ export async function cleanupCodexModelOperation({ stateRoot, operation, cleanup
     const generic = await (dependencies.readModelOperation ?? readModelOperation)({ stateRoot, targetId: operation.target_id });
     if (generic?.status !== "completed" || generic.operation_id !== operation.operation_id || generic.provider_operation_receipt_digest !== current.receipt_digest || generic.completed_output_digest !== current.output_digest) fail("E_CODEX_CLEANUP_FORBIDDEN", "generic completed operationが一致しません");
     await removePrivateFile(paths.file);
-    return { cleaned: true };
+    return cleanupResult();
   } finally { await release(); }
 }
 
 function accepted(receipt) { return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome: "accepted", provider_operation_receipt_digest: receipt }; }
 function completed(receipt, raw) { return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome: "completed", provider_operation_receipt_digest: receipt, raw_output: raw }; }
+function cleanupResult() { return { schema: MODEL_OPERATION_CLEANUP_SCHEMA, outcome: "cleaned" }; }
 async function pathsFor(stateRoot, targetId, operationId) { if (!TARGET.test(targetId) || !DIGEST.test(operationId)) fail("E_CODEX_PROVIDER_INPUT", "Codex operation identityが不正です"); await assertPrivateDirectory(stateRoot); const watches = join(stateRoot, "watches"); const target = join(watches, targetId); await assertPrivateDirectory(watches); await assertPrivateDirectory(target); const root = join(target, "provider-operations"); await ensurePrivateDirectory(root); return { file: join(root, `codex-${operationId.slice(7)}.json`), lock: join(root, `codex-${operationId.slice(7)}.lock`) }; }
 function receiptDigest(operation, handle) { return `sha256:${createHash("sha256").update(["observer.codex_model_operation.v1", operation.operation_id, operation.generation_id, handle.thread_id, handle.session_id, handle.turn_id, handle.after_item_id ?? "", handle.cwd].join("\0"), "utf8").digest("hex")}`; }
 function journal({ operation, handle, receipt, status, stopSeal, itemId, outputDigest, createdAt, updatedAt }) { return validateJournal({ schema: CODEX_MODEL_OPERATION_SCHEMA, provider: "codex", operation_id: operation.operation_id, target_id: operation.target_id, generation_id: operation.generation_id, receipt_digest: receipt, handle, status, stop_seal: stopSeal, item_id: itemId, output_digest: outputDigest, created_at: createdAt, updated_at: updatedAt }); }

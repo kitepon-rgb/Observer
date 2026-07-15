@@ -39,9 +39,9 @@ test("completed recoveryは同一itemとdigestを再読し、generic completed�
   await assert.rejects(cleanupCodexModelOperation({ stateRoot, operation }, { readModelOperation: async () => null }), { code: "E_CODEX_CLEANUP_FORBIDDEN" });
   const evidence = { provider_operation_receipt_digest: accepted.provider_operation_receipt_digest, completed_output_digest: `sha256:${observerAiOutputDigest(parseObserverAiOutput(raw))}` };
   const generic = { status: "completed", operation_id: operation.operation_id, ...evidence };
-  await cleanupCodexModelOperation({ stateRoot, operation }, { readModelOperation: async () => generic });
+  assert.deepEqual(await cleanupCodexModelOperation({ stateRoot, operation }, { readModelOperation: async () => generic }), { schema: "observer.model_operation_cleanup.v1", outcome: "cleaned" });
   await assert.rejects(cleanupCodexModelOperation({ stateRoot, operation }, { readModelOperation: async () => generic }), { code: "E_CODEX_CLEANUP_FORBIDDEN" });
-  assert.deepEqual(await cleanupCodexModelOperation({ stateRoot, operation, cleanupEvidence: evidence }, { readModelOperation: async () => generic }), { cleaned: true, replayed: true });
+  assert.deepEqual(await cleanupCodexModelOperation({ stateRoot, operation, cleanupEvidence: evidence }, { readModelOperation: async () => generic }), { schema: "observer.model_operation_cleanup.v1", outcome: "cleaned" });
 });
 
 test("phase欠損、baseline欠損、session/cwd mismatch、completed本文変造をfail closedにする", async () => {
