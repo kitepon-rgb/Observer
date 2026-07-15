@@ -446,7 +446,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     - claim後のrender、stdout、finalize失敗は本文を再配送せず`delivery_unknown`へ回収する。
     - focused gate: `node --test test/parent-stop-hook.test.mjs test/mailbox-consumer.test.mjs test/mailbox-routing.test.mjs` — 18/18 PASS。
     - `npm run check` PASS。continued turnの実CLI fast pathはexit 0／stdoutなしを確認した。
-  - [ ] **P3-4b installer / verify / rollbackを実装する。**
+  - [x] **P3-4b installer / verify / rollbackを実装する。**
     - Observer側がhook commandと設定fragment生成／検証を所有し、dotagentsは工場配布adapterだけを所有する。
     - 既存hookを上書きせず合成し、Codexでは`async:true`を使わず同期fast pathとして配線する。
     - [x] **P3-4b1 Observer `hook-config`契約を実装した（[ADR 0022](adr/0022-parent-stop-hook-install-boundary.md)／[ADR 0023](adr/0023-parent-stop-hook-config-cli.md)）。**
@@ -572,7 +572,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [ ] **P5-1b live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
     65秒超wait、実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。
 
-- [ ] **P5-2 性能、導入、rollbackを確定する。**
+- [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
   - 完了条件: 空Mailboxと通常waitが開発体験を阻害せず、clean環境で導入・撤去を再現できる。
   - [x] **P5-2a clean環境installer／verify／rollback契約を閉じる**
@@ -583,11 +583,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     - [x] actual HOME apply、hook trust、live host、credential、publish／pushは未実施のH／後続gateへ残した。
     - 実装 `630c5ff`／`b45c07a`（Observer）、`894799b`（dotagents）を
       [ADR 0100](adr/0100-clean-install-verify-rollback-acceptance.md)で受け入れた。
-  - [ ] **P5-2b performance／retention cleanup契約を閉じる**
+  - [x] **P5-2b performance／retention cleanup契約を閉じる**
     （[ADR 0101](adr/0101-performance-retention-cleanup-contract.md)）。
-    - [ ] hook process、空Mailbox core、bounded wait overheadの分布と閾値を固定fixtureで計測する。
-    - [ ] default retentionが完了receiptだけを削除し、claimed、prepared publish、active cooldownを保護する。
-    - [ ] cleanup途中失敗をsanitized errorにし、無関係stateを変えず再実行で同じ最終状態へ収束させる。
+    - [x] hook process、空Mailbox core、bounded wait overheadの分布と閾値を固定fixtureで計測した。
+    - [x] default retentionが完了receiptだけを削除し、claimed、prepared publish、active cooldownを保護した。
+    - [x] cleanup途中失敗をsanitized errorにし、無関係stateを変えず再実行で同じ最終状態へ収束させた。
+    - 実装 `1d045df`／`8b49493`を
+      [ADR 0102](adr/0102-performance-retention-cleanup-acceptance.md)で受け入れた。
   - [x] project-ownedな`.codex-sidecar.yml`を追加し、read-only presetと隔離worktree writer、
     Observer製品面だけのpath allowlist、明示model policyを正規dry-runで検証した。
     - `codex-sidecar diagnostics --project .`: `status=ok`。
