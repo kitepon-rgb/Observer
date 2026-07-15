@@ -29,6 +29,43 @@ test("diagnostics CLIは引数とready／unsupported exitを固定する", async
   assert.equal(unsupported.exitCode, 1);
 });
 
+test("campaign preflight CLIはabsolute host commandとh_required／blocked exitを固定する", async () => {
+  const argv = [
+    "campaign", "preflight",
+    "--claude-command", "/bin/claude",
+    "--codex-command", "/bin/codex",
+  ];
+  assert.deepEqual(parseObserverArguments(argv), {
+    kind: "campaign_preflight",
+    claudeCommand: "/bin/claude",
+    codexCommand: "/bin/codex",
+  });
+  const calls = [];
+  const hRequired = await executeObserverCommand(argv, {}, {
+    runObserverLiveCampaignPreflight: async (input) => {
+      calls.push(input);
+      return { schema: "observer.live_campaign_preflight.v1", status: "h_required" };
+    },
+  });
+  assert.equal(hRequired.exitCode, 0);
+  assert.deepEqual(calls, [{ claudeCommand: "/bin/claude", codexCommand: "/bin/codex" }]);
+  const blocked = await executeObserverCommand(argv, {}, {
+    runObserverLiveCampaignPreflight: async () => ({
+      schema: "observer.live_campaign_preflight.v1", status: "blocked",
+    }),
+  });
+  assert.equal(blocked.exitCode, 1);
+  assert.throws(() => parseObserverArguments([
+    ...argv, "--claude-command", "/other/claude",
+  ]), { code: "E_USAGE" });
+  assert.throws(() => parseObserverArguments([
+    "campaign", "preflight", "--claude-command", "relative", "--codex-command", "/bin/codex",
+  ]), { code: "E_USAGE" });
+  assert.throws(() => parseObserverArguments([
+    "campaign", "preflight", "--claude-command", "/bin/claude",
+  ]), { code: "E_USAGE" });
+});
+
 test("target register CLIは同じprojectを同じtargetへ登録する", async () => {
   const root = await mkdtemp(join(tmpdir(), "observer-cli-"));
   const project = join(root, "project");

@@ -1,6 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import { ObserverError, fail } from "./observer-error.mjs";
+import { runObserverLiveCampaignPreflight } from "./live-campaign-preflight.mjs";
 import { defaultStateRoot } from "./private-state.mjs";
 import { runObserverProductDiagnostics } from "./product-diagnostics.mjs";
 import { readRegisteredProjectTarget, registerProjectTarget } from "./project-target.mjs";
@@ -20,6 +21,7 @@ const PROCESS_STATUSES = new Set([
 export function observerUsage() {
   return [
     "usage: observer diagnostics",
+    "usage: observer campaign preflight --claude-command <absolute-path> --codex-command <absolute-path>",
     "usage: observer watch <absolute-project-root> [--state-root <absolute-path>]",
     "       observer watch start <absolute-project-root> [--state-root <absolute-path>]",
     "       observer watch status <absolute-project-root> [--state-root <absolute-path>]",
@@ -32,6 +34,7 @@ export function observerUsage() {
 export function parseObserverArguments(argv) {
   if (!Array.isArray(argv)) fail("E_USAGE", observerUsage());
   if (argv.length === 1 && argv[0] === "diagnostics") return { kind: "diagnostics" };
+  if (argv[0] === "campaign" && argv[1] === "preflight") return parseCampaignPreflight(argv);
   if (argv[0] === "watch") return parseWatch(argv);
   if (argv[0] === "target" && argv[1] === "register") return parseTargetRegister(argv);
   if (argv[0] === "supervisor" && argv[1] === "run") return parseSupervisorRun(argv);
@@ -43,6 +46,13 @@ export async function executeObserverCommand(argv, { signal, parentContext } = {
   if (command.kind === "diagnostics") {
     const result = await (dependencies.runObserverProductDiagnostics ?? runObserverProductDiagnostics)();
     return { result, exitCode: result.status === "ready" ? 0 : 1 };
+  }
+  if (command.kind === "campaign_preflight") {
+    const result = await (dependencies.runObserverLiveCampaignPreflight ?? runObserverLiveCampaignPreflight)({
+      claudeCommand: command.claudeCommand,
+      codexCommand: command.codexCommand,
+    }, dependencies.preflightDependencies);
+    return { result, exitCode: result.status === "blocked" ? 1 : 0 };
   }
   if (command.kind.startsWith("watch_")) {
     const handlers = {
@@ -119,6 +129,28 @@ function parseWatch(argv) {
     validateAbsolute(stateRoot, "E_PATH_NOT_ABSOLUTE", "state rootは絶対パスで指定してください");
   }
   return { kind: `watch_${action}`, projectRoot, stateRoot: stateRoot ?? defaultStateRoot() };
+}
+
+function parseCampaignPreflight(argv) {
+  const values = {};
+  const flags = new Map([
+    ["--claude-command", "claudeCommand"],
+    ["--codex-command", "codexCommand"],
+  ]);
+  for (let index = 2; index < argv.length; index += 1) {
+    const key = flags.get(argv[index]);
+    if (key === undefined || Object.hasOwn(values, key) || index + 1 >= argv.length) {
+      fail("E_USAGE", observerUsage());
+    }
+    values[key] = argv[index + 1];
+    index += 1;
+  }
+  if (!Object.hasOwn(values, "claudeCommand") || !Object.hasOwn(values, "codexCommand")) {
+    fail("E_USAGE", observerUsage());
+  }
+  validateAbsolute(values.claudeCommand, "E_USAGE", observerUsage());
+  validateAbsolute(values.codexCommand, "E_USAGE", observerUsage());
+  return { kind: "campaign_preflight", ...values };
 }
 
 export function formatObserverCliError(error) {
