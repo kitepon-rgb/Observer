@@ -216,11 +216,17 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
           - [x] raw handleを出さないrecovery contextと、watchを再遷移させないCodex generation runtimeを先行実装した
             （[ADR 0042](adr/0042-generation-provider-binding-recovery-contract.md)、
             [ADR 0043](adr/0043-generation-recovery-surface-acceptance.md)）。
-          - [ ] recovery contextを使うClaude／Codex provider bindingを、一command一stepで実装する
+          - [x] recovery contextを使うClaude／Codex provider bindingを、一command一stepで実装する
             （[ADR 0044](adr/0044-generation-provider-binding-step-contract.md)）。
-            - [ ] Codexの再送なしterminal観測APIを実装する。
-            - [ ] host-neutral provider binding step machineを実装する。
-            - [ ] 隔離した2 Workerの成果を本線へ統合し、focused gateを通す。
+            - [x] Codexの再送なしterminal観測APIを実装する。
+              - commit `b06a847`。同一generationのdurable thread／turnだけをread-only照合し、
+                terminal／pending／unknownとraw-free receiptを返す。
+            - [x] host-neutral provider binding step machineを実装する。
+              - commit `02329ad`。一call一provider mutation、stop再送なし、provider ready後の
+                core spawn／ready適用、unknown fail-closedを固定した。
+            - [x] 隔離した2 Workerの成果を本線へ統合し、focused gateを通す。
+              - 関連gate 46/46、`npm run check`、`git diff --check`成功。両TaskはControl revision 29までに
+                [ADR 0046](adr/0046-generation-provider-binding-step-acceptance.md)でfinalizeした。
           - [ ] model request送信結果不明をhost lifecycleと別journalで回収する。
         - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
