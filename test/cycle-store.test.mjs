@@ -12,7 +12,7 @@ import {
   readCycleState,
 } from "../src/cycle-store.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
-import { activateWatch, reserveActiveWatch } from "../src/watch-store.mjs";
+import { activateWatch, attachWatchLaunchHandle, reserveActiveWatch } from "../src/watch-store.mjs";
 
 const TARGET = { schema: "observer.project_target.v1", targetId: `p_${"a".repeat(64)}`, projectRoot: "/repo" };
 const UUID = "11111111-1111-4111-8111-111111111111";
@@ -31,7 +31,9 @@ function expectCode(code) {
 async function setup() {
   const stateRoot = await mkdtemp(join(tmpdir(), "observer-cycle-"));
   const starting = await reserveActiveWatch({ stateRoot, target: TARGET, provider: "codex" }, { randomUUID: () => UUID, now: () => T0 });
-  await activateWatch({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: { kind: "codex.agent", value: "/root/observer" } }, { now: () => T0 });
+  const launchHandle = { kind: "codex.agent", value: "/root/observer" };
+  await attachWatchLaunchHandle({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle }, { now: () => T0 });
+  await activateWatch({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle }, { now: () => T0 });
   return { stateRoot, watchId: starting.watch_id };
 }
 
