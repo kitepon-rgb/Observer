@@ -239,10 +239,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                 - commit `8afebca`。same／next generationのprepared回収を含むfocused＋related 27/27、
                   `npm run check`、scoped diff-checkを通し、
                   [ADR 0053](adr/0053-model-operation-recovery-corrections-acceptance.md)で受け入れた。
-            - [ ] Supervisorを`issue_once`／`recover_only`／idempotent applyへ分け、`dispatching`からmodel requestを
+            - [x] Supervisorを`issue_once`／`recover_only`／idempotent applyへ分け、`dispatching`からmodel requestを
               再送せず、strict parse済みcanonical AI outputだけをcycle processedへ移管する
               （[ADR 0050](adr/0050-supervisor-model-operation-integration-contract.md)）。
-            - [ ] prepared／reservation／provider handle／canonical result／apply／processed／cleanup間の
+              - commit `c226cc9`。focused 15/15、関連gate 47/47、`npm run check`、scoped diff-checkを通し、
+                [ADR 0054](adr/0054-supervisor-model-operation-integration-acceptance.md)で受け入れた。
+            - [x] prepared／reservation／provider handle／canonical result／apply／processed／cleanup間の
               crash matrixをfocused fixtureで固定する。
             - [ ] Claude／Codexのexact operation result readをprovider固有journalへ実装し、handle欠損を
               別operationへの再送で隠さない。
