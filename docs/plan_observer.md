@@ -12,7 +12,7 @@
 
 ## 未確定事項
 
-Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Stop hook、60秒超wait、continuation、停止方法はP0-6で実測し、Codexの挙動から推測しない。
+completed-turn境界の初期未確定事項は解消済み。Claude側の完了証拠、Stop hook、60秒超wait、continuation、停止方法はP0-6で実測し、Codexの挙動から推測しない。Codex native childのread-only不成立はP2-5 blockerとして[ADR 0008](adr/0008-codex-readonly-host-boundary.md)で分離する。
 
 ---
 
@@ -132,12 +132,16 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
     - [x] explicit authorization、`starting → launching → active`、private provider handle、相関付きstop／fault transactionを実装した。
       検証: `node --test test/parent-launch.test.mjs test/watch-store.test.mjs` 16/16 PASS、cycle-store fixture 5/5 PASS。
       commits `1ed545c`、`ed4f077`、Control revision 32。
-    - [ ] Codex native／Claude backgroundの親host adapter、同provider Observer role、routing検証を実装する。
+    - [x] unrestricted Codex親ではcustom agentの`read-only`が実効sandboxにならないことを実測し、native Observerを禁止した（[ADR 0008](adr/0008-codex-readonly-host-boundary.md)）。
+    - [ ] Codex persistent app-server thread候補／Claude backgroundの親host adapter、同provider Observer role、routing検証を実装する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
   - 成果物: project read-only、Observer state / Mailbox write-onlyの実行profileと拒否test。
   - 完了条件: project内writeが失敗し、監視とMailbox publishは成功する。
+  - [x] Codex native custom agentのTOML指定だけではunrestricted親のoverrideを防げないことを実測した。
+  - [ ] app-server persistent threadのアプリ内表示、per-thread read-only、65秒超wait、crash回収、停止をcharacterizationする。
+  - [ ] Claude backgroundをread-only tool allowlistで起動し、project write拒否とObserver MCP成功をcharacterizationする。
 
 **Gate:** 手紙を生成しない最小Observerが、親の再作成と一時間timeoutを含めて継続監視できる。
 
