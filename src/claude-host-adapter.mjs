@@ -6,10 +6,7 @@ import { validateParentLaunchRequest } from "./parent-launch.mjs";
 
 export const CLAUDE_JOB_OBSERVATION_SCHEMA = "observer.claude_job_observation.v1";
 export const CLAUDE_STOP_COMMAND_RECEIPT_SCHEMA = "observer.claude_stop_command_receipt.v1";
-export const CLAUDE_OBSERVER_TOOLS = Object.freeze([
-  "mcp__observer__observer_read",
-  "mcp__observer__observer_wait",
-]);
+export const CLAUDE_OBSERVER_TOOLS = Object.freeze([]);
 
 const CLAUDE_JOB_ID_RE = /^[A-Za-z0-9_-]{1,128}$/;
 const CLAUDE_NAME_RE = /^[A-Za-z0-9_-]{1,128}$/;
@@ -30,7 +27,7 @@ export function buildClaudeBackgroundInvocation({ request, claudeCommand, mcpCon
   validateMcpConfig(mcpConfig, request.runtime_root);
   const sortedTools = validateObserverTools(observerTools);
   const prompt = buildObserverAiPrompt(request.child_start);
-  const availableTools = ["Read", "Grep", "Glob", ...sortedTools].join(",");
+  const availableTools = sortedTools.join(",");
   const allowedTools = sortedTools.join(",");
   const args = [
     "--bg",

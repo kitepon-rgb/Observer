@@ -59,12 +59,12 @@ function expectCode(code) {
   return (error) => error instanceof ObserverError && error.code === code;
 }
 
-test("Claude background argvは固定promptを可変長flagより前へ置きtool公開と無人許可を分離する", () => {
+test("Claude background argvはSupervisor所有promptを固定しAI tool surfaceを空にする", () => {
   const result = buildClaudeBackgroundInvocation({
     request: request(),
     claudeCommand: "/usr/local/bin/claude",
     mcpConfig: mcpConfig(),
-    observerTools: ["mcp__observer__observer_wait", "mcp__observer__observer_read"],
+    observerTools: [],
   });
   assert.equal(result.command, "/usr/local/bin/claude");
   const prompt = result.args[11];
@@ -81,8 +81,8 @@ test("Claude background argvは固定promptを可変長flagより前へ置きtoo
   assert.ok(result.args.indexOf(prompt) < mcpIndex);
   assert.ok(mcpIndex < toolsIndex && toolsIndex < allowedIndex);
   assert.equal(result.args[mcpIndex + 1], JSON.stringify(mcpConfig()));
-  assert.equal(result.args[toolsIndex + 1], "Read,Grep,Glob,mcp__observer__observer_read,mcp__observer__observer_wait");
-  assert.equal(result.args[allowedIndex + 1], "mcp__observer__observer_read,mcp__observer__observer_wait");
+  assert.equal(result.args[toolsIndex + 1], "");
+  assert.equal(result.args[allowedIndex + 1], "");
   assert.deepEqual(Object.keys(result).sort(), ["args", "command"]);
 });
 
@@ -92,7 +92,7 @@ test("Claude invocationは非Claude request、非Observer MCP、env付きconfig�
     expectCode("E_CLAUDE_HOST_REQUEST_INVALID"),
   );
   assert.throws(
-    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig(), observerTools: ["mcp__observer__observer_read", "mcp__observer__publish"] }),
+    () => buildClaudeBackgroundInvocation({ request: request(), claudeCommand: "/usr/local/bin/claude", mcpConfig: mcpConfig(), observerTools: ["mcp__observer__observer_read"] }),
     expectCode("E_CLAUDE_HOST_TOOL_INVALID"),
   );
   assert.throws(

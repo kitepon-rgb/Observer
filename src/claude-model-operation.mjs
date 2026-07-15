@@ -50,11 +50,16 @@ export async function captureClaudeModelOperationStop({ stateRoot, targetId, ope
   });
 }
 
-export async function recoverClaudeModelOperation({ stateRoot, targetId, operationId } = {}, dependencies = {}) {
+export async function recoverClaudeModelOperation({ stateRoot, targetId, operationId, operationStatus } = {}, dependencies = {}) {
+  if (!new Set(["dispatching", "accepted"]).has(operationStatus)) fail("E_CLAUDE_OPERATION_IDENTITY_INVALID", "generic operation statusが不正です");
   try {
     return await transaction(stateRoot, targetId, dependencies, async ({ journalPath }) => {
       const state = await requireState(journalPath); requireOperation(state, operationId);
-      if (state.status === "accepted") return callback("accepted", { receiptDigest: state.receipt_digest });
+      if (state.status === "accepted") {
+        return operationStatus === "dispatching"
+          ? callback("accepted", { receiptDigest: state.receipt_digest })
+          : callback("pending");
+      }
       const output = parseObserverAiOutput(JSON.stringify(state.canonical_output));
       const digest = `sha256:${observerAiOutputDigest(output)}`;
       if (digest !== state.canonical_output_digest) fail("E_CLAUDE_OPERATION_OUTPUT_CONFLICT", "canonical output digestが一致しません");

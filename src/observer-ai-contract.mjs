@@ -57,8 +57,10 @@ export function buildObserverAiPrompt(childStart) {
   });
   return [
     "Observer rootのAGENTS.mdを静的な製品役割の正本として適用してください。",
-    "次のobserver.child_start.v1をexact検証し、許可されたread-only surfaceだけで監視してください。",
-    `各観測cycleの最終出力はJSON object一件だけです。正常進行は ${noAdvisory}`,
+    "次のobserver.child_start.v1をexact検証してください。このbootstrap turnでは外部Supervisorの準備完了だけを確認します。",
+    "Throughline待機、MCP、project読取、shell、file toolを自分で開始してはいけません。観測cycleは外部Supervisorだけが所有します。",
+    "今後の各turnではobserver.cycle_request.v1一件だけを評価し、含まれるbounded evidenceの外を探索してはいけません。",
+    `bootstrapと各観測cycleの最終出力はJSON object一件だけです。正常進行は ${noAdvisory}`,
     `助言候補は最大一件で ${advisory}`,
     `severityの許可値: ${SEVERITIES.join(" | ")}`,
     `categoryの許可値: ${CATEGORIES.join(" | ")}`,

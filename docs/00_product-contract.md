@@ -32,13 +32,13 @@ Throughline
   = session、turn、完了証拠、handoff、completed-turn read / wait CLI契約の所有者
 
 Observer
-  = project追跡、cursor、監査、dedupe、Mailbox、AI向けMCP adapterの所有者
+  = project追跡、cursor、監査、dedupe、Mailbox、外部Supervisor runtimeの所有者
 
 Observer host adapter
-  = Claude／Codex固有の完了証拠、project-local継続、親Mailbox配送wireを共通coreへ変換する
+  = Claude／Codex固有のmodel request／resultと親Mailbox配送wireを共通coreへ変換する
 
 Observer project-local Stop hook
-  = 監視中だけ同じhost turnを次の監視サイクルへ継続する
+  = matching provider resultだけをcaptureし、次の監視サイクルを開始しない
 
 親host Stop hook adapter
   = 自分宛ての手紙を短時間で取得し、host固有のadvisory promptとして一度だけ返す配送員
@@ -104,8 +104,8 @@ DBファイル自体のmtime、`sessions.updated_at`、`bodies`の件数を親�
 - 利用者が親へ明示的に停止を依頼した時は、親がchildを停止してactive watchを閉じる。
 - fault時は継続と自動再起動を止め、親が原因を利用者へ報告する。
 
-Codex hostはpersistent app-server threadを使い、thread IDをwatchのprivate provider handle、active turn IDを
-Observer所有のdurable operation journalへ分離して保存する。`thread/start`または`turn/start`の結果が不明な時は、
+Codex hostはpersistent app-server threadを使い、thread IDをwatchのprivate provider handle、cycleごとのturn IDを
+Observer所有のdurable provider operation journalへ分離して保存する。`thread/start`または`turn/start`の結果が不明な時は、
 同じObserver `cwd`に見えるthreadやturnを推測でattachせず、`*_start_unknown`を保持して再実行を止める。
 `thread/read`は保存済みIDのterminal照合、`thread/resume`は再接続後の継続とevent購読にだけ使う。
 
@@ -114,11 +114,12 @@ Codex停止では`turn/interrupt`の空ACKを終端証拠にしない。同じth
 検証した後だけwatchを閉じる。app-server process／connectionは再作成可能なtransportであり、provider handleにしない。
 thread／turnの`cwd`は常にcanonical Observer rootで、target `project_root`はchild envelopeにだけ保持する。
 
-各cycleのmodel結果はhost lifecycleと別のprovider operation journalで回収する。CodexはcycleごとのStopを
-session／turnへsealし、保存済みthread／turnの`thread/read(includeTurns=true)`から直前cycleのresult item以後にある
-exactな`agentMessage` itemだけを再読する。Claudeはbackground job IDとsession IDを束縛し、Observer所有`Stop` hookの
+各cycleのmodel結果はhost lifecycleと別のprovider operation journalで回収する。Codexはcycleごとに同じpersistent
+threadへ新しい`turn/start`を一件だけ発行し、ACKされたthread／session／cycle turn／cwdを保存する。
+`thread/read(includeTurns=true)`からそのcycle turnに属するexactな`agentMessage` itemだけを再読する。
+Claudeはbackground job IDとsession IDを束縛し、Observer所有`Stop` hookの
 `last_assistant_message`を発火中にstrict parseしてcanonical outputをatomic保存する。`stop_hook_active`は
-result captureを抑止せず、continuation再発行の制御だけに使う。Claude terminal後の
+result captureを抑止しない。project-local Stop hookはcontinuationを返さない。Claude terminal後の
 `logs`、transcript、private provider state、handle欠損時の別turn／別job／新規requestをfallbackに使わない。
 provider journalが欠ける場合は結果不明のまま止め、二重model実行を避ける。
 provider completedはgeneric model operationへcanonical outputを耐久化した後、raw outputを含まない
@@ -134,7 +135,11 @@ apply成功へ丸めない。generic completedからのrecoveryでも同じclean
 
 ## 4. Throughline待機契約
 
-Throughlineは、turn本文を返さないread-only long-poll CLIと、完了turnを取得するread CLIを提供する。Observer所有のMCP adapterはこの二入口を子processとして呼び、AIへ同名のread-only toolとして公開する。ObserverはDB / WALを直接読まない。
+Throughlineは、turn本文を返さないread-only long-poll CLIと、完了turnを取得するread CLIを提供する。外部Supervisor
+runtimeだけがこの二入口を子processとして呼び、保存cursor、fixed-through evidence、model operation、apply、cursor
+commitを一意に所有する。Observer AIへwait／read toolを公開しない。既存のObserver MCP adapterは公開Throughline
+adapterとして残すが、production AI loopのownerにはせず、Phase 2完了前にdiagnostics／compatibility surfaceとしての
+存廃を別Taskで裁定する。ObserverはDB / WALを直接読まない。
 
 ```text
 wait_for_turn_change(
@@ -173,10 +178,10 @@ wait_for_turn_change(
 ### 保証
 
 - cursorはThroughlineだけが解釈するopaque tokenとし、Observerは比較、加工、採番せずそのまま保存して返す。
-- 一回の待機上限は既定3600秒。各host側のtool timeoutは待機上限より余裕を持たせ、実hostで60秒超の保持を検証する。
-- Observer MCPのwait / read toolはread-only注釈を持ち、Observer設定は公開toolをこの二つへallowlistしたうえで各toolだけを非対話実行へ明示許可する。
+- 一回の待機上限は既定3600秒。外部Supervisorが一target一processのbounded stepとして待機し、AI host turnを待機に使わない。
+- Observer MCPのwait / read toolはread-only注釈を維持するが、production Observer AIのtool allowlistへ含めない。
 - changed応答へturn本文を含めない。
-- Observerはchanged後、`read_completed_turns(project_root, after_cursor, through_cursor)`相当の入口から完了turnを取得する。
+- 外部Supervisorはchanged後、`read_completed_turns(project_root, after_cursor, through_cursor)`相当の入口から完了turnを取得する。
 - read入口は初回の`snapshot`、通常の`delta`、親作り直しの`thread_switched`、rollback等の`resync_required`、DB freshness待ちの`projection_pending`を区別する。
 - snapshotは過去履歴のbounded orientationであり、truncationを明示する。監視開始後のdelta / thread switchはopaque page tokenで全件を回収し、bounded上限による欠落を成功扱いしない。
 - Observerはreadと監査が正常終了した後だけ保存cursorを進める。read失敗時は旧cursorを保持する。
@@ -187,48 +192,40 @@ wait_for_turn_change(
 - Claudeではtranscript、hook、Throughline projectionのうちPhase 0で実証した完了境界だけを採用する。Codexの`task_complete`相当を推測で作らない。
 - Throughlineは完了証拠から最新threadを解決し、既存`auditor-context`相当のfreshness照合を通した本文だけをread結果にする。
 
-Throughline wait processは短い間隔で自身のrollout / DB projectionを再確認してよい。pollingは公開契約へ漏らさず、各DB read transactionを短く閉じる。Observer runtimeのAI向けtransportはMCP、Throughlineとのprocess境界はJSON-only CLIとする。
+Throughline wait processは短い間隔で自身のrollout / DB projectionを再確認してよい。pollingは公開契約へ漏らさず、各DB read transactionを短く閉じる。外部SupervisorとThroughlineのprocess境界はJSON-only CLI、SupervisorとObserver AIの境界は一cycle一件のcanonical `observer.cycle_request.v1`とする。
 
 ---
 
-## 5. Observer監視turn
+## 5. Observer監視cycle
 
 ```text
-保存cursorからMCPで最大一時間wait
+外部Supervisorが保存cursorからThroughline CLIで最大一時間wait
   ├─ changed
-  │    └─ turn取得 → 監査 → 必要なら手紙 → Observer Done
+  │    └─ exact turn取得 → bounded evidence生成 → canonical cycle request
+  │         └─ provider一cycle request → exact result → Mailbox apply → cursor commit
   └─ timeout
-       └─ 待機継続を報告 → Observer Done
-
-Observer project-local Stop hook
-  └─ host固有のbounded continuationで同じhost turnを次の監視サイクルへ継続
-       └─ 保存cursorから再び最大一時間wait
+       └─ model requestもMailbox報告もせず、同じcursorで次のbounded wait stepへ戻る
 ```
 
-timeout時の定型文:
-
-```text
-親スレッドの更新がありませんでした。待機します。
-```
-
-- timeout報告はObserver自身のスレッドだけへ出す。
-- timeoutを親のMailboxへ送らない。
+- timeoutをObserver AIにも親Mailboxにも送らない。
 - timeout時はAI意味監査とproject走査を行わない。
-- Observer Done後、Stop hookは`{"decision":"block","reason":"監視を継続する"}`相当のbounded promptを返す。
-- この再開は新しいuser turnではなく、同じhost turn内の次の監視サイクルである。Claude／Codexそれぞれでこの性質を実測する。
-- Stop hook自体はlong-pollしない。
+- 次の待機は外部Supervisorだけが開始する。project-local Stop hookはlong-pollもblock continuationも行わない。
+- Codexはpersistent threadを維持しつつ、changed cycleごとに新しい`turn/start`を一件だけ発行する。
+- Claudeの同一logical generationへの公開・非対話cycle deliveryはlive H gateで実証する。成立しない間は
+  `provider_unavailable`とし、TUI automation、private daemon protocol、別job spawnへfallbackしない。
 - timeoutと次のwaitの間にturnが増えた場合、同じcursorによる次回呼出しで即時回収する。
 - crash後は保存cursorから再開する。
-- 明示停止またはuser interrupt時は継続しない。通常の`stop_hook_active=true`だけを理由に監視を終了せず、Observer所有のactive watch stateで継続可否を決める。
-- Stop continuationを許可するcycle結果は、`changed`のread / 監査完了と正常`timeout`だけとする。
-- MCP、Throughline CLI、schema検証、cursor保存の失敗時はwatch stateを`faulted`にし、Stop hookはblockを返さない。壊れた状態で高速な自己再開を繰り返さない。
-- `projection_pending`の短い再試行はObserver MCP adapter内部でboundedに行い、AI cycleを増やさない。上限後もfreshにならなければfaultとして表面化する。
+- 明示停止またはuser interrupt時は次のwaitを開始しない。Observer所有のactive watch stateで継続可否を決める。
+- Throughline CLI、schema検証、provider request／result、cursor保存の失敗時はwatch stateを`faulted`にし、自動restartや
+  provider request再送を行わない。
+- `projection_pending`の短い再試行は外部Supervisor内部でboundedに行い、AI cycleを増やさない。上限後もfreshに
+  ならなければfaultとして表面化する。
 
 ---
 
 ## 6. Observerの権限
 
-Observerが読めるもの:
+外部Supervisorが読めるもの:
 
 - 対象親のThroughline確定turn
 - `AGENTS.md`、承認済みplan、TODO、Phase
@@ -239,6 +236,11 @@ Observerが書けるもの:
 
 - Observer自身のproject target、cursor、dedupe、cooldown state
 - Observer所有の中央Mailbox
+
+Observer AIが読めるもの:
+
+- 外部Supervisorが一cycleについて生成したbounded `observer.cycle_request.v1`だけ
+- targetのcursor、project filesystem、Throughline／Observer MCP toolへ直接アクセスしない
 
 Observerが行ってはならないもの:
 

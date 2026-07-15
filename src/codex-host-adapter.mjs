@@ -78,37 +78,32 @@ export function buildCodexThreadReadParams(threadId) {
   return { threadId, includeTurns: true };
 }
 
-export function parseCodexCycleBaseline({ result, expectedThreadId, expectedTurnId, expectedCwd } = {}) {
-  validateThreadId(expectedThreadId, "E_CODEX_CYCLE_BASELINE_INVALID");
-  validateTurnId(expectedTurnId, "E_CODEX_CYCLE_BASELINE_INVALID");
+export function parseCodexCycleThreadContext({ result, expectedThreadId, expectedCwd } = {}) {
+  validateThreadId(expectedThreadId, "E_CODEX_CYCLE_THREAD_INVALID");
   if (typeof expectedCwd !== "string" || expectedCwd.length === 0) {
-    fail("E_CODEX_CYCLE_BASELINE_INVALID", "Codex cycle baseline cwdが不正です");
+    fail("E_CODEX_CYCLE_THREAD_INVALID", "Codex cycle thread cwdが不正です");
   }
   const thread = result?.thread;
   if (!isPlainObject(thread) || thread.id !== expectedThreadId || thread.cwd !== expectedCwd ||
       typeof thread.sessionId !== "string" || thread.sessionId.length === 0 || !Array.isArray(thread.turns)) {
-    fail("E_CODEX_CYCLE_BASELINE_MISMATCH", "Codex cycle baselineのthread identityが一致しません");
+    fail("E_CODEX_CYCLE_THREAD_MISMATCH", "Codex cycle thread identityが一致しません");
   }
-  const matches = thread.turns.filter((turn) => turn?.id === expectedTurnId);
-  if (matches.length !== 1 || matches[0].status !== "inProgress" || !Array.isArray(matches[0].items)) {
-    fail("E_CODEX_CYCLE_BASELINE_MISMATCH", "Codex cycle baselineのactive turnが一致しません");
+  for (const turn of thread.turns) validateTurn(turn, "E_CODEX_CYCLE_THREAD_INVALID");
+  if (new Set(thread.turns.map((turn) => turn.id)).size !== thread.turns.length) {
+    fail("E_CODEX_CYCLE_THREAD_INVALID", "Codex cycle threadに重複turnがあります");
   }
-  const agentItems = matches[0].items.filter((item) => item?.type === "agentMessage");
-  if (agentItems.some((item) => typeof item.id !== "string" || item.id.length === 0) ||
-      new Set(agentItems.map((item) => item.id)).size !== agentItems.length) {
-    fail("E_CODEX_CYCLE_BASELINE_INVALID", "Codex cycle baseline itemが不正です");
+  if (thread.turns.some((turn) => turn.status === "inProgress")) {
+    fail("E_CODEX_CYCLE_TURN_ACTIVE", "前のCodex cycle turnがまだ完了していません");
   }
   return {
     thread_id: expectedThreadId,
     session_id: thread.sessionId,
-    turn_id: expectedTurnId,
-    after_item_id: agentItems.at(-1)?.id ?? null,
     cwd: expectedCwd,
   };
 }
 
-export function buildCodexTurnSteerParams({ operation, value, handle } = {}) {
-  validateCycleHandle(handle);
+export function buildCodexCycleTurnStartParams({ operation, value, context } = {}) {
+  validateCycleThreadContext(context);
   if (!isPlainObject(operation) || operation.provider !== "codex" ||
       typeof operation.input_digest !== "string" || !Number.isSafeInteger(operation.model_visible_bytes)) {
     fail("E_CODEX_CYCLE_REQUEST_INVALID", "Codex cycle operationが不正です");
@@ -119,18 +114,20 @@ export function buildCodexTurnSteerParams({ operation, value, handle } = {}) {
     modelVisibleBytes: operation.model_visible_bytes,
   });
   return {
-    threadId: handle.thread_id,
+    threadId: context.thread_id,
     input: [{ type: "text", text: value }],
-    expectedTurnId: handle.turn_id,
+    cwd: context.cwd,
+    approvalPolicy: "never",
+    sandboxPolicy: { type: "readOnly", networkAccess: false },
   };
 }
 
-export function parseCodexTurnSteerResult({ result, expectedTurnId } = {}) {
-  validateTurnId(expectedTurnId, "E_CODEX_CYCLE_ACK_INVALID");
-  if (!isPlainObject(result) || !hasExactKeys(result, ["turnId"]) || result.turnId !== expectedTurnId) {
-    fail("E_CODEX_CYCLE_ACK_INVALID", "Codex turn/steer ACKがactive turnと一致しません");
-  }
-  return { turn_id: result.turnId, outcome: "acknowledged" };
+export function parseCodexCycleTurnStartResult({ result, context } = {}) {
+  validateCycleThreadContext(context);
+  const turn = result?.turn;
+  validateTurn(turn, "E_CODEX_CYCLE_ACK_INVALID");
+  if (turn.status !== "inProgress") fail("E_CODEX_CYCLE_ACK_INVALID", "Codex cycle turnがinProgressで開始されませんでした");
+  return { thread_id: context.thread_id, session_id: context.session_id, turn_id: turn.id, cwd: context.cwd };
 }
 
 export function buildCodexTurnInterruptParams({ threadId, turnId } = {}) {
@@ -322,14 +319,12 @@ function validateInterruptReceipt(value, operation) {
   validateObservedAt(value.observed_at);
 }
 
-function validateCycleHandle(value) {
-  if (!isPlainObject(value) || !hasExactKeys(value, ["after_item_id", "cwd", "session_id", "thread_id", "turn_id"]) ||
-      typeof value.session_id !== "string" || value.session_id.length === 0 || typeof value.cwd !== "string" || value.cwd.length === 0 ||
-      (value.after_item_id !== null && (typeof value.after_item_id !== "string" || value.after_item_id.length === 0))) {
-    fail("E_CODEX_CYCLE_REQUEST_INVALID", "Codex cycle handleが不正です");
+function validateCycleThreadContext(value) {
+  if (!isPlainObject(value) || !hasExactKeys(value, ["cwd", "session_id", "thread_id"]) ||
+      typeof value.session_id !== "string" || value.session_id.length === 0 || typeof value.cwd !== "string" || value.cwd.length === 0) {
+    fail("E_CODEX_CYCLE_REQUEST_INVALID", "Codex cycle thread contextが不正です");
   }
   validateThreadId(value.thread_id, "E_CODEX_CYCLE_REQUEST_INVALID");
-  validateTurnId(value.turn_id, "E_CODEX_CYCLE_REQUEST_INVALID");
 }
 
 function validateTurn(value, code) {
