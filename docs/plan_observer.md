@@ -327,6 +327,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       Control revision 25でacceptした。実装はcommit `9a2b899`、受入証拠は
       [ADR 0035](adr/0035-generation-state-store-acceptance.md)へ独立固定した。
     - [ ] cycle cursor commitとgeneration completionを同一target transactionへ接続する。
+      - Supervisorをinput構築とmodel処理へ分離し、予約成功後だけmodel callbackを呼ぶ。
+      - pending cycle v2へinput digest／bytesを保存し、cursor／generation／cleanupを同じlockで
+        crash-recoverableに適用する契約を[ADR 0036](adr/0036-cycle-generation-exact-once-transaction.md)へ固定した。
     - [ ] provider別host terminal確認と次generation activationを接続する。
 
 - [ ] **P4-3 過剰指摘抑制を実装する。**
