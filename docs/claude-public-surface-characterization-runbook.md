@@ -47,8 +47,9 @@ model request、hook trustを開始しない。結果が`ready_for_h`でなけ�
 ## 3. 実行順
 
 1. preflight receipt、Observer package digest、Claude固定version、project fingerprintを確認する。
-2. owner-only temporary directoryへ、characterization harnessが生成したisolated settingsと
-   sanitized receipt pathだけを配置する。既存host configは変更しない。
+2. owner-only temporary directoryへ、characterization harnessが生成したisolated settings、
+   canonical capture path、raw-free hook diagnostic receipt pathだけを配置する。既存host configは
+   変更しない。
 
    ```sh
    observer-claude-characterization prepare \
@@ -61,7 +62,8 @@ model request、hook trustを開始しない。結果が`ready_for_h`でなけ�
 5. 公開非対話`send`／`reply` surfaceがreadinessで確認できた場合だけ、同じjobへ一requestを送り、
    exact ACKを記録する。存在しなければ`reply_surface=unsupported`とし、推測command、
    `claude -p --resume`、private protocol、TUI自動操作へ進まない。
-6. matching Stop hookのsession digest、固定fixtureのcanonical result digest、hook eventを照合する。
+6. hook diagnostic receiptでhook invocation、Stop payload、cwd、session digest、result captureを
+   独立に照合する。canonical resultが不正でもhook未発火へ丸めない。
 7. 公開terminal result readがある場合だけ同じjobから再読し、Stop captureとexact一致を確認する。
    無ければ`terminal_exact_result=unsupported`とし、raw `logs`やprivate stateへfallbackしない。
 8. 同じjobを公開observeし、非terminalなら一回だけ正規stopする。terminalを確認するまで
@@ -71,11 +73,13 @@ model request、hook trustを開始しない。結果が`ready_for_h`でなけ�
 
 ## 4. 判定
 
-sanitized H receiptは次の五項目を独立に記録する。
+sanitized H receiptは次の七項目を独立に記録する。
 
 - `reply_surface`
+- `hook_invocation`
 - `job_session_correlation`
 - `stop_capture`
+- `result_capture`
 - `terminal_exact_result`
 - `cleanup`
 

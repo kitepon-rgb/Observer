@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { promisify, TextDecoder } from "node:util";
 
 import {
-  captureClaudeCharacterizationStop,
+  captureClaudeCharacterizationStopInput,
   cleanupClaudeCharacterization,
   inspectClaudeCharacterizationReadiness,
   prepareClaudeCharacterization,
@@ -19,8 +19,8 @@ const STDIN_LIMIT = 1024 * 1024;
 const USAGE = [
   "usage: observer-claude-characterization readiness --claude-command <absolute-path>",
   "       observer-claude-characterization prepare --work-root <absolute-path> --expected-cwd <absolute-path> [--campaign-id <sha256>]",
-  "       observer-claude-characterization hook --campaign-id <sha256> --capture-path <absolute-path> --expected-cwd <absolute-path>",
-  "       observer-claude-characterization verify --campaign-id <sha256> --capture-path <absolute-path>",
+  "       observer-claude-characterization hook --campaign-id <sha256> --capture-path <absolute-path> --hook-receipt-path <absolute-path> --expected-cwd <absolute-path>",
+  "       observer-claude-characterization verify --campaign-id <sha256> --capture-path <absolute-path> --hook-receipt-path <absolute-path>",
   "       observer-claude-characterization cleanup --work-root <absolute-path> --campaign-id <sha256>",
 ].join("\n");
 
@@ -42,33 +42,52 @@ function flags(args, allowed, required) {
   return result;
 }
 
-async function readStdinJson() {
+async function readStdinBytes({ classifyLimit = false } = {}) {
   const chunks = [];
   let length = 0;
+  let exceeded = false;
   for await (const chunk of process.stdin) {
     const buffer = Buffer.from(chunk);
     length += buffer.length;
     if (length > STDIN_LIMIT) {
+      if (classifyLimit) {
+        exceeded = true;
+        chunks.length = 0;
+        continue;
+      }
       const error = new Error("stdinが上限を超えました");
       error.code = "E_STDIN_LIMIT";
       throw error;
     }
-    chunks.push(buffer);
+    if (!exceeded) chunks.push(buffer);
   }
+  return {
+    bytes: exceeded ? null : Buffer.concat(chunks),
+    failureCode: exceeded ? "E_CLAUDE_CHARACTERIZATION_STOP_STDIN_LIMIT" : null,
+  };
+}
+
+async function readStdinText() {
+  const { bytes } = await readStdinBytes();
   let source;
   try {
-    source = new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks));
+    source = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
   } catch {
     const error = new Error("stdinがUTF-8ではありません");
     error.code = "E_STDIN_INVALID";
     throw error;
   }
+  return source;
+}
+
+async function readStdinJson() {
   try {
-    return JSON.parse(source);
-  } catch {
-    const error = new Error("stdinがJSONではありません");
-    error.code = "E_STDIN_INVALID";
-    throw error;
+    return JSON.parse(await readStdinText());
+  } catch (error) {
+    if (error?.code === "E_STDIN_LIMIT" || error?.code === "E_STDIN_INVALID") throw error;
+    const invalid = new Error("stdinがJSONではありません");
+    invalid.code = "E_STDIN_INVALID";
+    throw invalid;
   }
 }
 
@@ -109,28 +128,32 @@ async function main() {
   if (operation === "hook") {
     const options = flags(
       args,
-      new Set(["--campaign-id", "--capture-path", "--expected-cwd"]),
-      ["--campaign-id", "--capture-path", "--expected-cwd"],
+      new Set(["--campaign-id", "--capture-path", "--hook-receipt-path", "--expected-cwd"]),
+      ["--campaign-id", "--capture-path", "--hook-receipt-path", "--expected-cwd"],
     );
-    await captureClaudeCharacterizationStop({
+    const hookInput = await readStdinBytes({ classifyLimit: true });
+    await captureClaudeCharacterizationStopInput({
       campaignId: options["--campaign-id"],
       capturePath: options["--capture-path"],
+      hookReceiptPath: options["--hook-receipt-path"],
       expectedCwd: options["--expected-cwd"],
-      payload: await readStdinJson(),
+      stdin: hookInput.bytes,
+      stdinFailureCode: hookInput.failureCode,
     });
     return { output: null };
   }
   if (operation === "verify") {
     const options = flags(
       args,
-      new Set(["--campaign-id", "--capture-path"]),
-      ["--campaign-id", "--capture-path"],
+      new Set(["--campaign-id", "--capture-path", "--hook-receipt-path"]),
+      ["--campaign-id", "--capture-path", "--hook-receipt-path"],
     );
     const input = await readStdinJson();
     return {
       output: await verifyClaudeCharacterization({
         campaignId: options["--campaign-id"],
         capturePath: options["--capture-path"],
+        hookReceiptPath: options["--hook-receipt-path"],
         agentsStdout: JSON.stringify(input.agents),
         expected: input.expected,
         replySurface: input.reply_surface,
