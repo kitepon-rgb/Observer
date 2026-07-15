@@ -243,12 +243,14 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               crash matrixをfocused fixtureで固定する。
             - [ ] Claude／Codexのexact operation result readをprovider固有journalへ実装し、handle欠損を
               別operationへの再送で隠さない。
-            - [ ] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
+            - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
               - 既存`publishMessage`のduplicate拒否は維持し、model operation専用`publishOperationMessage`と
                 raw-freeな`publish-receipts/`を追加する。
               - receiptを`prepared`でrecord-first作成し、inbox／processing／consumer receiptからexact digestを回収する。
               - model journalの`applied`後だけpublish receiptをcleanupし、それまでは対応するconsumer receiptをretention対象外にする。
+              - commit `0e7a005`。focused 15/15、`npm run check`、scoped diff-checkを通し、
+                [ADR 0052](adr/0052-mailbox-operation-publish-replay-acceptance.md)で受け入れた。
         - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
