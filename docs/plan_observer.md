@@ -515,9 +515,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 - [ ] **P4-3 過剰指摘抑制を実装する。**
   - 成果物: materiality、evidence、novelty、actionability、timing gateとdedupe / cooldown。
   - 完了条件: 好み、一般論、証拠不足、対処中、同一指摘のfixtureで手紙を出さない。
-  - [ ] **P4-3a runtime deterministic gate:** evidence ref一意性／適格性、record-first current decision、
+  - [x] **P4-3a runtime deterministic gate:** evidence ref一意性／適格性、record-first current decision、
     60分cooldown、severity escalation、bounded historyをhost-neutral coreへ実装する
-    （[ADR 0087](adr/0087-advisory-semantic-decision-transaction.md)）。
+    （[ADR 0087](adr/0087-advisory-semantic-decision-transaction.md)、
+    [ADR 0088](adr/0088-advisory-semantic-decision-core-acceptance.md)）。
   - [ ] **P4-3b cycle application integration:** acceptedだけをMailboxへexact publishし、suppressed専用result、
     crash replay、finalization／retentionを既存model operation順序へ接続する。
   - [ ] **P4-3c semantic behavioral eval:** materiality、actionability、semantic timing、親が対処中かを
