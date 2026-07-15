@@ -14,7 +14,7 @@ import {
 } from "../src/mailbox-consumer.mjs";
 import { ensureMailbox, operationMessageId, publishMessage } from "../src/mailbox-store.mjs";
 import { sealMessage } from "../src/message-schema.mjs";
-import { acquirePrivateLock, atomicCreatePrivateFile } from "../src/private-state.mjs";
+import { acquirePrivateLock, atomicCreatePrivateFile, removePrivateFile } from "../src/private-state.mjs";
 
 const NOW = new Date("2099-07-14T12:00:00Z");
 const TARGET_ID = "p_" + "b".repeat(64);
@@ -162,4 +162,89 @@ test("prepared publish receiptが参照するconsumer receiptはretention cleanu
   const removed = await cleanupReceipts({ stateRoot: root, targetId: TARGET_ID, now: new Date(NOW.getTime() + 10_000), maxCount: 0, maxAgeMs: 0 });
   assert.deepEqual(removed, []);
   assert.deepEqual(await readdir(paths.receipts), [`${messageId}.json`]);
+});
+
+test("default retentionはold completedだけを削除し保護集合を維持する", async () => {
+  const root = await stateRoot();
+  const cleanupAt = new Date(NOW.getTime() + 31 * 24 * 60 * 60 * 1000);
+  for (const [messageId, finishedAt] of [
+    ["obs-default-old", NOW],
+    ["obs-default-recent", new Date(cleanupAt.getTime() - 24 * 60 * 60 * 1000)],
+    [operationMessageId(OPERATION_ID), NOW],
+  ]) {
+    await publishMessage({ stateRoot: root, message: message(messageId), now: NOW });
+    const claimed = await claimNextMessage({
+      stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD,
+      hookEventId: `stop-${messageId}`, now: NOW,
+    });
+    await finishClaim({ claim: claimed.claim, stateRoot: root, result: "emitted_unacked", now: finishedAt });
+  }
+  await publishMessage({ stateRoot: root, message: message("obs-default-claimed"), now: NOW });
+  await claimNextMessage({
+    stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD,
+    hookEventId: "stop-default-claimed", now: NOW,
+  });
+  const paths = await ensureMailbox(root, TARGET_ID);
+  const protectedMessageId = operationMessageId(OPERATION_ID);
+  const protectedReceipt = JSON.parse(await readFile(join(paths.receipts, `${protectedMessageId}.json`), "utf8"));
+  await atomicCreatePrivateFile(join(paths["publish-receipts"], `${protectedMessageId}.json`), `${JSON.stringify({
+    schema: "observer.mailbox_publish_receipt.v1",
+    operation_id: OPERATION_ID,
+    message_id: protectedMessageId,
+    target_id: TARGET_ID,
+    content_digest: protectedReceipt.content_digest,
+    status: "prepared",
+    created_at: NOW.toISOString(),
+    updated_at: NOW.toISOString(),
+  })}\n`);
+
+  assert.deepEqual(await cleanupReceipts({ stateRoot: root, targetId: TARGET_ID, now: cleanupAt }), [
+    "obs-default-old.json",
+  ]);
+  assert.deepEqual((await readdir(paths.receipts)).sort(), [
+    `${protectedMessageId}.json`,
+    "obs-default-claimed.json",
+    "obs-default-recent.json",
+  ].sort());
+});
+
+test("cleanup途中失敗は固定errorを返し再実行で同じ最終集合へ収束する", async () => {
+  const root = await stateRoot();
+  for (const messageId of ["obs-retry-a", "obs-retry-b"]) {
+    await publishMessage({ stateRoot: root, message: message(messageId), now: NOW });
+    const claimed = await claimNextMessage({
+      stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD,
+      hookEventId: `stop-${messageId}`, now: NOW,
+    });
+    await finishClaim({ claim: claimed.claim, stateRoot: root, result: "delivery_unknown", now: NOW });
+  }
+  await publishMessage({ stateRoot: root, message: message("obs-retry-claimed"), now: NOW });
+  await claimNextMessage({
+    stateRoot: root, targetId: TARGET_ID, threadSha256: CURRENT_THREAD,
+    hookEventId: "stop-retry-claimed", now: NOW,
+  });
+  let removals = 0;
+  await assert.rejects(cleanupReceipts({
+    stateRoot: root,
+    targetId: TARGET_ID,
+    now: new Date(NOW.getTime() + 31 * 24 * 60 * 60 * 1000),
+  }, {
+    removePrivateFile: async (path) => {
+      removals += 1;
+      if (removals === 2) throw new Error("private path must not escape");
+      return removePrivateFile(path);
+    },
+  }), { code: "E_RECEIPT_CLEANUP_FAILED", message: "receipt cleanupが失敗しました" });
+
+  const paths = await ensureMailbox(root, TARGET_ID);
+  assert.deepEqual((await readdir(paths.receipts)).sort(), [
+    "obs-retry-b.json",
+    "obs-retry-claimed.json",
+  ]);
+  assert.deepEqual(await cleanupReceipts({
+    stateRoot: root,
+    targetId: TARGET_ID,
+    now: new Date(NOW.getTime() + 31 * 24 * 60 * 60 * 1000),
+  }), ["obs-retry-b.json"]);
+  assert.deepEqual(await readdir(paths.receipts), ["obs-retry-claimed.json"]);
 });

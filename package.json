@@ -20,6 +20,7 @@
   },
   "scripts": {
     "test": "node --test test/*.test.mjs",
+    "test:performance": "node test/performance-acceptance.mjs",
     "test:throughline-integration": "node --test test/throughline-black-box.integration.mjs",
     "syntax": "node --check bin/*.mjs && node --check src/*.mjs && node --check test/*.mjs",
     "check": "npm run syntax && git diff --check"

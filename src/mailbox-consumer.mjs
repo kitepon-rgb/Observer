@@ -281,10 +281,12 @@ export async function cleanupReceipts({
   now = new Date(),
   maxCount = DEFAULT_RECEIPT_MAX_COUNT,
   maxAgeMs = DEFAULT_RECEIPT_MAX_AGE_MS,
-}) {
+}, dependencies = {}) {
   if (!Number.isInteger(maxCount) || maxCount < 0 || !Number.isFinite(maxAgeMs) || maxAgeMs < 0) {
     fail("E_RETENTION_INPUT_INVALID", "receipt retention指定が不正です");
   }
+  const removeReceipt = dependencies.removePrivateFile ?? removePrivateFile;
+  if (typeof removeReceipt !== "function") fail("E_RETENTION_INPUT_INVALID", "receipt cleanup依存が不正です");
   const paths = await ensureMailbox(stateRoot, targetId);
   const release = await acquirePrivateLock(join(paths.root, "consumer.lock"));
   try {
@@ -310,7 +312,13 @@ export async function cleanupReceipts({
     const retained = completed.filter((entry) => !expiredNames.has(entry.fileName));
     const overCount = retained.slice(0, Math.max(0, retained.length - maxCount));
     const removed = [...expired, ...overCount];
-    for (const entry of removed) await removePrivateFile(entry.path);
+    for (const entry of removed) {
+      try {
+        await removeReceipt(entry.path);
+      } catch {
+        fail("E_RECEIPT_CLEANUP_FAILED", "receipt cleanupが失敗しました");
+      }
+    }
     return removed.map((entry) => entry.fileName);
   } finally {
     await release();
