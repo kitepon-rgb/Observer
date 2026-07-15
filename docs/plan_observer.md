@@ -22,6 +22,13 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 - Throughline側は自身の`docs/14_observer_completed_turn_feed_plan.md`、独立Control、独立gate、独立commitで進める。
 - Observerは公開`observer-read`／`observer-wait` CLIだけを利用し、ThroughlineのDB／WAL／libraryへ依存しない。
 
+## Control wave
+
+- foundation wave `observer-independent-foundation-20260714`はbounded worker budgetを使い切ったため、
+  [ADR 0016](adr/0016-control-wave-boundary.md)の受入表でarchiveし、Codex host adapter以降を
+  `observer-codex-host-runtime-20260715`へ継続する。これはObserver全体またはPhase 2の完了宣言ではない。
+- Control finalizationのdigest証拠には可変な本planを使わず、immutable ADRを使う。
+
 ---
 
 ## Phase 0: 調査と設計裁定
