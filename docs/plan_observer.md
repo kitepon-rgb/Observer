@@ -579,9 +579,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     （[ADR 0105](adr/0105-production-parent-caller-gap-and-order.md)）。実装 `286a6db`、focused
     9/9、related 77/77、`npm run check` greenを
     [ADR 0106](adr/0106-codex-parent-caller-core-acceptance.md)で受け入れた。
-  - [ ] **P5-1b2 Codex parent entry／dotagents配布 非H:** 現在Codex親からexact contextを注入し、
+  - [x] **P5-1b2 Codex parent entry／dotagents配布 非H:** 現在Codex親からexact contextを注入し、
     isolated HOMEでinstall／verify／rollbackする。live providerは起動しない
-    （[ADR 0107](adr/0107-codex-parent-entry-and-distribution-contract.md)）。
+    （[ADR 0107](adr/0107-codex-parent-entry-and-distribution-contract.md)）。Observer
+    `659924c`／`0690ee0`、dotagents `21bc352`、focused 12/12、related 25/25、isolated
+    install／verify／rollback、`npm run check`／`make lint` greenを
+    [ADR 0108](adr/0108-codex-parent-entry-and-distribution-acceptance.md)で受け入れた。
   - [ ] **P5-1b3 Claude public surface characterization H:** 公開非対話reply ACK、exact result read、
     job／session／Stop相関の実在を一回確認する。private protocolやheadless resumeへfallbackしない。
   - [ ] **P5-1b4 Claude caller core 非H:** P5-1b3で実証した公開面だけをissue／recover／cleanup、
