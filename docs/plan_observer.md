@@ -328,7 +328,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                 （[ADR 0074](adr/0074-parent-rebind-recovery-context-correction.md)）。
                 core correction `d7ebdbb`、provider binding `3a737ad`。focused 6/6、関連66/66、
                 `npm run check`、`git diff --cached --check`がgreen。
-            - [ ] Supervisor processへ接続し、new epoch activation後にprepared cycleへ戻る。
+            - [ ] Supervisor processへ接続し、new epoch activation後にprepared cycleへ戻る
+              （[ADR 0076](adr/0076-supervisor-parent-rebind-integration.md)）。
             - [ ] 実thread／host switchとcrash recoveryをPhase O2 H gateで受け入れる。
           - [ ] watch／provider faultをterminal確認済みのfault transition／receiptへ記録し、
             unknown outcomeを自動restart、takeover、別handle探索で隠さない。
