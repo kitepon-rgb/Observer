@@ -583,6 +583,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     - [x] actual HOME apply、hook trust、live host、credential、publish／pushは未実施のH／後続gateへ残した。
     - 実装 `630c5ff`／`b45c07a`（Observer）、`894799b`（dotagents）を
       [ADR 0100](adr/0100-clean-install-verify-rollback-acceptance.md)で受け入れた。
+  - [ ] **P5-2b performance／retention cleanup契約を閉じる**
+    （[ADR 0101](adr/0101-performance-retention-cleanup-contract.md)）。
+    - [ ] hook process、空Mailbox core、bounded wait overheadの分布と閾値を固定fixtureで計測する。
+    - [ ] default retentionが完了receiptだけを削除し、claimed、prepared publish、active cooldownを保護する。
+    - [ ] cleanup途中失敗をsanitized errorにし、無関係stateを変えず再実行で同じ最終状態へ収束させる。
   - [x] project-ownedな`.codex-sidecar.yml`を追加し、read-only presetと隔離worktree writer、
     Observer製品面だけのpath allowlist、明示model policyを正規dry-runで検証した。
     - `codex-sidecar diagnostics --project .`: `status=ok`。
