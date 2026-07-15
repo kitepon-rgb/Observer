@@ -65,15 +65,25 @@ async function advanceStop(args) {
     } else return resultFor(provider, targetId, watchId, "stop_authorized", "pending", "terminal_not_observed");
   } else if (provider === "codex") {
     const operation = prepared.action === "issue_once"
-      ? await providers.codex.stopCodexObserver({ stateRoot, request: prepared.stop_request, launchRequest, session }, providerDependencies.codex)
+      ? await providers.codex.stopCodexObserver({
+          stateRoot, request: prepared.stop_request, launchRequest, session, generationId: prepared.from_generation_id,
+        }, providerDependencies.codex)
       : await providers.codex.observeCodexGenerationTerminal({ stateRoot, request: launchRequest, session, generationId: prepared.from_generation_id }, providerDependencies.codex);
     if (prepared.action === "observe_only") {
       if (operation.outcome !== "terminal") {
         return resultFor(provider, targetId, watchId, "stop_authorized", operation.outcome, operation.reason ?? "terminal_not_observed");
       }
-      // Task Aのterminal receiptは公開用のraw-free値であるため、照合済みの
-      // private stop request handleからcore専用receiptをこのcall内だけで組み立てる。
-      stopped = stoppedReceipt(launchRequest, prepared.stop_request.handle);
+      const exact = await providers.codex.stopCodexObserver({
+        stateRoot,
+        request: prepared.stop_request,
+        launchRequest,
+        session,
+        generationId: prepared.from_generation_id,
+      }, providerDependencies.codex);
+      if (exact.terminal_receipt === null) {
+        return resultFor(provider, targetId, watchId, "stop_authorized", "unknown", "terminal_receipt_unavailable");
+      }
+      stopped = exact.terminal_receipt;
     } else {
       stopped = operation.terminal_receipt;
       if (stopped === null) return resultFor(provider, targetId, watchId, "stop_authorized", "progressed", "terminal_not_observed");

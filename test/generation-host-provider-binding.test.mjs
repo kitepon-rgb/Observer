@@ -2,12 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { advanceGenerationHostProviderRollover } from "../src/generation-host-provider-binding.mjs";
+import { validateParentHostReceipt } from "../src/parent-launch.mjs";
 
 const TARGET = `p_${"a".repeat(64)}`;
 const WATCH = "w_11111111-1111-4111-8111-111111111111";
 const REQUEST = { provider: "codex", target_id: TARGET, watch_id: WATCH };
-const HANDLE = { kind: "codex.thread", value: "raw-thread-handle" };
-const receipt = (outcome) => ({ schema: "observer.host_receipt.v1", provider: "codex", target_id: TARGET, watch_id: WATCH, outcome, handle: HANDLE });
+const HANDLE = { kind: "codex.thread", value: "019f671e-87a6-7fb3-a6e7-8c800908206d" };
+const receipt = (outcome) => ({
+  schema: "observer.host_receipt.v1", provider: "codex", target_id: TARGET, watch_id: WATCH, outcome, handle: HANDLE,
+  ...(outcome === "stopped" ? { terminal: {
+    schema: "observer.codex_turn_terminal.v1", thread_id: HANDLE.value,
+    turn_id: "019f671e-87a6-7fb3-a6e7-8c800908206e", status: "completed", observed_at: "2026-07-16T00:00:00.000Z",
+  } } : {}),
+});
 
 function fixture(action, { journal = true, terminal = "pending" } = {}) {
   const calls = [];
@@ -22,7 +29,7 @@ function fixture(action, { journal = true, terminal = "pending" } = {}) {
   };
   const codexRuntime = {
     observeCodexGenerationTerminal: async (input) => { calls.push("observe-terminal"); codexRuntime.observedRequest = input.request; return { outcome: terminal, receipt: terminal === "terminal" ? { schema: "observer.codex_generation_terminal.v1" } : null, reason: terminal === "terminal" ? null : "turn_in_progress" }; },
-    stopCodexObserver: async () => { calls.push("stop"); return { terminal_receipt: null }; },
+    stopCodexObserver: async (input) => { calls.push("stop"); codexRuntime.stopped = input; return { terminal_receipt: terminal === "terminal" ? receipt("stopped") : null }; },
     spawnCodexGenerationObserverThread: async () => calls.push("spawn"),
     recoverCodexGenerationSpawn: async () => ({ outcome: "spawned", reason: null, receipt: receipt("spawned") }),
     activateCodexGenerationObserver: async () => { calls.push("ready-command"); return { ready_receipt: receipt("ready") }; },
@@ -48,13 +55,28 @@ test("stop_authorized再開のpendingはstopを再送せずterminal readだけ�
   assert.equal(options.codexRuntime.observedRequest, REQUEST);
 });
 
-test("Task A terminal成功時はraw-free receiptでなくprivate stop handleからcore receiptを局所再構成する", async () => {
+test("Codex terminal成功時はalready-terminal stop経路のexact receiptだけをcoreへ渡す", async () => {
   const { calls, options } = fixture("observe_terminal", { terminal: "terminal" });
+  options.lifecycle.confirmGenerationHostTerminal = async (input) => {
+    validateParentHostReceipt(input.terminalReceipt, "stopped");
+    calls.push("confirm-terminal");
+    options.lifecycle.confirmed = input;
+  };
   const result = await advanceGenerationHostProviderRollover({ stateRoot: "/state", targetId: TARGET, watchId: WATCH, launchRequest: REQUEST }, options);
-  assert.deepEqual(calls, ["context", "prepare", "observe-terminal", "confirm-terminal"]);
+  assert.deepEqual(calls, ["context", "prepare", "observe-terminal", "stop", "confirm-terminal"]);
+  assert.equal(options.codexRuntime.stopped.generationId, "sha256:old");
   assert.equal(result.phase, "terminal_observed");
   assert.deepEqual(options.lifecycle.confirmed.terminalReceipt, receipt("stopped"));
   assert.equal(JSON.stringify(result).includes("raw-thread-handle"), false);
+});
+
+test("Codex terminal観測後もexact receipt欠損ならunknownを維持する", async () => {
+  const { calls, options } = fixture("observe_terminal", { terminal: "terminal" });
+  options.codexRuntime.stopCodexObserver = async () => { calls.push("stop"); return { terminal_receipt: null }; };
+  const result = await advanceGenerationHostProviderRollover({ stateRoot: "/state", targetId: TARGET, watchId: WATCH, launchRequest: REQUEST }, options);
+  assert.deepEqual(calls, ["context", "prepare", "observe-terminal", "stop"]);
+  assert.equal(result.outcome, "unknown");
+  assert.equal(result.reason, "terminal_receipt_unavailable");
 });
 
 test("authorize_startのspawn発行後は実core phase spawn_authorizedを返す", async () => {
