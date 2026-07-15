@@ -116,10 +116,14 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
       orientation／timeout／fixed-through pagination／projection pendingを実装した。
     - 検証: `node --test test/throughline-client.test.mjs test/watch-cycle.test.mjs` 9/9 PASS。
       commit `f3bfef1`、Control packet `e4cf0531…2cc8`、revision 17。
-  - [ ] `projection_pending` bounded retry、監査後のcursor atomic commit、crash recoveryを実装する（[ADR 0005](adr/0005-supervisor-cycle-commit.md)）。
+  - [x] `projection_pending` bounded retry、監査後のcursor atomic commit、crash recoveryを実装する（[ADR 0005](adr/0005-supervisor-cycle-commit.md)）。
     - [x] `prepared → processed → cursor commit → cleanup`のjournal store、full-state CAS、crash recoveryを実装した。
       検証: `node --test test/cycle-store.test.mjs` 5/5 PASS。commit `845c002`、Control revision 19。
-    - [ ] watch cycle、bounded retry、監査callback、journal recoveryをSupervisorへ配線する。
+    - [x] watch cycle、bounded retry、監査callback、journal recoveryをSupervisorへ配線した。
+      通常changedとprepared recoveryのどちらも最初のfixed-through cursorから範囲を拡張せず、
+      durable callback結果の検証後だけ`processed`保存とcursor commitを行う。
+      検証: `node --test test/watch-cycle.test.mjs test/supervisor-cycle.test.mjs` 12/12 PASS。
+      commit `181a54e`、Control packet `b29a9761…65fe`、revision 26。
   - [x] 一target一active watch transactionと明示stopを実装する（[ADR 0004](adr/0004-active-watch-transaction.md)）。
     - provider child前の`starting`予約、二重起動拒否、watch ID CAS、private handle非公開、
       `active → stopping → stopped`、fault、明示nonce lock回復を実装した。
