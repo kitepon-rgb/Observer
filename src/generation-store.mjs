@@ -62,6 +62,12 @@ export async function readGenerationState({ stateRoot, targetId }) {
   return state === null ? null : publicState(state);
 }
 
+export function generationParentEpochId(provider, parentThreadSha256) {
+  if (!["claude", "codex"].includes(provider)) invalid("generation providerが不正です");
+  requireHex(parentThreadSha256, "parent thread digest");
+  return parentEpoch(provider, parentThreadSha256);
+}
+
 export async function reserveGenerationInput({ stateRoot, targetId, watchId, cycleId, inputDigest, modelVisibleBytes }, dependencies = {}) {
   validateTargetId(targetId); validateWatchId(watchId); validateCycleId(cycleId); requireDigest(inputDigest, "input digest"); validateInputBytes(modelVisibleBytes);
   const paths = await requirePaths(stateRoot, targetId);
