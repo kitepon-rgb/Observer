@@ -45,10 +45,13 @@ model operationの永続的なpublish証拠にはできない。
    - `published`後・model journalの`applied`前: receiptから冪等成功を返し、二つ目のmessageを作らない。
 7. `prepared` publish receiptが残る間、対応するconsumer receiptをretention cleanupで削除しない。
    inbox／processing本文が無くなった後も、publish済みか未publishかを曖昧にしないためである。
-8. `cleanupOperationPublishReceipt`はmatching publish receiptが`published`で、呼出側がoperation ID、message ID、
-   content digestをexact提示した場合だけ削除する。Supervisorはmodel journalを`applied`へdurable化した後にだけ呼ぶ。
+8. advisory applyの`observer.cycle_result.v1.result_digest`は、published messageの`content_digest`から`sha256:`を除いた
+   exact hexとする。`cleanupOperationPublishReceipt`はmatching publish receiptが`published`で、durable model journalが
+   `applied`、operation／target／message IDとapplied result digestがreceiptのcontent digestへexact一致する場合だけ削除する。
+   Supervisorはmodel journalを`applied`へdurable化した後にだけ呼ぶ。
    cleanup後の再適用禁止はmodel journalの`applied`が所有し、cycle processedへ移管する前にpublish receiptを消さない。
-9. `no_advisory`はMailbox外部効果を持たない。決定的なno-op apply receiptからexact
+9. `no_advisory`はMailbox外部効果を持たない。operation IDとcanonical output digestをdomain separationした
+   決定的なno-op apply receiptからexact
    `observer.cycle_result.v1`を作り、架空のMailbox publish receiptを作らない。
 10. publish receiptはconsumer delivery ackではない。`published`はMailboxへexact messageを一度公開したことだけを示し、
     親への注入成功やdeliveryを表現しない。

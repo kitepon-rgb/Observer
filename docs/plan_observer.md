@@ -234,8 +234,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               identity conflictを実装する。
               - commit `4c3cc03`。exact cycle result、UTC時刻非後退、private path／lock、status限定cleanupまで
                 focused 8/8で固定し、[ADR 0049](adr/0049-model-operation-store-core-acceptance.md)で受け入れた。
+              - [ ] Supervisor統合前の独立反証で見つかったlock残留、completed result locator、planned rollover、
+                processed前cleanupの4件を[ADR 0051](adr/0051-model-operation-recovery-invariant-corrections.md)どおりcorrective実装する。
             - [ ] Supervisorを`issue_once`／`recover_only`／idempotent applyへ分け、`dispatching`からmodel requestを
-              再送せず、strict parse済みcanonical AI outputだけをcycle processedへ移管する。
+              再送せず、strict parse済みcanonical AI outputだけをcycle processedへ移管する
+              （[ADR 0050](adr/0050-supervisor-model-operation-integration-contract.md)）。
             - [ ] prepared／reservation／provider handle／canonical result／apply／processed／cleanup間の
               crash matrixをfocused fixtureで固定する。
             - [ ] Claude／Codexのexact operation result readをprovider固有journalへ実装し、handle欠損を

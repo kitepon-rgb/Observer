@@ -27,8 +27,9 @@ tool logをdurable stateへ保存することもできない。
    prompt、input value、turn本文、raw provider output、raw provider handle、tool logは保存しない。
 3. operation IDは上記identityをdomain separationしたdigestとする。同じcycleでもgenerationまたはinputが違えば
    別operationになり、既存journalとの不一致はconflictとしてfail closedにする。
-4. state machineは`prepared -> reserved -> dispatching -> accepted -> completed -> applied`を基本順序とする。
-   synchronous completionは`dispatching -> completed`を許すが、後退とstep飛ばしは明示した経路以外拒否する。
+4. state machineは`prepared -> reserved -> dispatching -> accepted -> completed -> applied`の順序だけを許す。
+   synchronous completionもprovider固有result locatorを先に耐久化して`accepted`を経由し、後退とstep飛ばしを拒否する
+   （corrective decision: [ADR 0051](0051-model-operation-recovery-invariant-corrections.md)）。
    - `prepared`: journalはdurableだがgeneration reservationは未確認で、provider未送信。
    - `reserved`: matching generation reservationを新規作成または冪等確認済みで、provider未送信。
    - `dispatching`: provider callbackを呼ぶ直前にatomic replace済み。call直前crashも受理後のresponse lossも
