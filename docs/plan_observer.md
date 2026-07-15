@@ -116,7 +116,7 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
       orientation／timeout／fixed-through pagination／projection pendingを実装した。
     - 検証: `node --test test/throughline-client.test.mjs test/watch-cycle.test.mjs` 9/9 PASS。
       commit `f3bfef1`、Control packet `e4cf0531…2cc8`、revision 17。
-  - [ ] `projection_pending` bounded retry、監査後のcursor atomic commit、crash recoveryを実装する。
+  - [ ] `projection_pending` bounded retry、監査後のcursor atomic commit、crash recoveryを実装する（[ADR 0005](adr/0005-supervisor-cycle-commit.md)）。
   - [x] 一target一active watch transactionと明示stopを実装する（[ADR 0004](adr/0004-active-watch-transaction.md)）。
     - provider child前の`starting`予約、二重起動拒否、watch ID CAS、private handle非公開、
       `active → stopping → stopped`、fault、明示nonce lock回復を実装した。
