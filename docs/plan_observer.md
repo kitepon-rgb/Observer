@@ -128,7 +128,7 @@ Codex側の初期未確定事項は解消済み。Claude側の完了証拠、Sto
     - provider child前の`starting`予約、二重起動拒否、watch ID CAS、private handle非公開、
       `active → stopping → stopped`、fault、明示nonce lock回復を実装した。
     - 検証: `node --test test/watch-store.test.mjs` 7/7 PASS。commit `e0a1843`、Control revision 14。
-  - [ ] Codex／Claude親launcherと同provider child lifecycleを実装する。
+  - [ ] Codex／Claude親launcherと同provider child lifecycleを実装する（[ADR 0006](adr/0006-parent-owned-provider-launch.md)）。
 
 - [ ] **P2-5 read-only境界を強制する。**
   - 成果物: project read-only、Observer state / Mailbox write-onlyの実行profileと拒否test。
