@@ -30,8 +30,10 @@ owner-only state境界を失う。
 
 2. 利用者が指定する必須入力はproject pathだけとする。start／stopを実行する現在親は、argvやambient envではなく、
    exact `observer.parent_watch_context.v1`として`parent_provider`、
-   canonical Observer `runtime_root`、対応intentの
-   authorizationをcommand handlerへ注入する。context欠損、provider不一致、相対runtimeはstate変更前に拒否する。
+   canonical Observer `runtime_root`、対応intentのauthorization、statusで観測した
+   `expected_previous_watch_id`をcommand handlerへ注入する。first startとstopではnull、
+   terminal watchの再startだけはexact previous IDを要求する。context欠損、provider不一致、
+   相対runtimeはstate変更前に拒否する。
 3. host actionはprovider別adapterとしてhandlerへ注入する。startは`spawn` receiptを親transactionへ耐久化してから
    `ready`を観測し、stopはprivate parent stop requestをadapter内だけへ渡す。adapterはhandleを公開resultへ返さない。
    adapter不在または未実証は、target登録／watch予約／stopping遷移より前に`provider_unavailable`を返す。

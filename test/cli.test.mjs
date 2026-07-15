@@ -10,6 +10,7 @@ import {
   formatObserverCliError,
   parseObserverArguments,
 } from "../src/observer-cli.mjs";
+import { defaultStateRoot } from "../src/private-state.mjs";
 
 const CLI = new URL("../bin/observer.mjs", import.meta.url).pathname;
 
@@ -28,6 +29,57 @@ test("target register CLIは同じprojectを同じtargetへ登録する", async 
   assert.equal(created.status, "created");
   assert.equal(existing.status, "existing");
   assert.equal(created.target_id, existing.target_id);
+
+  const status = spawnSync(process.execPath, [CLI, "watch", "status", project, "--state-root", state], { encoding: "utf8" });
+  assert.equal(status.status, 0, status.stderr);
+  assert.deepEqual(JSON.parse(status.stdout), {
+    schema: "observer.watch_command_result.v1",
+    action: "status",
+    status: "not_started",
+    provider: null,
+    watch: null,
+  });
+
+  const start = spawnSync(process.execPath, [CLI, "watch", project, "--state-root", state], { encoding: "utf8" });
+  assert.equal(start.status, 1);
+  assert.equal(JSON.parse(start.stderr).code, "E_PARENT_WATCH_CONTEXT_REQUIRED");
+});
+
+test("watch CLIはproduct aliasとstart/status/stopをabsolute pathへexact parseする", () => {
+  assert.deepEqual(parseObserverArguments(["watch", "/project", "--state-root", "/state"]), {
+    kind: "watch_start", projectRoot: "/project", stateRoot: "/state",
+  });
+  assert.deepEqual(parseObserverArguments(["watch", "start", "/project"]), {
+    kind: "watch_start", projectRoot: "/project", stateRoot: defaultStateRoot(),
+  });
+  assert.deepEqual(parseObserverArguments(["watch", "status", "/project", "--state-root", "/state"]), {
+    kind: "watch_status", projectRoot: "/project", stateRoot: "/state",
+  });
+  assert.deepEqual(parseObserverArguments(["watch", "stop", "/project", "--state-root", "/state"]), {
+    kind: "watch_stop", projectRoot: "/project", stateRoot: "/state",
+  });
+  assert.throws(() => parseObserverArguments(["watch", "relative"]), { code: "E_PROJECT_PATH_NOT_ABSOLUTE" });
+  assert.throws(() => parseObserverArguments(["watch", "stop", "/project", "--unknown", "x"]), { code: "E_USAGE" });
+});
+
+test("watch dispatcherは親contextをstart/stopだけへ渡し、provider_unavailableを非0にする", async () => {
+  const parentContext = { marker: "parent" };
+  const calls = [];
+  const result = {
+    schema: "observer.watch_command_result.v1",
+    action: "start",
+    status: "provider_unavailable",
+    provider: "codex",
+    watch: null,
+  };
+  const outcome = await executeObserverCommand([
+    "watch", "/project", "--state-root", "/state",
+  ], { parentContext }, {
+    startObserverWatch: async (input) => { calls.push(input); return result; },
+  });
+  assert.deepEqual(calls, [{ stateRoot: "/state", projectRoot: "/project", parentContext }]);
+  assert.equal(outcome.exitCode, 1);
+  assert.equal(outcome.result.status, "provider_unavailable");
 });
 
 test("supervisor run CLIはabsolute runtimeとwatch identityをexact parseする", () => {

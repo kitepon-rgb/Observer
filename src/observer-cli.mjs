@@ -4,6 +4,12 @@ import { ObserverError, fail } from "./observer-error.mjs";
 import { defaultStateRoot } from "./private-state.mjs";
 import { readRegisteredProjectTarget, registerProjectTarget } from "./project-target.mjs";
 import { runCodexSupervisorProcess } from "./supervisor-codex-process.mjs";
+import {
+  readObserverWatchStatus,
+  startObserverWatch,
+  stopObserverWatch,
+  validateWatchCommandResult,
+} from "./watch-lifecycle.mjs";
 
 const WATCH = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const PROCESS_STATUSES = new Set([
@@ -12,20 +18,39 @@ const PROCESS_STATUSES = new Set([
 
 export function observerUsage() {
   return [
-    "usage: observer target register <absolute-project-root> [--state-root <absolute-path>]",
+    "usage: observer watch <absolute-project-root> [--state-root <absolute-path>]",
+    "       observer watch start <absolute-project-root> [--state-root <absolute-path>]",
+    "       observer watch status <absolute-project-root> [--state-root <absolute-path>]",
+    "       observer watch stop <absolute-project-root> [--state-root <absolute-path>]",
+    "       observer target register <absolute-project-root> [--state-root <absolute-path>]",
     "       observer supervisor run <absolute-project-root> --watch-id <id> --runtime-root <absolute-path> --throughline-command <absolute-path> --codex-command <absolute-path> [--state-root <absolute-path>] [--timeout-seconds <1..3600>] [--poll-interval-ms <100..60000>] [--plan-ref <file:relative-path>]...",
   ].join("\n");
 }
 
 export function parseObserverArguments(argv) {
   if (!Array.isArray(argv)) fail("E_USAGE", observerUsage());
+  if (argv[0] === "watch") return parseWatch(argv);
   if (argv[0] === "target" && argv[1] === "register") return parseTargetRegister(argv);
   if (argv[0] === "supervisor" && argv[1] === "run") return parseSupervisorRun(argv);
   fail("E_USAGE", observerUsage());
 }
 
-export async function executeObserverCommand(argv, { signal } = {}, dependencies = {}) {
+export async function executeObserverCommand(argv, { signal, parentContext } = {}, dependencies = {}) {
   const command = parseObserverArguments(argv);
+  if (command.kind.startsWith("watch_")) {
+    const handlers = {
+      watch_start: dependencies.startObserverWatch ?? startObserverWatch,
+      watch_status: dependencies.readObserverWatchStatus ?? readObserverWatchStatus,
+      watch_stop: dependencies.stopObserverWatch ?? stopObserverWatch,
+    };
+    const result = await handlers[command.kind]({
+      stateRoot: command.stateRoot,
+      projectRoot: command.projectRoot,
+      parentContext,
+    }, dependencies.watchDependencies ?? dependencies);
+    validateWatchCommandResult(result);
+    return { result, exitCode: result.status === "provider_unavailable" ? 1 : 0 };
+  }
   if (command.kind === "target_register") {
     const target = await (dependencies.registerProjectTarget ?? registerProjectTarget)({
       stateRoot: command.stateRoot,
@@ -65,6 +90,28 @@ export async function executeObserverCommand(argv, { signal } = {}, dependencies
   });
   validateProcessResult(result);
   return { result, exitCode: exitCodeForProcessResult(result.status) };
+}
+
+function parseWatch(argv) {
+  if (argv.length < 2) fail("E_USAGE", observerUsage());
+  const explicitAction = ["start", "status", "stop"].includes(argv[1]);
+  const action = explicitAction ? argv[1] : "start";
+  const projectIndex = explicitAction ? 2 : 1;
+  if (argv.length <= projectIndex) fail("E_USAGE", observerUsage());
+  const projectRoot = argv[projectIndex];
+  let stateRoot;
+  for (let index = projectIndex + 1; index < argv.length; index += 1) {
+    if (argv[index] !== "--state-root" || stateRoot !== undefined || index + 1 >= argv.length) {
+      fail("E_USAGE", observerUsage());
+    }
+    stateRoot = argv[index + 1];
+    index += 1;
+  }
+  validateAbsolute(projectRoot, "E_PROJECT_PATH_NOT_ABSOLUTE", "project rootは絶対パスで指定してください");
+  if (stateRoot !== undefined) {
+    validateAbsolute(stateRoot, "E_PATH_NOT_ABSOLUTE", "state rootは絶対パスで指定してください");
+  }
+  return { kind: `watch_${action}`, projectRoot, stateRoot: stateRoot ?? defaultStateRoot() };
 }
 
 export function formatObserverCliError(error) {
