@@ -129,7 +129,14 @@ export async function runSupervisorProductionStep({
           operation,
           threadRead: (params) => runtime.session.request("thread/read", params),
         }),
-        cleanupProviderOperation: ({ operation }) => (dependencies.cleanupCodexModelOperation ?? cleanupCodexModelOperation)({ stateRoot, operation }),
+        cleanupProviderOperation: ({ operation }) => (dependencies.cleanupCodexModelOperation ?? cleanupCodexModelOperation)({
+          stateRoot,
+          operation,
+          cleanupEvidence: {
+            provider_operation_receipt_digest: operation.provider_operation_receipt_digest,
+            completed_output_digest: operation.completed_output_digest,
+          },
+        }),
         applyCycle: ({ operation, output }) => {
           if (cycleInput === null) fail("E_SUPERVISOR_CYCLE_INPUT_MISSING", "cycle applicationへcanonical inputを再構成できません");
           return (dependencies.applyCycleOutput ?? applyCycleOutput)({ stateRoot, operation, output, cycleInput, now: currentDate(dependencies) });

@@ -183,6 +183,10 @@ test("Codex一stepはcanonical inputを作りprovider／application callbackを�
   assert.deepEqual(calls.map(([name]) => name), ["issue", "recover", "cleanup", "apply", "finalize"]);
   assert.equal(calls[0][1].runtime.thread_id, THREAD_ID);
   assert.equal(calls[0][1].runtime.cwd, "/observer");
+  assert.deepEqual(calls[2][1].cleanupEvidence, {
+    provider_operation_receipt_digest: `sha256:${"e".repeat(64)}`,
+    completed_output_digest: `sha256:${"2".repeat(64)}`,
+  });
   assert.equal(calls[3][1].cycleInput.input_digest, calls[0][1].operation.input_digest);
   assert.equal(released(), 1);
 });
