@@ -350,6 +350,15 @@ review_required
 
 一観測サイクルの手紙は最大一件とする。
 
+semantic gateは二層に分ける。Observer AIはmateriality、actionability、semantic timing、親が具体的に
+対処中かを意味判断し、既定の`no_advisory`または一件のadvisoryを返す。runtimeは文章の単語や長さから
+意味を推測せず、evidence refの適格性、exact replay、dedupe、cooldownだけを決定論的に強制する。
+
+cross-operationの同一dedupe keyは、直近accepted decisionから60分をcooldownとする。同じか低いseverityは
+cooldown中に抑止し、`info -> warning -> review_required`の昇格は許す。cooldown終了後は同じevidenceも
+新cycleで再評価でき、history retentionをsuppression期間へ流用しない。runtimeの機械gateだけを、
+好み、一般論、対処中を判定するsemantic behavioral gateの完了証拠にしない。
+
 ---
 
 ## 8. Observer state保存契約
@@ -370,6 +379,9 @@ v1のsupported platformはmacOSとする。
 - working tree、Throughline、Claude、Codexの管理領域へObserver stateを書かない。
 - test用の明示state rootは許可するが、通常利用者の必須入力はproject絶対pathだけとする。
 - Linux / Windowsはowner、mode、atomicity、installerを実証するまで`unsupported`または`unverified`と表示し、自動fallbackしない。
+- target単位のsemantic current decisionとbounded historyは`watches/<target>/`配下に置く。
+  raw proposal、raw evidence ref、raw dedupe keyを保存せず、current／未finalize／cooldown中のreceiptを
+  retention cleanupで削除しない。
 
 ---
 
