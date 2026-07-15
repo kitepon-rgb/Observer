@@ -281,7 +281,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                   operation時刻とcanonical cycle inputからadvisory messageを決定的に再構成してMailbox exact replay／
                   cleanupへ接続した。focused 4/4、関連40/40、static gateを通し、
                   [ADR 0063](adr/0063-cycle-application-callback-acceptance.md)で受け入れた。
-                - [ ] 一target一process lock、evidence input、Codex provider callbackを束ねる一step callerを実装する。
+                - [x] 一target一process lock、evidence input、Codex provider callback、sanitized production receiptを
+                  束ねる一step callerをcommit `0ca7abe`で実装した。focused 4/4、関連44/44、static gateを通し、
+                  [ADR 0065](adr/0065-supervisor-production-step-acceptance.md)で受け入れた。
+                - [ ] verified Throughline clientとpre-initialized Codex app-server sessionを所有する外部process／CLIへ
+                  一step coreを配線し、timeout／cancel／fault／explicit stop loopを固定する。
               - [ ] Claude background jobへの公開非対話reply ACKと隔離`--settings` Stop hookをlive H gateで実証して接続する。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
