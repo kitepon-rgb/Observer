@@ -10,8 +10,8 @@ import {
   atomicReplacePrivateFile,
   readPrivateJson,
 } from "./private-state.mjs";
-import { validateParentHostReceipt } from "./parent-launch.mjs";
-import { readWatchStatus } from "./watch-store.mjs";
+import { isObserverFaultCode, validateParentHostReceipt } from "./parent-launch.mjs";
+import { readWatchHostBinding, readWatchStatus } from "./watch-store.mjs";
 
 export const GENERATION_STATE_SCHEMA = "observer.generation_state.v1";
 export const GENERATION_MAX_COMPLETED_CYCLES = 8;
@@ -21,10 +21,14 @@ const TARGET_ID_RE = /^p_[a-f0-9]{64}$/;
 const WATCH_ID_RE = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 const HEX_RE = /^[a-f0-9]{64}$/;
-const STATUS = new Set(["active", "rollover_requested", "rebind_required", "stopping", "terminal_confirmed", "starting"]);
+const STATUS = new Set([
+  "active", "rollover_requested", "rebind_required", "stopping", "terminal_confirmed", "starting",
+  "fault_required", "fault_stopping", "fault_terminal_confirmed", "faulted",
+]);
+const FAULT_STATUS = new Set(["fault_required", "fault_stopping", "fault_terminal_confirmed", "faulted"]);
 const STATE_KEYS = Object.freeze([
   "activation_receipt_digest", "completed_cycles", "created_at", "generation_id", "host_handle_digest",
-  "last_completed_cycle", "model_visible_bytes", "parent_epoch_id", "pending_reservation", "previous_terminal_receipt_digest",
+  "fault_code", "last_completed_cycle", "model_visible_bytes", "parent_epoch_id", "pending_reservation", "previous_terminal_receipt_digest",
   "provider", "rollover_reason", "schema", "sequence", "status", "target_id", "terminal_receipt_digest",
   "updated_at", "watch_id",
 ]);
@@ -46,6 +50,7 @@ export async function initializeGeneration({ stateRoot, targetId, watchId, provi
       schema: GENERATION_STATE_SCHEMA, watch_id: watchId, target_id: targetId, provider, parent_epoch_id: parentEpochId,
       generation_id: generationId(watchId, parentEpochId, 1), sequence: 1, status: "active", rollover_reason: null,
       host_handle_digest: digestValue(readyReceipt.handle), activation_receipt_digest: digestValue(readyReceipt), terminal_receipt_digest: null,
+      fault_code: null,
       previous_terminal_receipt_digest: null, completed_cycles: 0, model_visible_bytes: 0, pending_reservation: null,
       last_completed_cycle: null, created_at: timestamp, updated_at: timestamp,
     });
@@ -181,6 +186,115 @@ export async function confirmGenerationTerminal({ stateRoot, targetId, watchId, 
   });
 }
 
+export async function requestGenerationFault({
+  stateRoot,
+  targetId,
+  watchId,
+  expectedGenerationId,
+  faultCode,
+  faultHandle,
+  stopAlreadyAuthorized = false,
+}, dependencies = {}) {
+  validateTargetId(targetId); validateWatchId(watchId); requireDigest(expectedGenerationId, "expected generation ID");
+  if (!isObserverFaultCode(faultCode) || typeof stopAlreadyAuthorized !== "boolean") invalid("generation fault入力が不正です");
+  const paths = await requirePaths(stateRoot, targetId);
+  return withGenerationTransaction(paths, { stateRoot, targetId, watchId }, dependencies, async () => {
+    const state = await requireState(paths.statePath);
+    requireWatch(state, watchId);
+    if (state.generation_id !== expectedGenerationId) fail("E_GENERATION_FAULT_IDENTITY_CHANGED", "fault対象generationが変化しました");
+    validateReceipt({
+      schema: "observer.host_receipt.v1", provider: state.provider, watch_id: state.watch_id,
+      target_id: state.target_id, outcome: "spawned", handle: faultHandle,
+    }, "spawned", state);
+    const handleDigest = digestValue(faultHandle);
+    const binding = await (dependencies.readWatchHostBinding ?? readWatchHostBinding)({ stateRoot, targetId, watchId });
+    if (binding.provider !== state.provider || binding.status !== "active" || digestValue(binding.launch_handle) !== handleDigest) {
+      fail("E_GENERATION_FAULT_HANDLE_MISMATCH", "fault handleがcurrent watch bindingと一致しません");
+    }
+    if (FAULT_STATUS.has(state.status)) {
+      if (state.fault_code !== faultCode || state.host_handle_digest !== handleDigest) {
+        fail("E_GENERATION_FAULT_CONFLICT", "記録済みgeneration faultが一致しません");
+      }
+      if (state.status === "fault_required" && stopAlreadyAuthorized) {
+        const next = transition(state, { status: "fault_stopping" }, dependencies.now);
+        await atomicReplacePrivateFile(paths.statePath, serialize(next));
+        return publicState(next);
+      }
+      return publicState(state);
+    }
+    if (!["active", "rollover_requested", "rebind_required", "stopping", "terminal_confirmed", "starting"].includes(state.status)) {
+      fail("E_GENERATION_FAULT_TRANSITION_INVALID", "現在generationをfaultへ遷移できません");
+    }
+    const alreadyStopping = stopAlreadyAuthorized || ["stopping", "terminal_confirmed"].includes(state.status);
+    const next = transition(state, {
+      status: alreadyStopping ? "fault_stopping" : "fault_required",
+      fault_code: faultCode,
+      host_handle_digest: handleDigest,
+    }, dependencies.now);
+    await atomicReplacePrivateFile(paths.statePath, serialize(next));
+    return publicState(next);
+  });
+}
+
+export async function requestGenerationFaultStop({ stateRoot, targetId, watchId, expectedGenerationId, faultCode }, dependencies = {}) {
+  validateTargetId(targetId); validateWatchId(watchId); requireDigest(expectedGenerationId, "expected generation ID");
+  if (!isObserverFaultCode(faultCode)) invalid("generation fault codeが不正です");
+  const paths = await requirePaths(stateRoot, targetId);
+  return withGenerationTransaction(paths, { stateRoot, targetId, watchId }, dependencies, async () => {
+    const state = await requireState(paths.statePath);
+    requireWatch(state, watchId);
+    requireFaultIdentity(state, expectedGenerationId, faultCode);
+    if (state.status === "fault_stopping") return publicState(state);
+    if (state.status !== "fault_required") fail("E_GENERATION_FAULT_TRANSITION_INVALID", "fault requiredだけをfault stoppingへ進められます");
+    const next = transition(state, { status: "fault_stopping" }, dependencies.now);
+    await atomicReplacePrivateFile(paths.statePath, serialize(next));
+    return publicState(next);
+  });
+}
+
+export async function confirmGenerationFaultTerminal({
+  stateRoot, targetId, watchId, expectedGenerationId, faultCode, terminalReceipt,
+}, dependencies = {}) {
+  validateTargetId(targetId); validateWatchId(watchId); requireDigest(expectedGenerationId, "expected generation ID");
+  if (!isObserverFaultCode(faultCode)) invalid("generation fault codeが不正です");
+  const paths = await requirePaths(stateRoot, targetId);
+  return withGenerationTransaction(paths, { stateRoot, targetId, watchId }, dependencies, async () => {
+    const state = await requireState(paths.statePath);
+    requireWatch(state, watchId); requireFaultIdentity(state, expectedGenerationId, faultCode);
+    validateReceipt(terminalReceipt, "stopped", state);
+    const receiptDigest = digestValue(terminalReceipt);
+    if (["fault_terminal_confirmed", "faulted"].includes(state.status)) {
+      if (state.terminal_receipt_digest !== receiptDigest) fail("E_GENERATION_FAULT_RECEIPT_CONFLICT", "fault terminal receiptが一致しません");
+      return publicState(state);
+    }
+    if (state.status !== "fault_stopping") fail("E_GENERATION_FAULT_TRANSITION_INVALID", "fault stoppingだけをterminal confirmedへ進められます");
+    if (state.host_handle_digest !== digestValue(terminalReceipt.handle)) {
+      fail("E_GENERATION_FAULT_HANDLE_MISMATCH", "fault terminal receipt handleが保存済みgenerationと一致しません");
+    }
+    if (state.terminal_receipt_digest !== null && state.terminal_receipt_digest !== receiptDigest) {
+      fail("E_GENERATION_FAULT_RECEIPT_CONFLICT", "既存terminal receiptとfault receiptが一致しません");
+    }
+    const next = transition(state, { status: "fault_terminal_confirmed", terminal_receipt_digest: receiptDigest }, dependencies.now);
+    await atomicReplacePrivateFile(paths.statePath, serialize(next));
+    return publicState(next);
+  });
+}
+
+export async function completeGenerationFault({ stateRoot, targetId, watchId, expectedGenerationId, faultCode }, dependencies = {}) {
+  validateTargetId(targetId); validateWatchId(watchId); requireDigest(expectedGenerationId, "expected generation ID");
+  if (!isObserverFaultCode(faultCode)) invalid("generation fault codeが不正です");
+  const paths = await requirePaths(stateRoot, targetId);
+  return withGenerationTransaction(paths, { stateRoot, targetId, watchId }, dependencies, async () => {
+    const state = await requireState(paths.statePath);
+    requireWatch(state, watchId); requireFaultIdentity(state, expectedGenerationId, faultCode);
+    if (state.status === "faulted") return publicState(state);
+    if (state.status !== "fault_terminal_confirmed") fail("E_GENERATION_FAULT_TRANSITION_INVALID", "fault terminal confirmedだけをfaultedへ進められます");
+    const next = transition(state, { status: "faulted" }, dependencies.now);
+    await atomicReplacePrivateFile(paths.statePath, serialize(next));
+    return publicState(next);
+  });
+}
+
 export async function beginNextGeneration({ stateRoot, targetId, watchId }, dependencies = {}) {
   validateTargetId(targetId); validateWatchId(watchId);
   const paths = await requirePaths(stateRoot, targetId);
@@ -290,7 +404,14 @@ export function validateGenerationState(state) {
   if (state.completed_cycles === 0 ? state.last_completed_cycle !== null || state.model_visible_bytes !== 0 : state.last_completed_cycle === null) invalid("completed cyclesとbudget receiptが一致しません");
   if (state.last_completed_cycle !== null && state.last_completed_cycle.model_visible_bytes > state.model_visible_bytes) invalid("last completed cycleが累積budgetを超えています");
   if (state.pending_reservation !== null && state.model_visible_bytes + state.pending_reservation.model_visible_bytes > GENERATION_MAX_MODEL_VISIBLE_BYTES) invalid("pending reservationが累積budgetを超えています");
-  if (state.pending_reservation !== null && state.status !== "active") invalid("pending reservationはactiveだけに保存できます");
+  if (state.pending_reservation !== null && state.status !== "active" && !FAULT_STATUS.has(state.status)) invalid("pending reservationはactiveまたはfault証拠だけに保存できます");
+  if (FAULT_STATUS.has(state.status)) {
+    if (!isObserverFaultCode(state.fault_code) || state.host_handle_digest === null) invalid("fault generation identityが不正です");
+    if (state.activation_receipt_digest === null && state.previous_terminal_receipt_digest === null) invalid("fault generationにactivationまたはprevious terminal証拠が必要です");
+    if (["fault_required", "fault_stopping"].includes(state.status)) {
+      if (state.status === "fault_required" && state.terminal_receipt_digest !== null && state.rollover_reason === null) invalid("未停止faultにterminal receiptを保存できません");
+    } else if (state.terminal_receipt_digest === null) invalid("terminal faultにreceiptがありません");
+  } else if (state.fault_code !== null) invalid("通常generationにfault codeを保存できません");
   if (state.status === "active") {
     if (state.rollover_reason !== null || state.host_handle_digest === null || state.activation_receipt_digest === null || state.terminal_receipt_digest !== null) invalid("active generation relationshipが不正です");
   } else if (state.status === "rollover_requested") {
@@ -301,7 +422,7 @@ export function validateGenerationState(state) {
     if (state.rollover_reason === null || state.host_handle_digest === null || state.activation_receipt_digest === null || state.terminal_receipt_digest !== null || state.pending_reservation !== null) invalid("stopping generation relationshipが不正です");
   } else if (state.status === "terminal_confirmed") {
     if (state.rollover_reason === null || state.host_handle_digest === null || state.activation_receipt_digest === null || state.terminal_receipt_digest === null || state.pending_reservation !== null) invalid("terminal generation relationshipが不正です");
-  } else if (state.rollover_reason !== null || state.host_handle_digest !== null || state.activation_receipt_digest !== null || state.terminal_receipt_digest !== null || state.previous_terminal_receipt_digest === null || state.completed_cycles !== 0 || state.model_visible_bytes !== 0 || state.pending_reservation !== null || state.last_completed_cycle !== null) {
+  } else if (!FAULT_STATUS.has(state.status) && (state.rollover_reason !== null || state.host_handle_digest !== null || state.activation_receipt_digest !== null || state.terminal_receipt_digest !== null || state.previous_terminal_receipt_digest === null || state.completed_cycles !== 0 || state.model_visible_bytes !== 0 || state.pending_reservation !== null || state.last_completed_cycle !== null)) {
     invalid("starting generation relationshipが不正です");
   }
   return state;
@@ -339,6 +460,9 @@ async function withGenerationTransaction(paths, identity, dependencies, operatio
 function transition(state, patch, clock) { return validateGenerationState({ ...state, ...patch, updated_at: nextTime(state, clock) }); }
 function requireActive(state) { if (state.status !== "active") fail("E_GENERATION_TRANSITION_INVALID", "active generationが必要です"); }
 function requireWatch(state, watchId) { if (state.watch_id !== watchId) fail("E_GENERATION_WATCH_MISMATCH", "watch IDが一致しません"); }
+function requireFaultIdentity(state, generationIdValue, faultCode) {
+  if (state.generation_id !== generationIdValue || state.fault_code !== faultCode) fail("E_GENERATION_FAULT_CONFLICT", "generation fault identityが一致しません");
+}
 function publicState(state) { validateGenerationState(state); return structuredClone(state); }
 function parentEpoch(provider, thread) { return digestParts("observer.parent_epoch.v1", provider, thread); }
 function generationId(watch, epoch, sequence) { return digestParts("observer.generation.v1", watch, epoch, String(sequence)); }

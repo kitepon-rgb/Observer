@@ -5,12 +5,20 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { ObserverError } from "../src/observer-error.mjs";
+import { readGenerationFaultStatus } from "../src/generation-fault.mjs";
+import { initializeGeneration, readGenerationState } from "../src/generation-store.mjs";
 import { acquirePrivateLock } from "../src/private-state.mjs";
 import {
   inspectSupervisorProcessLock,
   recoverSupervisorProcessLock,
   runSupervisorProcess,
 } from "../src/supervisor-process.mjs";
+import {
+  activateWatch,
+  attachWatchLaunchHandle,
+  readWatchStatus,
+  reserveActiveWatch,
+} from "../src/watch-store.mjs";
 
 const TARGET_ID = `p_${"a".repeat(64)}`;
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
@@ -71,9 +79,26 @@ function dependencies(overrides = {}) {
       readGenerationState: async () => ACTIVE_GENERATION,
       readGenerationHostRolloverStatus: async () => null,
       readGenerationParentRebindStatus: async () => null,
+      readGenerationFaultStatus: async () => null,
+      recordGenerationFault: async (input) => faultRecord(input.faultCode),
       ...overrides,
     },
     released: () => released,
+  };
+}
+
+function faultRecord(faultCode) {
+  return {
+    schema: "observer.generation_fault_status.v1",
+    provider: "codex",
+    target_id: TARGET_ID,
+    watch_id: WATCH_ID,
+    generation_id: OLD_GENERATION_ID,
+    parent_epoch_id: OLD_PARENT_EPOCH,
+    fault_code: faultCode,
+    source_generation_status: "active",
+    status: "fault_recorded",
+    action: "authorize_stop",
   };
 }
 
@@ -493,9 +518,11 @@ test("rollover unknownは別spawnへfallbackせずfail loudにする", async () 
 test("model result unknownは永久pollせずfaultとしてfail loudにする", async () => {
   let polls = 0;
   let closed = 0;
+  const faults = [];
   const { value, released } = dependencies({
     runSupervisorProductionStep: async () => step("model_result_unknown"),
     waitForModelPoll: async () => { polls += 1; },
+    recordGenerationFault: async (input) => { faults.push(input); return faultRecord(input.faultCode); },
   });
   await assert.rejects(runSupervisorProcess(request({
     createProviderRuntime: async () => ({
@@ -508,6 +535,7 @@ test("model result unknownは永久pollせずfaultとしてfail loudにする", 
     }),
   }), value), { code: "E_SUPERVISOR_MODEL_RESULT_UNKNOWN" });
   assert.equal(polls, 0);
+  assert.deepEqual(faults.map(({ faultCode }) => faultCode), ["E_OBSERVER_MODEL_RESULT_UNKNOWN"]);
   assert.equal(closed, 1);
   assert.equal(released(), 1);
 });
@@ -515,6 +543,7 @@ test("model result unknownは永久pollせずfaultとしてfail loudにする", 
 test("provider process faultはThroughline waitを取消しcycle mutation前にfail loudにする", async () => {
   const providerController = new AbortController();
   let closed = 0;
+  const order = [];
   const { value, released } = dependencies({
     waitForMonitorPoll: async (_milliseconds, signal) => new Promise((resolve) => {
       signal.addEventListener("abort", () => resolve(false), { once: true });
@@ -523,6 +552,7 @@ test("provider process faultはThroughline waitを取消しcycle mutation前にf
       signal.addEventListener("abort", () => reject(new ObserverError("E_THROUGHLINE_CANCELLED", "cancelled")), { once: true });
       providerController.abort();
     }),
+    recordGenerationFault: async ({ faultCode }) => { order.push(`fault:${faultCode}`); return faultRecord(faultCode); },
   });
   await assert.rejects(runSupervisorProcess(request({
     createProviderRuntime: async () => ({
@@ -531,11 +561,68 @@ test("provider process faultはThroughline waitを取消しcycle mutation前にf
       prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
       advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
-      close: async () => { closed += 1; },
+      close: async () => { closed += 1; order.push("close"); },
     }),
   }), value), { code: "E_SUPERVISOR_PROVIDER_PROCESS_TERMINATED" });
   assert.equal(closed, 1);
+  assert.deepEqual(order, ["fault:E_OBSERVER_PROVIDER_TERMINATED", "close"]);
   assert.equal(released(), 1);
+});
+
+test("pending generation faultはprovider runtime生成とrollover/rebind再開より先にfail loudにする", async () => {
+  let created = 0;
+  let recorded = 0;
+  const { value, released } = dependencies({
+    readGenerationFaultStatus: async () => ({ status: "stop_authorized" }),
+    recordGenerationFault: async () => { recorded += 1; },
+  });
+  await assert.rejects(runSupervisorProcess(request({
+    createProviderRuntime: async () => { created += 1; return assert.fail("runtimeは生成しない"); },
+  }), value), { code: "E_SUPERVISOR_GENERATION_FAULT_PENDING" });
+  assert.equal(created, 0);
+  assert.equal(recorded, 0);
+  assert.equal(released(), 1);
+});
+
+test("provider process faultは実stateへrecord-first journalとgeneration fault_requiredを残す", async () => {
+  const stateRoot = await mkdtemp(join(tmpdir(), "observer-supervisor-fault-integration-"));
+  await chmod(stateRoot, 0o700);
+  const handle = { kind: "codex.thread", value: "019f671e-87a6-7fb3-a6e7-8c800908206d" };
+  const ready = {
+    schema: "observer.host_receipt.v1", provider: "codex", target_id: TARGET_ID, watch_id: WATCH_ID,
+    outcome: "ready", handle,
+  };
+  const base = new Date(Date.now() - 1_000);
+  const now = () => new Date(base);
+  await reserveActiveWatch({ stateRoot, target: TARGET, provider: "codex" }, {
+    randomUUID: () => WATCH_ID.slice(2), now,
+  });
+  await attachWatchLaunchHandle({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, launchHandle: handle }, { now });
+  await activateWatch({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, launchHandle: handle }, { now });
+  await initializeGeneration({
+    stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, provider: "codex",
+    parentThreadSha256: "b".repeat(64), readyReceipt: ready,
+  }, { now });
+  const providerController = new AbortController();
+  providerController.abort();
+  let closed = 0;
+  await assert.rejects(runSupervisorProcess(request({
+    stateRoot,
+    createProviderRuntime: async () => ({
+      providerRuntime: { provider: "codex" },
+      providerSignal: providerController.signal,
+      prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
+      advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
+      advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
+      close: async () => { closed += 1; },
+    }),
+  })), { code: "E_SUPERVISOR_PROVIDER_PROCESS_TERMINATED" });
+  const fault = await readGenerationFaultStatus({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID });
+  assert.equal(fault.status, "fault_recorded");
+  assert.equal(fault.fault_code, "E_OBSERVER_PROVIDER_TERMINATED");
+  assert.equal((await readGenerationState({ stateRoot, targetId: TARGET_ID })).status, "fault_required");
+  assert.equal((await readWatchStatus({ stateRoot, targetId: TARGET_ID })).status, "active");
+  assert.equal(closed, 1);
 });
 
 function rollover(outcome, phase, reason) {

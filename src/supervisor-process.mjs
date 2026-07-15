@@ -1,6 +1,7 @@
 import { isAbsolute, join, resolve } from "node:path";
 
 import { ObserverError, fail } from "./observer-error.mjs";
+import { readGenerationFaultStatus, recordGenerationFault } from "./generation-fault.mjs";
 import { readGenerationHostRolloverStatus } from "./generation-host-lifecycle.mjs";
 import { readGenerationParentRebindStatus } from "./generation-parent-rebind.mjs";
 import { readGenerationState } from "./generation-store.mjs";
@@ -58,6 +59,7 @@ export async function runSupervisorProcess({
     const initialTerminal = terminalForWatch(initial);
     if (initialTerminal !== null) return processResult(initialTerminal, initial.provider, null);
     if (signal?.aborted) return processResult("cancelled", initial.provider, null);
+    await requireNoGenerationFault({ stateRoot, target, watchId }, dependencies);
 
     const owned = await createProviderRuntime();
     const runtime = validateOwnedRuntime(owned);
@@ -138,8 +140,30 @@ export async function runSupervisorProcess({
       if (paused.kind === "terminal") return processResult(paused.status, provider, null);
     }
   } catch (error) {
-    primary = error;
-    throw error;
+    let failure = error;
+    if (shouldRecordFault(error)) {
+      try {
+        const watch = await (dependencies.readWatchStatus ?? readWatchStatus)({ stateRoot, targetId: target.targetId });
+        if (watch?.watch_id === watchId && watch.status === "active") {
+          const recorded = await (dependencies.recordGenerationFault ?? recordGenerationFault)({
+            stateRoot,
+            target,
+            watchId,
+            faultCode: faultCodeFor(error),
+          }, dependencies.faultDependencies);
+          validateRecordedGenerationFault(recorded, {
+            target,
+            watchId,
+            provider: watch.provider,
+            faultCode: faultCodeFor(error),
+          });
+        }
+      } catch (faultError) {
+        failure = new AggregateError([error, faultError], "Supervisor failureとgeneration fault記録が失敗しました");
+      }
+    }
+    primary = failure;
+    throw failure;
   } finally {
     const cleanupErrors = [];
     if (closeProviderRuntime !== null) {
@@ -151,6 +175,44 @@ export async function runSupervisorProcess({
       if (cleanupErrors.length === 1) throw cleanupErrors[0];
       throw new AggregateError(cleanupErrors, "Supervisor process cleanupが失敗しました");
     }
+  }
+}
+
+async function requireNoGenerationFault({ stateRoot, target, watchId }, dependencies) {
+  const status = await (dependencies.readGenerationFaultStatus ?? readGenerationFaultStatus)({
+    stateRoot, targetId: target.targetId, watchId,
+  });
+  if (status !== null) {
+    fail("E_SUPERVISOR_GENERATION_FAULT_PENDING", "generation faultのterminal回収が必要です");
+  }
+}
+
+function shouldRecordFault(error) {
+  return !(error instanceof ObserverError && [
+    "E_SUPERVISOR_GENERATION_FAULT_PENDING",
+    "E_SUPERVISOR_PROCESS_WATCH_CHANGED",
+    "E_SUPERVISOR_PROCESS_WATCH_NOT_ACTIVE",
+  ].includes(error.code));
+}
+
+function faultCodeFor(error) {
+  if (error instanceof ObserverError && error.code === "E_SUPERVISOR_PROVIDER_PROCESS_TERMINATED") return "E_OBSERVER_PROVIDER_TERMINATED";
+  if (error instanceof ObserverError && error.code === "E_SUPERVISOR_MODEL_RESULT_UNKNOWN") return "E_OBSERVER_MODEL_RESULT_UNKNOWN";
+  return "E_OBSERVER_SUPERVISOR_FAILED";
+}
+
+function validateRecordedGenerationFault(value, { target, watchId, provider, faultCode }) {
+  const keys = [
+    "action", "fault_code", "generation_id", "parent_epoch_id", "provider", "schema",
+    "source_generation_status", "status", "target_id", "watch_id",
+  ];
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== keys.sort().join(",") ||
+      value.schema !== "observer.generation_fault_status.v1" || value.target_id !== target.targetId ||
+      value.watch_id !== watchId || value.provider !== provider || value.fault_code !== faultCode ||
+      !/^sha256:[a-f0-9]{64}$/.test(value.generation_id) || !/^sha256:[a-f0-9]{64}$/.test(value.parent_epoch_id) ||
+      !["fault_recorded", "stop_authorized", "terminal_observed"].includes(value.status) ||
+      !["authorize_stop", "observe_terminal", "finalize_fault"].includes(value.action)) {
+    fail("E_SUPERVISOR_GENERATION_FAULT_RECORD_INVALID", "generation fault記録結果が不正です");
   }
 }
 

@@ -33,6 +33,16 @@ const LAUNCH_FAULT_CODES = new Set([
   "E_OBSERVER_LAUNCH_CORRELATION_FAILED",
   "E_OBSERVER_LAUNCH_CONFIRM_FAILED",
 ]);
+const SUPERVISOR_FAULT_CODES = new Set([
+  "E_OBSERVER_PROVIDER_TERMINATED",
+  "E_OBSERVER_MODEL_RESULT_UNKNOWN",
+  "E_OBSERVER_SUPERVISOR_FAILED",
+]);
+const OBSERVER_FAULT_CODES = new Set([...LAUNCH_FAULT_CODES, ...SUPERVISOR_FAULT_CODES]);
+
+export function isObserverFaultCode(value) {
+  return typeof value === "string" && OBSERVER_FAULT_CODES.has(value);
+}
 
 export async function prepareParentLaunch({
   stateRoot,
@@ -285,7 +295,7 @@ function validateStopRequest(value) {
   if (value.terminal === "stopped") {
     if (value.fault_code !== null) fail("E_PARENT_STOP_SCHEMA", "通常stop requestにfault codeを指定できません");
   } else if (value.terminal === "faulted") {
-    if (!LAUNCH_FAULT_CODES.has(value.fault_code)) fail("E_PARENT_STOP_SCHEMA", "launch cleanup fault codeが不正です");
+    if (!isObserverFaultCode(value.fault_code)) fail("E_PARENT_STOP_SCHEMA", "fault cleanup codeが不正です");
   } else fail("E_PARENT_STOP_SCHEMA", "stop terminalが不正です");
   return value;
 }
