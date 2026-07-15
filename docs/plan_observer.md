@@ -49,10 +49,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - 完了条件: 未確定事項3件が解消または明示的blockedになり、反対仮説の検証を一回通過する。
   - 裁定: Throughline JSON CLI + Observer MCP adapter、macOS owner-only state、`emitted_unacked` receiptを採用。DB直接監視、Throughline本体のMCP所有、cross-platform見せかけ、Host ack見せかけを棄却した。
 
-- [x] **P0-6 Claude親／Claude Observerのhost境界を実測する。**
+- [ ] **P0-6 Claude親／Claude Observerのhost境界を実測する。**
   - 成果物: Claudeの完了turn証拠、正式Stop event／payload、project／session identity、60秒超wait、同じturnへのcontinuation、明示停止の再現記録。
   - 完了条件: Claude Observerと親Claudeへの配送を、Codex wireの流用や推測なしで実装できる。
-  - 実測: Claude Code 2.1.207でheadless `result/end_turn`、同じsession IDのresume、`SessionStart:resume`を確認した。backgroundは`--print`非対応で、`claude --bg '<task>'`のjob handleを`agents --json`／`logs`／`stop`で回収できた。完了turnはfinal assistantやprocess exitでなく、Throughline所有のStop receiptへ束縛する。`/rewind`はforkなので同一session rollbackを新設しない。
+  - 部分実測: Claude Code 2.1.207でheadless `result/end_turn`、同じsession IDのresume、`SessionStart:resume`を確認した。backgroundは`--print`非対応で、job handleを`agents --json`／`logs`で回収し、terminal後stopを確認した。実行中stopとdaemon crash後の結果回収は未検証。完了turnはfinal assistantやprocess exitでなく、Throughline所有のStop receiptへ束縛する。`/rewind`はforkなので同一session rollbackを新設しない。
 
 - [x] **P0-7 Observerのprovider配置と役割を固定する。**
   - 成果物: Codex親→Codex Observer、Claude親→Claude Observerという同provider契約と、継続的反証ではない伴走者契約。
@@ -63,7 +63,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - 完了条件: 暗黙起動と自動再起動を禁止し、一target一watchの所有境界を固定する。
   - 裁定: [ADR 0002](adr/0002-explicit-parent-launch.md)。
 
-**Gate:** P0-1〜P0-8を完了済み。Claude adapterはThroughline Stop receiptとbackground job handle契約から実装できる。
+**Gate:** P0-6の実行中stopとdaemon crash後の結果回収が未完。host-neutral coreは先行できるが、Claude live adapterのproduction採用はblockedのまま維持する。
 
 ---
 
@@ -134,6 +134,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       commits `1ed545c`、`ed4f077`、Control revision 32。
     - [x] unrestricted Codex親ではcustom agentの`read-only`が実効sandboxにならないことを実測し、native Observerを禁止した（[ADR 0008](adr/0008-codex-readonly-host-boundary.md)）。
     - [ ] Codex persistent app-server thread候補／Claude backgroundの親host adapter、同provider Observer role、routing検証を実装する。
+      Claude backgroundはexact tool allowlistでproject readとwrite拒否、job handleの`working → done`、同handle stopを実証した。
+      argvの可変長flag順序とterminal後のlogs回収不能を[ADR 0010](adr/0010-claude-background-readonly-characterization.md)でadapter契約へ固定した。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
@@ -142,7 +144,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [x] Codex native custom agentのTOML指定だけではunrestricted親のoverrideを防げないことを実測した。
   - [x] app-server persistent threadのper-thread read-only、project write拒否、別processからの`thread/read`／`thread/list`回収をcharacterizationした（[ADR 0009](adr/0009-codex-appserver-characterization.md)）。
   - [ ] Codexアプリ内表示、65秒超wait、adapter crash後のturn resume、明示interrupt／停止、Observer MCP限定writeをcharacterizationする。
-  - [ ] Claude backgroundをread-only tool allowlistで起動し、project write拒否とObserver MCP成功をcharacterizationする。
+  - [x] Claude backgroundを`Read,Grep,Glob`だけで起動し、組込みtool surface上のproject read成功、Write tool不在による一回のwrite拒否、公開job lifecycleをcharacterizationした（[ADR 0010](adr/0010-claude-background-readonly-characterization.md)）。
+  - [ ] settings／hooks／pluginsを隔離し、HEAD、index、tracked／untracked、modeを含むproject fingerprint不変をcharacterizationする。Observer MCP追加後も再検証する。
+  - [ ] Claude backgroundのObserver MCP限定write、65秒超継続、実行中stop、daemon／adapter crash後のterminal receipt回収をcharacterizationする。
+    即時完了、terminal直前crash、実行中restart、daemon消失、失敗terminalを独立fixtureにし、`done`を結果回収済みへ丸めない。
 
 **Gate:** 手紙を生成しない最小Observerが、親の再作成と一時間timeoutを含めて継続監視できる。
 
