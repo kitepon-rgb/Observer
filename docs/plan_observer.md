@@ -247,7 +247,16 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
             - [x] prepared／reservation／provider handle／canonical result／apply／processed／cleanup間の
               crash matrixをfocused fixtureで固定する。
             - [ ] Claude／Codexのexact operation result readをprovider固有journalへ実装し、handle欠損を
-              別operationへの再送で隠さない。
+              別operationへの再送で隠さない（[ADR 0055](adr/0055-provider-exact-result-journal-contract.md)）。
+              - Codexは保存済みthread／turnの`thread/read`だけからexact `agentMessage` itemを再読し、
+                cycleごとのStop sealと直前item baselineで同一turn内の結果を分離する。Claudeはjob／sessionを
+                束縛した`Stop.last_assistant_message`をhook中にcanonical保存する。
+              - `logs`／transcript／private provider state／別turn／別job／新規requestへのfallbackを禁止する。
+              - provider journal coreとfake public-surface fixtureを先に受け入れるが、この時点では本TODOを閉じない。
+                現行profileへObserver所有hookだけを注入するhost adapter接続、Codex item baseline、
+                両host session／turn相関、Supervisorの`complete -> provider cleanup -> apply`を続けて実装する。
+              - Claude job `sessionId`／Stop `session_id`の一致、Codex hook trustとin-progress item再読はlive H gateで
+                version固定し、未実証をproduction対応済みにしない。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
               - 既存`publishMessage`のduplicate拒否は維持し、model operation専用`publishOperationMessage`と

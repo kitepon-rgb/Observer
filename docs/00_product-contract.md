@@ -114,6 +114,14 @@ Codex停止では`turn/interrupt`の空ACKを終端証拠にしない。同じth
 検証した後だけwatchを閉じる。app-server process／connectionは再作成可能なtransportであり、provider handleにしない。
 thread／turnの`cwd`は常にcanonical Observer rootで、target `project_root`はchild envelopeにだけ保持する。
 
+各cycleのmodel結果はhost lifecycleと別のprovider operation journalで回収する。CodexはcycleごとのStopを
+session／turnへsealし、保存済みthread／turnの`thread/read(includeTurns=true)`から直前cycleのresult item以後にある
+exactな`agentMessage` itemだけを再読する。Claudeはbackground job IDとsession IDを束縛し、Observer所有`Stop` hookの
+`last_assistant_message`を発火中にstrict parseしてcanonical outputをatomic保存する。`stop_hook_active`は
+result captureを抑止せず、continuation再発行の制御だけに使う。Claude terminal後の
+`logs`、transcript、private provider state、handle欠損時の別turn／別job／新規requestをfallbackに使わない。
+provider journalが欠ける場合は結果不明のまま止め、二重model実行を避ける。
+
 親の明示起動契約は[ADR 0002](adr/0002-explicit-parent-launch.md)、Codex hostの耐久境界は
 [ADR 0018](adr/0018-codex-host-runtime-boundary.md)を正本とする。
 
