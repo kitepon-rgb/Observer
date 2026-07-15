@@ -59,10 +59,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - 成果物: Claudeの完了turn証拠、正式Stop event／payload、project／session identity、60秒超wait、同じturnへのcontinuation、明示停止の再現記録。
   - 完了条件: Claude Observerと親Claudeへの配送を、Codex wireの流用や推測なしで実装できる。
   - 部分実測: Claude Code 2.1.207でheadless `result/end_turn`、同じsession IDのresume、`SessionStart:resume`を確認した。2.1.210ではbackground jobが75秒まで`working`を維持し、90秒timer中の実行中stop、子process消滅、project fingerprint不変を確認した（[ADR 0011](adr/0011-claude-process-boundary-characterization.md)）。daemon／adapter crash後の結果回収は未検証。完了turnはfinal assistantやprocess exitでなく、Throughline所有のStop receiptへ束縛する。`/rewind`はforkなので同一session rollbackを新設しない。
-  - 上記は基礎characterizationであり、既存background jobへの公開非対話request、job `sessionId`／
-    Stop `session_id`相関、Observer所有の隔離result-capture hook、terminal exact result readは未実証。
-    [ADR 0109](adr/0109-claude-public-surface-characterization-contract.md)の非H harnessを先に閉じ、
-    [専用runbook](claude-public-surface-characterization-runbook.md)のlive Hを一回だけ行う。
+  - 上記は基礎characterizationである。後続の隔離liveではjob `sessionId`／Stop `session_id`相関と
+    Stop hook発火までconfirmedとなったが、canonical resultは拒否され、既存background jobへの
+    公開非対話requestとterminal exact result readはunsupportedと確定した
+    （[ADR 0114](adr/0114-claude-live-recharacterization-blocked.md)）。
 
 - [x] **P0-7 Observerのprovider配置と役割を固定する。**
   - 成果物: Codex親→Codex Observer、Claude親→Claude Observerという同provider契約と、継続的反証ではない伴走者契約。
@@ -325,7 +325,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                 - [x] Stop未発火とpayload／result不正を区別するraw-free diagnostic receiptを
                   非Hで実装し、focused 9/9、related 29/29で受け入れた
                   （[ADR 0113](adr/0113-claude-characterization-diagnostic-receipt-acceptance.md)）。
-                - [ ] diagnostic receipt受入後、別H承認で一つのjobだけを再characterizeする。
+                - [x] diagnostic receipt受入後、別H承認で一つのjobだけを再characterizeした。
+                  hook invocation、job／session、Stop payloadはconfirmed、canonical resultは
+                  `E_CLAUDE_CHARACTERIZATION_RESULT_INVALID`、公開reply／terminal exact resultは
+                  unsupportedであり、接続はblockedのままとする
+                  （[ADR 0114](adr/0114-claude-live-recharacterization-blocked.md)）。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
               - 既存`publishMessage`のduplicate拒否は維持し、model operation専用`publishOperationMessage`と
@@ -617,8 +621,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       分離し、direct shebang CLI、verify、cleanupをfocused／related gateで閉じる
       （実装 `f239a07`、focused 9/9、related 29/29、`npm run check` green、
       [ADR 0113](adr/0113-claude-characterization-diagnostic-receipt-acceptance.md)）。
-    - [ ] **P5-1b3d live H再characterization:** P5-1b3c受入後、別H承認で一つのbackground jobだけを
-      起動し、hook invocation、job/session相関、result capture、terminal、cleanupを再判定する。
+    - [x] **P5-1b3d live H再characterization:** 別H承認で一つのbackground job／Haiku requestだけを
+      起動した。hook invocation、job／session、Stop payload、terminal、cleanup、project／host settings
+      不変はconfirmed、canonical resultは`E_CLAUDE_CHARACTERIZATION_RESULT_INVALID`、公開reply／
+      terminal exact resultはunsupportedである
+      （[ADR 0114](adr/0114-claude-live-recharacterization-blocked.md)）。
+      P5-1b3全体とP5-1b4は必要な公開delivery／result contractが現れるまでblockedとする。
   - [ ] **P5-1b4 Claude caller core 非H:** P5-1b3で実証した公開面だけをissue／recover／cleanup、
     initial generation、Supervisor loopへ接続する。
   - [ ] **P5-1b5 dual-host live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
