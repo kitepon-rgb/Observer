@@ -146,7 +146,7 @@ export function validateWatchCommandResult(value) {
   return value;
 }
 
-function validateParentWatchContext(value, intent) {
+export function validateParentWatchContext(value, intent) {
   requirePlainObject(value, "parent watch context", "E_PARENT_WATCH_CONTEXT_REQUIRED");
   requireExactKeys(value, [
     "authorization", "expected_previous_watch_id", "parent_provider", "runtime_root", "schema",
