@@ -306,6 +306,15 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               - commit `0e7a005`。focused 15/15、`npm run check`、scoped diff-checkを通し、
                 [ADR 0052](adr/0052-mailbox-operation-publish-replay-acceptance.md)で受け入れた。
         - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
+          - [ ] planned rolloverを既存generation host journal／provider bindingから
+            Supervisor processへ接続し、同じverified runtimeで一stepずつ回収して
+            新generation activation後にprepared cycleへ戻る
+            （[ADR 0070](adr/0070-supervisor-planned-rollover-integration.md)）。
+          - [ ] parent epoch切替を旧generationへのmodel requestなしで明示
+            `rebind_required` transition／receiptへ記録し、parent authorizationと
+            terminal確認後だけ新epochを開始する。
+          - [ ] watch／provider faultをterminal確認済みのfault transition／receiptへ記録し、
+            unknown outcomeを自動restart、takeover、別handle探索で隠さない。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
 - [ ] **P2-5 read-only境界を強制する。**
