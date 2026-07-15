@@ -13,6 +13,13 @@ P5-1b3bで、Claude production callerを実装する前に、公開非対話requ
 characterization harness完成後、実Observer packageからread-only preflightを一回実行する。
 preflightは少なくとも次を固定する。
 
+```sh
+observer-claude-characterization readiness \
+  --claude-command "$(command -v claude)"
+```
+
+`status=ready_for_h`はversionと公開help surfaceが一致したことだけを表し、live成功ではない。
+
 - Observer product versionとcharacterization executableのpackage内absolute path
 - `claude --version`が対象固定versionであること
 - `claude --help`の`--bg`、`--settings`、`--setting-sources`、`--safe-mode`
@@ -42,6 +49,12 @@ model request、hook trustを開始しない。結果が`ready_for_h`でなけ�
 1. preflight receipt、Observer package digest、Claude固定version、project fingerprintを確認する。
 2. owner-only temporary directoryへ、characterization harnessが生成したisolated settingsと
    sanitized receipt pathだけを配置する。既存host configは変更しない。
+
+   ```sh
+   observer-claude-characterization prepare \
+     --work-root "$OWNER_ONLY_CAMPAIGN_ROOT" \
+     --expected-cwd "$OBSERVER_PACKAGE_ROOT"
+   ```
 3. `--setting-sources ""`とisolated `--settings`を明示し、一つのClaude background jobを
    固定・非秘密fixture promptで起動する。raw handleはprocess内だけに保持する。
 4. launch ACKと`claude agents --all --json`を同じprocess内でstrict parseし、job/session digestを作る。

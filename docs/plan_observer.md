@@ -316,8 +316,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               - [ ] Claude background jobへの公開非対話reply ACKと隔離`--settings` Stop hookを実証して接続する。
                 - [x] P5-1b3の非H準備、live H、production callerを分離し、親Mailbox hookを
                   result captureへ流用しない契約を[ADR 0109](adr/0109-claude-public-surface-characterization-contract.md)で固定した。
-                - [ ] characterization専用の隔離Stop capture、sanitized receipt、
-                  prepare／verify／cleanup harnessをfixtureで閉じる。
+                - [x] characterization専用の隔離Stop capture、sanitized receipt、
+                  prepare／verify／cleanup harnessをfixtureで閉じた（[ADR 0110](adr/0110-claude-characterization-harness-acceptance.md)）。
                 - [ ] [専用runbook](claude-public-surface-characterization-runbook.md)に従い、
                   一つのClaude jobで公開面の成立／不成立をlive H characterizationする。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
@@ -598,8 +598,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [ ] **P5-1b3 Claude public surface characterization:** 公開非対話reply ACK、exact result read、
     job／session／Stop相関の実在または不在を、[ADR 0109](adr/0109-claude-public-surface-characterization-contract.md)の
     順序で確定する。private protocolやheadless resumeへfallbackしない。
-    - [ ] **P5-1b3a 非H harness:** characterization専用の隔離Stop capture、sanitized receipt、
-      prepare／verify／cleanupをfixtureで閉じる。親Mailbox hookをresult captureへ流用しない。
+    - [x] **P5-1b3a 非H harness:** characterization専用の隔離Stop capture、sanitized receipt、
+      prepare／verify／cleanupをfixtureで閉じた。親Mailbox hookをresult captureへ流用しない。
+      Observer `f40b672`、dotagents `78c358b`、focused 10/10、related 26/26、
+      package／isolated install gateを[ADR 0110](adr/0110-claude-characterization-harness-acceptance.md)で受け入れた。
     - [ ] **P5-1b3b live H:** [専用runbook](claude-public-surface-characterization-runbook.md)で
       一つのbackground jobだけを起動し、公開面ごとに`confirmed | unsupported | blocked`を記録する。
   - [ ] **P5-1b4 Claude caller core 非H:** P5-1b3で実証した公開面だけをissue／recover／cleanup、
