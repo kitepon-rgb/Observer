@@ -3,18 +3,23 @@ import test from "node:test";
 
 import { buildObserverAiPrompt } from "../src/observer-ai-contract.mjs";
 import {
+  buildCodexTurnSteerParams,
   buildCodexInitializeParams,
   buildCodexThreadReadParams,
   buildCodexThreadResumeParams,
   buildCodexThreadStartParams,
   buildCodexTurnStartParams,
+  parseCodexCycleBaseline,
   parseCodexThreadReadResult,
   parseCodexThreadResumeResult,
   parseCodexThreadStartResult,
+  parseCodexTurnSteerResult,
   parseCodexTurnStartResult,
   planCodexTurnStop,
   recordCodexInterruptResult,
 } from "../src/codex-host-adapter.mjs";
+import { buildCycleInput } from "../src/cycle-input.mjs";
+import { buildEvidenceSnapshot } from "../src/evidence-snapshot.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
 
 const ROOT = "/Users/kite/Developer/Observer";
@@ -23,6 +28,15 @@ const TURN_ID = "019f62a2-2222-7222-8222-222222222222";
 const TARGET_ID = `p_${"a".repeat(64)}`;
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
 const OBSERVED_AT = "2026-07-15T05:00:00.000Z";
+const SESSION_ID = "019f62a3-3333-7333-8333-333333333333";
+
+const cycleInput = buildCycleInput(buildEvidenceSnapshot({
+  context: {
+    after_cursor_sha256: "1".repeat(64), cycle_id: `c_${"2".repeat(64)}`, parent_host: "codex",
+    parent_thread_sha256: "3".repeat(64), target_id: TARGET_ID, through_cursor_sha256: "4".repeat(64), watch_id: WATCH_ID,
+  },
+  turns: [], plan: [], git: [], tests: [],
+}));
 
 function request(overrides = {}) {
   return {
@@ -132,6 +146,46 @@ test("thread/readだけをterminal照合に使いcwd不一致や重複turnを拒
     () => parseCodexThreadReadResult({ result: { thread: { ...result.thread, turns: [...result.thread.turns, ...result.thread.turns] } }, expectedThreadId: THREAD_ID, expectedCwd: ROOT, observedAt: OBSERVED_AT }),
     expectCode("E_CODEX_THREAD_READ_INVALID"),
   );
+});
+
+test("cycle request前のactive turnから最後のagentMessageだけをbaselineにする", () => {
+  const result = { thread: { id: THREAD_ID, sessionId: SESSION_ID, cwd: ROOT, turns: [{
+    id: TURN_ID, status: "inProgress", items: [
+      { id: "tool-1", type: "commandExecution" },
+      { id: "agent-1", type: "agentMessage", text: "old" },
+      { id: "tool-2", type: "commandExecution" },
+      { id: "agent-2", type: "agentMessage", text: "new" },
+    ],
+  }] } };
+  assert.deepEqual(parseCodexCycleBaseline({ result, expectedThreadId: THREAD_ID, expectedTurnId: TURN_ID, expectedCwd: ROOT }), {
+    thread_id: THREAD_ID, session_id: SESSION_ID, turn_id: TURN_ID, after_item_id: "agent-2", cwd: ROOT,
+  });
+  assert.equal(parseCodexCycleBaseline({
+    result: { thread: { ...result.thread, turns: [{ id: TURN_ID, status: "inProgress", items: [] }] } },
+    expectedThreadId: THREAD_ID, expectedTurnId: TURN_ID, expectedCwd: ROOT,
+  }).after_item_id, null);
+  assert.throws(() => parseCodexCycleBaseline({
+    result: { thread: { ...result.thread, sessionId: "" } }, expectedThreadId: THREAD_ID, expectedTurnId: TURN_ID, expectedCwd: ROOT,
+  }), expectCode("E_CODEX_CYCLE_BASELINE_MISMATCH"));
+  assert.throws(() => parseCodexCycleBaseline({
+    result: { thread: { ...result.thread, turns: [{ ...result.thread.turns[0], status: "completed" }] } },
+    expectedThreadId: THREAD_ID, expectedTurnId: TURN_ID, expectedCwd: ROOT,
+  }), expectCode("E_CODEX_CYCLE_BASELINE_MISMATCH"));
+});
+
+test("turn/steerはcanonical inputとsame active turnだけを一回のrequestへする", () => {
+  const handle = { thread_id: THREAD_ID, session_id: SESSION_ID, turn_id: TURN_ID, after_item_id: "agent-2", cwd: ROOT };
+  const operation = { provider: "codex", input_digest: cycleInput.input_digest, model_visible_bytes: cycleInput.model_visible_bytes };
+  assert.deepEqual(buildCodexTurnSteerParams({ operation, value: cycleInput.value, handle }), {
+    threadId: THREAD_ID, input: [{ type: "text", text: cycleInput.value }], expectedTurnId: TURN_ID,
+  });
+  assert.deepEqual(parseCodexTurnSteerResult({ result: { turnId: TURN_ID }, expectedTurnId: TURN_ID }), {
+    turn_id: TURN_ID, outcome: "acknowledged",
+  });
+  assert.throws(() => buildCodexTurnSteerParams({
+    operation: { ...operation, input_digest: `sha256:${"f".repeat(64)}` }, value: cycleInput.value, handle,
+  }), expectCode("E_CYCLE_INPUT_RECEIPT_MISMATCH"));
+  assert.throws(() => parseCodexTurnSteerResult({ result: { turnId: THREAD_ID }, expectedTurnId: TURN_ID }), expectCode("E_CODEX_CYCLE_ACK_INVALID"));
 });
 
 test("interrupt ACKと同一turn terminalを分離する", () => {

@@ -51,14 +51,21 @@ export async function captureClaudeModelOperationStop({ stateRoot, targetId, ope
 }
 
 export async function recoverClaudeModelOperation({ stateRoot, targetId, operationId } = {}, dependencies = {}) {
-  return transaction(stateRoot, targetId, dependencies, async ({ journalPath }) => {
-    const state = await requireState(journalPath); requireOperation(state, operationId);
-    if (state.status === "accepted") return callback("pending");
-    const output = parseObserverAiOutput(JSON.stringify(state.canonical_output));
-    const digest = `sha256:${observerAiOutputDigest(output)}`;
-    if (digest !== state.canonical_output_digest) fail("E_CLAUDE_OPERATION_OUTPUT_CONFLICT", "canonical output digestが一致しません");
-    return callback("completed", { receiptDigest: state.receipt_digest, rawOutput: canonicalRaw(state) });
-  });
+  try {
+    return await transaction(stateRoot, targetId, dependencies, async ({ journalPath }) => {
+      const state = await requireState(journalPath); requireOperation(state, operationId);
+      if (state.status === "accepted") return callback("accepted", { receiptDigest: state.receipt_digest });
+      const output = parseObserverAiOutput(JSON.stringify(state.canonical_output));
+      const digest = `sha256:${observerAiOutputDigest(output)}`;
+      if (digest !== state.canonical_output_digest) fail("E_CLAUDE_OPERATION_OUTPUT_CONFLICT", "canonical output digestが一致しません");
+      return callback("completed", { receiptDigest: state.receipt_digest, rawOutput: canonicalRaw(state) });
+    });
+  } catch (error) {
+    if (error instanceof ObserverError && error.code === "E_CLAUDE_OPERATION_NOT_FOUND") {
+      return callback("unknown", { reason: "provider_operation_missing" });
+    }
+    throw error;
+  }
 }
 
 export async function cleanupClaudeModelOperation({ stateRoot, targetId, operationId, cleanupEvidence = null } = {}, dependencies = {}) {

@@ -2,6 +2,12 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { isAbsolute } from "node:path";
 
+import {
+  buildCodexThreadReadParams,
+  buildCodexTurnSteerParams,
+  parseCodexCycleBaseline,
+  parseCodexTurnSteerResult,
+} from "./codex-host-adapter.mjs";
 import { observerAiOutputDigest, parseObserverAiOutput } from "./observer-ai-contract.mjs";
 import { fail } from "./observer-error.mjs";
 import { acquirePrivateLock, assertPrivateDirectory, atomicCreatePrivateFile, atomicReplacePrivateFile, ensurePrivateDirectory, readPrivateJson, removePrivateFile } from "./private-state.mjs";
@@ -12,6 +18,25 @@ export const MODEL_OPERATION_CALLBACK_SCHEMA = "observer.model_operation_callbac
 export const MODEL_OPERATION_CLEANUP_SCHEMA = "observer.model_operation_cleanup.v1";
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
 const TARGET = /^p_[a-f0-9]{64}$/;
+
+export async function issueCodexModelOperation({ stateRoot, operation, value, runtime } = {}, dependencies = {}) {
+  validateIssueOperation(operation);
+  validateRuntime(runtime);
+  if (typeof dependencies.threadRead !== "function" || typeof dependencies.steer !== "function") {
+    fail("E_CODEX_PROVIDER_INPUT", "Codex issueにはthreadReadとsteerが必要です");
+  }
+  const baselineResult = await dependencies.threadRead(buildCodexThreadReadParams(runtime.thread_id));
+  const handle = parseCodexCycleBaseline({
+    result: baselineResult,
+    expectedThreadId: runtime.thread_id,
+    expectedTurnId: runtime.turn_id,
+    expectedCwd: runtime.cwd,
+  });
+  const params = buildCodexTurnSteerParams({ operation, value, handle });
+  const result = await dependencies.steer(params);
+  parseCodexTurnSteerResult({ result, expectedTurnId: runtime.turn_id });
+  return acceptCodexModelOperation({ stateRoot, operation, handle });
+}
 
 export async function acceptCodexModelOperation({ stateRoot, operation, handle }) {
   validateOperation(operation); validateHandle(handle);
@@ -51,8 +76,14 @@ export async function recoverCodexModelOperation({ stateRoot, operation, threadR
   const paths = await pathsFor(stateRoot, operation.target_id, operation.operation_id);
   const release = await acquirePrivateLock(paths.lock);
   try {
-    const current = validateJournal(await readPrivateJson(paths.file)); requireIdentity(current, operation);
-    if (current.status === "accepted") return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome: "pending" };
+    let current;
+    try { current = validateJournal(await readPrivateJson(paths.file)); }
+    catch (error) {
+      if (error?.code === "ENOENT") return unknown("provider_operation_missing");
+      throw error;
+    }
+    requireIdentity(current, operation);
+    if (current.status === "accepted") return accepted(current.receipt_digest);
     const result = await threadRead({ threadId: current.handle.thread_id, includeTurns: true });
     const item = current.status === "completed" ? readStoredItem(result, current) : selectItem(result, current);
     const raw = item.text;
@@ -90,11 +121,14 @@ export async function cleanupCodexModelOperation({ stateRoot, operation, cleanup
 
 function accepted(receipt) { return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome: "accepted", provider_operation_receipt_digest: receipt }; }
 function completed(receipt, raw) { return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome: "completed", provider_operation_receipt_digest: receipt, raw_output: raw }; }
+function unknown(reason) { return { schema: MODEL_OPERATION_CALLBACK_SCHEMA, outcome: "unknown", reason }; }
 function cleanupResult() { return { schema: MODEL_OPERATION_CLEANUP_SCHEMA, outcome: "cleaned" }; }
 async function pathsFor(stateRoot, targetId, operationId) { if (!TARGET.test(targetId) || !DIGEST.test(operationId)) fail("E_CODEX_PROVIDER_INPUT", "Codex operation identityが不正です"); await assertPrivateDirectory(stateRoot); const watches = join(stateRoot, "watches"); const target = join(watches, targetId); await assertPrivateDirectory(watches); await assertPrivateDirectory(target); const root = join(target, "provider-operations"); await ensurePrivateDirectory(root); return { file: join(root, `codex-${operationId.slice(7)}.json`), lock: join(root, `codex-${operationId.slice(7)}.lock`) }; }
 function receiptDigest(operation, handle) { return `sha256:${createHash("sha256").update(["observer.codex_model_operation.v1", operation.operation_id, operation.generation_id, handle.thread_id, handle.session_id, handle.turn_id, handle.after_item_id ?? "", handle.cwd].join("\0"), "utf8").digest("hex")}`; }
 function journal({ operation, handle, receipt, status, stopSeal, itemId, outputDigest, createdAt, updatedAt }) { return validateJournal({ schema: CODEX_MODEL_OPERATION_SCHEMA, provider: "codex", operation_id: operation.operation_id, target_id: operation.target_id, generation_id: operation.generation_id, receipt_digest: receipt, handle, status, stop_seal: stopSeal, item_id: itemId, output_digest: outputDigest, created_at: createdAt, updated_at: updatedAt }); }
 function validateOperation(value) { if (!value || typeof value !== "object" || !DIGEST.test(value.operation_id) || !TARGET.test(value.target_id) || !DIGEST.test(value.generation_id)) fail("E_CODEX_PROVIDER_INPUT", "operationが不正です"); }
+function validateIssueOperation(value) { validateOperation(value); if (value.provider !== "codex" || value.action !== "issue_once" || value.status !== "dispatching" || !DIGEST.test(value.input_digest) || !Number.isSafeInteger(value.model_visible_bytes) || value.model_visible_bytes < 0) fail("E_CODEX_PROVIDER_INPUT", "Codex issue operationが不正です"); }
+function validateRuntime(value) { if (!value || typeof value !== "object" || Object.keys(value).sort().join(",") !== "cwd,thread_id,turn_id" || typeof value.thread_id !== "string" || typeof value.turn_id !== "string" || typeof value.cwd !== "string" || !isAbsolute(value.cwd)) fail("E_CODEX_PROVIDER_INPUT", "Codex generation runtimeが不正です"); }
 function validateHandle(value) { if (!value || typeof value !== "object" || Object.keys(value).sort().join(",") !== "after_item_id,cwd,session_id,thread_id,turn_id" || [value.thread_id, value.session_id, value.turn_id].some((v) => typeof v !== "string" || v.length === 0) || typeof value.cwd !== "string" || !isAbsolute(value.cwd) || (value.after_item_id !== null && (typeof value.after_item_id !== "string" || value.after_item_id.length === 0))) fail("E_CODEX_PROVIDER_INPUT", "Codex handleが不正です"); }
 function validateStop(value) { if (!value || typeof value !== "object" || typeof value.session_id !== "string" || typeof value.turn_id !== "string") fail("E_CODEX_STOP_HANDLE_MISMATCH", "Codex Stopが不正です"); }
 function validateJournal(value) { const keys = "created_at,generation_id,handle,item_id,operation_id,output_digest,provider,receipt_digest,schema,status,stop_seal,target_id,updated_at"; if (!value || typeof value !== "object" || Object.keys(value).sort().join(",") !== keys || value.schema !== CODEX_MODEL_OPERATION_SCHEMA || value.provider !== "codex" || !DIGEST.test(value.operation_id) || !TARGET.test(value.target_id) || !DIGEST.test(value.generation_id) || !DIGEST.test(value.receipt_digest) || !["accepted", "sealed", "completed"].includes(value.status) || !timestamp(value.created_at) || !timestamp(value.updated_at) || Date.parse(value.updated_at) < Date.parse(value.created_at)) fail("E_CODEX_PROVIDER_STATE", "Codex journalが不正です"); validateHandle(value.handle); if (value.stop_seal !== null) validateStop(value.stop_seal); const sealed = value.status !== "accepted"; if (sealed !== (value.stop_seal !== null)) fail("E_CODEX_PROVIDER_STATE", "Codex Stop seal状態が不正です"); const complete = value.status === "completed"; if (complete !== (typeof value.item_id === "string" && value.item_id.length > 0 && DIGEST.test(value.output_digest))) fail("E_CODEX_PROVIDER_STATE", "Codex result locatorが不正です"); if (!complete && (value.item_id !== null || value.output_digest !== null)) fail("E_CODEX_PROVIDER_STATE", "Codex pre-complete resultが不正です"); return value; }

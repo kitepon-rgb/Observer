@@ -1,5 +1,6 @@
 import { join } from "node:path";
 
+import { validateCycleInputReceipt } from "./cycle-input.mjs";
 import { buildObserverAiPrompt } from "./observer-ai-contract.mjs";
 import { fail } from "./observer-error.mjs";
 import { validateParentLaunchRequest, validateParentStopRequest } from "./parent-launch.mjs";
@@ -75,6 +76,61 @@ export function buildCodexTurnStartParams({ request, threadId } = {}) {
 export function buildCodexThreadReadParams(threadId) {
   validateThreadId(threadId, "E_CODEX_THREAD_HANDLE_INVALID");
   return { threadId, includeTurns: true };
+}
+
+export function parseCodexCycleBaseline({ result, expectedThreadId, expectedTurnId, expectedCwd } = {}) {
+  validateThreadId(expectedThreadId, "E_CODEX_CYCLE_BASELINE_INVALID");
+  validateTurnId(expectedTurnId, "E_CODEX_CYCLE_BASELINE_INVALID");
+  if (typeof expectedCwd !== "string" || expectedCwd.length === 0) {
+    fail("E_CODEX_CYCLE_BASELINE_INVALID", "Codex cycle baseline cwdが不正です");
+  }
+  const thread = result?.thread;
+  if (!isPlainObject(thread) || thread.id !== expectedThreadId || thread.cwd !== expectedCwd ||
+      typeof thread.sessionId !== "string" || thread.sessionId.length === 0 || !Array.isArray(thread.turns)) {
+    fail("E_CODEX_CYCLE_BASELINE_MISMATCH", "Codex cycle baselineのthread identityが一致しません");
+  }
+  const matches = thread.turns.filter((turn) => turn?.id === expectedTurnId);
+  if (matches.length !== 1 || matches[0].status !== "inProgress" || !Array.isArray(matches[0].items)) {
+    fail("E_CODEX_CYCLE_BASELINE_MISMATCH", "Codex cycle baselineのactive turnが一致しません");
+  }
+  const agentItems = matches[0].items.filter((item) => item?.type === "agentMessage");
+  if (agentItems.some((item) => typeof item.id !== "string" || item.id.length === 0) ||
+      new Set(agentItems.map((item) => item.id)).size !== agentItems.length) {
+    fail("E_CODEX_CYCLE_BASELINE_INVALID", "Codex cycle baseline itemが不正です");
+  }
+  return {
+    thread_id: expectedThreadId,
+    session_id: thread.sessionId,
+    turn_id: expectedTurnId,
+    after_item_id: agentItems.at(-1)?.id ?? null,
+    cwd: expectedCwd,
+  };
+}
+
+export function buildCodexTurnSteerParams({ operation, value, handle } = {}) {
+  validateCycleHandle(handle);
+  if (!isPlainObject(operation) || operation.provider !== "codex" ||
+      typeof operation.input_digest !== "string" || !Number.isSafeInteger(operation.model_visible_bytes)) {
+    fail("E_CODEX_CYCLE_REQUEST_INVALID", "Codex cycle operationが不正です");
+  }
+  validateCycleInputReceipt({
+    value,
+    inputDigest: operation.input_digest,
+    modelVisibleBytes: operation.model_visible_bytes,
+  });
+  return {
+    threadId: handle.thread_id,
+    input: [{ type: "text", text: value }],
+    expectedTurnId: handle.turn_id,
+  };
+}
+
+export function parseCodexTurnSteerResult({ result, expectedTurnId } = {}) {
+  validateTurnId(expectedTurnId, "E_CODEX_CYCLE_ACK_INVALID");
+  if (!isPlainObject(result) || !hasExactKeys(result, ["turnId"]) || result.turnId !== expectedTurnId) {
+    fail("E_CODEX_CYCLE_ACK_INVALID", "Codex turn/steer ACKがactive turnと一致しません");
+  }
+  return { turn_id: result.turnId, outcome: "acknowledged" };
 }
 
 export function buildCodexTurnInterruptParams({ threadId, turnId } = {}) {
@@ -264,6 +320,16 @@ function validateInterruptReceipt(value, operation) {
     fail("E_CODEX_INTERRUPT_RECEIPT_INVALID", "Codex interrupt receiptがoperationと一致しません");
   }
   validateObservedAt(value.observed_at);
+}
+
+function validateCycleHandle(value) {
+  if (!isPlainObject(value) || !hasExactKeys(value, ["after_item_id", "cwd", "session_id", "thread_id", "turn_id"]) ||
+      typeof value.session_id !== "string" || value.session_id.length === 0 || typeof value.cwd !== "string" || value.cwd.length === 0 ||
+      (value.after_item_id !== null && (typeof value.after_item_id !== "string" || value.after_item_id.length === 0))) {
+    fail("E_CODEX_CYCLE_REQUEST_INVALID", "Codex cycle handleが不正です");
+  }
+  validateThreadId(value.thread_id, "E_CODEX_CYCLE_REQUEST_INVALID");
+  validateTurnId(value.turn_id, "E_CODEX_CYCLE_REQUEST_INVALID");
 }
 
 function validateTurn(value, code) {
