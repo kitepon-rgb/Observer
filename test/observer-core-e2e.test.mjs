@@ -7,6 +7,7 @@ import test from "node:test";
 
 import { readCycleState } from "../src/cycle-store.mjs";
 import { applyCycleOutput } from "../src/cycle-application.mjs";
+import { readAdvisoryDecisionHistory } from "../src/advisory-semantic-decision.mjs";
 import { initializeGeneration } from "../src/generation-store.mjs";
 import {
   confirmParentHostSpawn,
@@ -19,26 +20,29 @@ import { runSupervisorProductionStep } from "../src/supervisor-production-step.m
 const NOW = new Date(Date.now() + 60_000);
 const THREAD_ID = "019f62a1-1111-7111-8111-111111111111";
 const TURN_ID = "019f62a2-2222-7222-8222-222222222222";
+const TURN_ID_2 = "019f62a4-4444-7444-8444-444444444444";
 const SESSION_ID = "019f62a3-3333-7333-8333-333333333333";
 const PARENT_SESSION_ID = "parent-codex-session";
 const PARENT_THREAD_SHA = sha256(PARENT_SESSION_ID);
 const SOURCE_SHA = sha256("completed turn source");
+const SOURCE_SHA_2 = sha256("second completed turn source");
 const THROUGH_CURSOR = "tlc1.observer-core-e2e";
+const THROUGH_CURSOR_2 = "tlc1.observer-core-e2e-second";
 
 function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function completedTurn() {
+function completedTurn(sourceSha = SOURCE_SHA, completedAt = "2099-07-15T23:59:00.000Z") {
   const user = "Observer core E2Eを完成して";
   const assistant = "transaction接続を実装しました";
   return {
     assistant,
     assistant_sha256: sha256(assistant),
-    completed_at: "2099-07-15T23:59:00.000Z",
+    completed_at: completedAt,
     host: "codex",
     origin_sha256: sha256("origin"),
-    source_sha256: SOURCE_SHA,
+    source_sha256: sourceSha,
     thread_sha256: PARENT_THREAD_SHA,
     truncated: false,
     user,
@@ -139,13 +143,20 @@ function throughlineClient(target) {
 }
 
 function codexSession(output, runtimeRoot) {
-  let started = false;
+  return sequencedCodexSession([output], runtimeRoot);
+}
+
+function sequencedCodexSession(outputs, runtimeRoot) {
+  const turns = [];
+  const turnIds = [TURN_ID, TURN_ID_2];
   return {
     request: async (method) => {
       if (method === "turn/start") {
-        assert.equal(started, false);
-        started = true;
-        return { turn: { id: TURN_ID, status: "inProgress", items: [] } };
+        const index = turns.length;
+        assert.ok(index < outputs.length, "同じlogical cycleを再送してはいけません");
+        const id = turnIds[index];
+        turns.push({ id, output: outputs[index] });
+        return { turn: { id, status: "inProgress", items: [] } };
       }
       assert.equal(method, "thread/read");
       return {
@@ -153,14 +164,55 @@ function codexSession(output, runtimeRoot) {
           id: THREAD_ID,
           sessionId: SESSION_ID,
           cwd: runtimeRoot,
-          turns: started ? [{
-            id: TURN_ID,
+          turns: turns.map(({ id, output: text }) => ({
+            id,
             status: "completed",
-            items: [{ id: "final", type: "agentMessage", phase: "final_answer", text: output }],
-          }] : [],
+            items: [{ id: `final-${id}`, type: "agentMessage", phase: "final_answer", text }],
+          })),
         },
       };
     },
+  };
+}
+
+function twoCycleThroughlineClient() {
+  return {
+    wait: async ({ afterCursor }) => afterCursor === THROUGH_CURSOR
+      ? {
+          schema: "throughline.observer_wait.v1",
+          status: "changed",
+          afterCursor,
+          throughCursor: THROUGH_CURSOR_2,
+        }
+      : {
+          schema: "throughline.observer_wait.v1",
+          status: "timeout",
+          afterCursor,
+          throughCursor: afterCursor,
+        },
+    read: async ({ afterCursor = null, throughCursor } = {}) => afterCursor === null
+      ? {
+          schema: "throughline.observer_read.v1",
+          status: "snapshot",
+          afterCursor: null,
+          throughCursor: throughCursor ?? THROUGH_CURSOR,
+          host: "codex",
+          thread_sha256: PARENT_THREAD_SHA,
+          turns: [completedTurn()],
+          historyTruncated: false,
+          page: { complete: true, nextToken: null },
+        }
+      : {
+          schema: "throughline.observer_read.v1",
+          status: "delta",
+          afterCursor,
+          throughCursor: THROUGH_CURSOR_2,
+          host: "codex",
+          thread_sha256: PARENT_THREAD_SHA,
+          turns: [completedTurn(SOURCE_SHA_2, "2099-07-15T23:59:30.000Z")],
+          historyTruncated: false,
+          page: { complete: true, nextToken: null },
+        },
   };
 }
 
@@ -287,6 +339,48 @@ test("Mailbox publish直後のcrashは同じoperation replayで一件へ収束�
   assert.equal((await runParentStopHook({
     provider: "codex",
     payload: { ...payload, turn_id: "parent-replay-turn-2" },
+    stateRoot: fixture.stateRoot,
+    now: NOW,
+  }, { emitHookOutput: async (value) => emitted.push(value) })).status, "no_message");
+  assert.equal(emitted.length, 1);
+});
+
+test("60分内の同一dedupeと同severityは第二cycleをsuppressedにし親配送を一件へ保つ", async () => {
+  const fixture = await setupWatch("codex");
+  const session = sequencedCodexSession([
+    advisoryOutput([`turn:${SOURCE_SHA}`]),
+    advisoryOutput([`turn:${SOURCE_SHA_2}`]),
+  ], fixture.runtimeRoot);
+  const input = supervisorInput(fixture, session, twoCycleThroughlineClient());
+  assert.equal((await runSupervisorProductionStep(input, { now: () => NOW })).status, "model_pending");
+  assert.equal((await runSupervisorProductionStep(input, { now: () => NOW })).status, "committed");
+  assert.equal((await runSupervisorProductionStep(input, { now: () => NOW })).status, "model_pending");
+  assert.equal((await runSupervisorProductionStep(input, { now: () => NOW })).status, "committed");
+
+  const history = await readAdvisoryDecisionHistory({
+    stateRoot: fixture.stateRoot,
+    targetId: fixture.target.targetId,
+  });
+  assert.deepEqual(history.entries.map(({ decision }) => decision), ["accepted", "suppressed"]);
+  assert.equal((await readCycleState({
+    stateRoot: fixture.stateRoot,
+    targetId: fixture.target.targetId,
+  })).committed_state.cursor, THROUGH_CURSOR_2);
+
+  const emitted = [];
+  const payload = {
+    hook_event_name: "Stop",
+    session_id: PARENT_SESSION_ID,
+    turn_id: "cooldown-parent-turn",
+    cwd: fixture.projectRoot,
+    stop_hook_active: false,
+  };
+  assert.equal((await runParentStopHook({
+    provider: "codex", payload, stateRoot: fixture.stateRoot, now: NOW,
+  }, { emitHookOutput: async (value) => emitted.push(value) })).status, "emitted_unacked");
+  assert.equal((await runParentStopHook({
+    provider: "codex",
+    payload: { ...payload, turn_id: "cooldown-parent-turn-2" },
     stateRoot: fixture.stateRoot,
     now: NOW,
   }, { emitHookOutput: async (value) => emitted.push(value) })).status, "no_message");
