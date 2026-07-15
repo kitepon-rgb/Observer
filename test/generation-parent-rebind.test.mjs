@@ -10,6 +10,7 @@ import {
   authorizeReboundGenerationStart,
   confirmGenerationParentRebindTerminal,
   prepareGenerationParentRebindStop,
+  readGenerationParentRebindRecoveryContext,
   readGenerationParentRebindStatus,
   recordReboundGenerationSpawn,
 } from "../src/generation-parent-rebind.mjs";
@@ -103,6 +104,13 @@ test("parent rebind coreはauthorization→旧terminal→new epoch activationを
     stateRoot, target: TARGET, watchId: WATCH_ID, authorization: first.authorization, launchRequest,
   }, { now: () => T1 });
   assert.equal(authorized.outcome, "issue_once");
+  assert.equal((await readGenerationParentRebindRecoveryContext({
+    stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, authorization: first.authorization, launchRequest,
+  })).status, "spawn_authorized");
+  const otherRuntimeRequest = buildGenerationLaunchRequest({ target: TARGET, watchId: WATCH_ID, provider: "codex", runtimeRoot: "/other-observer" });
+  await assert.rejects(readGenerationParentRebindRecoveryContext({
+    stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, authorization: first.authorization, launchRequest: otherRuntimeRequest,
+  }), expectCode("E_PARENT_REBIND_RECEIPT_CONFLICT"));
   assert.equal((await authorizeReboundGenerationStart({
     stateRoot, target: TARGET, watchId: WATCH_ID, authorization: first.authorization, launchRequest,
   }, { now: () => T1 })).outcome, "recover_only");

@@ -127,6 +127,31 @@ export async function readGenerationParentRebindStatus({ stateRoot, targetId, wa
   });
 }
 
+export async function readGenerationParentRebindRecoveryContext({
+  stateRoot,
+  targetId,
+  watchId,
+  authorization,
+  launchRequest = null,
+} = {}) {
+  validateTargetId(targetId); validateWatchId(watchId); validateAuthorization(authorization);
+  if (launchRequest !== null) validateParentLaunchRequest(launchRequest);
+  return withRebindLock(stateRoot, targetId, async (paths) => {
+    const journal = await requireJournal(paths.journalPath);
+    requireJournalIdentity(journal, targetId, watchId);
+    if (journal.authorization_digest !== digestValue(authorization)) {
+      fail("E_PARENT_REBIND_AUTHORIZATION_CONFLICT", "rebind recovery authorizationが記録済みdigestと一致しません");
+    }
+    requireAuthorizationIdentity(authorization, journal);
+    if (launchRequest !== null) requireRecoveryLaunchIdentity(launchRequest, journal);
+    if (["spawn_authorized", "spawn_observed", "ready_observed"].includes(journal.status)) {
+      if (launchRequest === null) fail("E_PARENT_REBIND_LAUNCH_REQUIRED", "rebind recoveryには記録済みlaunch requestが必要です");
+      requireDigestMatch(journal.launch_request_digest, digestValue(launchRequest), "rebind launch request");
+    }
+    return publicStatus(journal);
+  });
+}
+
 export async function prepareGenerationParentRebindStop({ stateRoot, targetId, watchId } = {}, dependencies = {}) {
   validateTargetId(targetId); validateWatchId(watchId);
   return withRebindLock(stateRoot, targetId, async (paths) => {
@@ -366,6 +391,14 @@ function requireLaunchIdentity(request, journal, target) {
   if (request.provider !== journal.to_provider || request.target_id !== journal.target_id || request.watch_id !== journal.watch_id ||
       request.project_root !== target.projectRoot || request.target_id !== target.targetId || request.child_start.provider !== journal.to_provider) {
     fail("E_PARENT_REBIND_LAUNCH_CONFLICT", "new epoch launch requestがrebind authorizationと一致しません");
+  }
+}
+
+function requireRecoveryLaunchIdentity(request, journal) {
+  if (request.provider !== journal.to_provider || request.target_id !== journal.target_id || request.watch_id !== journal.watch_id ||
+      request.child_start.provider !== journal.to_provider || request.child_start.target_id !== journal.target_id ||
+      request.child_start.watch_id !== journal.watch_id) {
+    fail("E_PARENT_REBIND_LAUNCH_CONFLICT", "rebind recovery launch requestがjournal identityと一致しません");
   }
 }
 
