@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { ObserverError } from "../src/observer-error.mjs";
-import { registerProjectTarget, resolveProjectTarget } from "../src/project-target.mjs";
+import { readRegisteredProjectTarget, registerProjectTarget, resolveProjectTarget } from "../src/project-target.mjs";
 
 async function fixture() {
   const root = await mkdtemp(join(tmpdir(), "observer-target-"));
@@ -36,5 +36,17 @@ test("別projectは別targetになり、相対pathは拒否される", async () 
   await assert.rejects(
     resolveProjectTarget("relative/project"),
     (error) => error instanceof ObserverError && error.code === "E_PROJECT_PATH_NOT_ABSOLUTE",
+  );
+});
+
+test("registered targetはread-onlyで再読し、未登録targetを暗黙作成しない", async () => {
+  const { stateRoot, projectA, projectB } = await fixture();
+  const registered = await registerProjectTarget({ stateRoot, projectRoot: projectA });
+  const observed = await readRegisteredProjectTarget({ stateRoot, projectRoot: projectA });
+  assert.equal(observed.targetId, registered.targetId);
+  assert.equal(observed.projectRoot, registered.projectRoot);
+  await assert.rejects(
+    readRegisteredProjectTarget({ stateRoot, projectRoot: projectB }),
+    (error) => error instanceof ObserverError && error.code === "E_TARGET_NOT_REGISTERED",
   );
 });
