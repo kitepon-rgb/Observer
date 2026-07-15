@@ -32,11 +32,19 @@ import {
 
 export const GENERATION_HOST_ROLLOVER_SCHEMA = "observer.generation_host_rollover.v1";
 export const GENERATION_HOST_LIFECYCLE_RESULT_SCHEMA = "observer.generation_host_lifecycle_result.v1";
+export const GENERATION_HOST_RECOVERY_CONTEXT_SCHEMA = "observer.generation_host_recovery_context.v1";
 
 const TARGET_ID_RE = /^p_[a-f0-9]{64}$/;
 const WATCH_ID_RE = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const DIGEST_RE = /^sha256:[a-f0-9]{64}$/;
 const STATUSES = new Set(["stop_authorized", "terminal_observed", "spawn_authorized", "spawn_observed", "ready_observed"]);
+const RECOVERY_ACTIONS = Object.freeze({
+  stop_authorized: "observe_terminal",
+  terminal_observed: "authorize_start",
+  spawn_authorized: "recover_spawn",
+  spawn_observed: "recover_ready",
+  ready_observed: "finish_activation",
+});
 const JOURNAL_KEYS = Object.freeze([
   "created_at", "from_generation_id", "from_sequence", "next_handle", "previous_handle", "provider",
   "launch_request_digest", "ready_receipt_digest", "schema", "spawn_receipt_digest", "status", "stop_command_receipt_digest",
@@ -68,6 +76,48 @@ export async function prepareGenerationHostStop({ stateRoot, targetId, watchId }
       stop_request: stopRequest(binding, journal.previous_handle),
       from_generation_id: journal.from_generation_id,
     });
+  });
+}
+
+export async function readGenerationHostRecoveryContext({
+  stateRoot,
+  targetId,
+  watchId,
+  launchRequest = null,
+} = {}, dependencies = {}) {
+  validateIdentity(targetId, watchId);
+  return withRolloverLock(stateRoot, targetId, async (paths) => {
+    let journal = await requireJournal(paths.journalPath);
+    requireJournalIdentity(journal, { targetId, watchId });
+    if (journal.status !== "stop_authorized") {
+      if (launchRequest === null) {
+        fail("E_GENERATION_HOST_LAUNCH_REQUEST_REQUIRED", "terminal observation以降のrecovery contextにはnext host launch requestが必要です");
+      }
+      validateLaunch(launchRequest, { targetId, watchId });
+      requireJournalIdentity(journal, { targetId, watchId, provider: launchRequest.provider });
+      const launchRequestDigest = digestBoundedLaunchRequest(launchRequest);
+      if (journal.launch_request_digest === null) {
+        if (journal.status !== "terminal_observed") {
+          fail("E_GENERATION_HOST_LAUNCH_REQUEST_CONFLICT", "recovery contextのlaunch request digestがjournalにありません");
+        }
+        journal = transition(journal, { launch_request_digest: launchRequestDigest }, dependencies.now);
+        await atomicReplacePrivateFile(paths.journalPath, serialize(journal));
+      } else if (journal.launch_request_digest !== launchRequestDigest) {
+        fail("E_GENERATION_HOST_LAUNCH_REQUEST_CONFLICT", "recovery contextのlaunch requestがauthorizationと一致しません");
+      }
+    }
+    return {
+      schema: GENERATION_HOST_RECOVERY_CONTEXT_SCHEMA,
+      provider: journal.provider,
+      watch_id: journal.watch_id,
+      target_id: journal.target_id,
+      status: journal.status,
+      from_generation_id: journal.from_generation_id,
+      from_sequence: journal.from_sequence,
+      to_generation_id: journal.to_generation_id,
+      to_sequence: journal.to_sequence,
+      action: RECOVERY_ACTIONS[journal.status],
+    };
   });
 }
 
@@ -128,6 +178,9 @@ export async function authorizeNextGenerationHostStart({ stateRoot, targetId, wa
     const launchRequestDigest = digestBoundedLaunchRequest(launchRequest);
     let action = "recover_only";
     if (journal.status === "terminal_observed") {
+      if (journal.launch_request_digest !== null && journal.launch_request_digest !== launchRequestDigest) {
+        fail("E_GENERATION_HOST_LAUNCH_REQUEST_CONFLICT", "next host launch requestが初回authorizationと一致しません");
+      }
       journal = transition(journal, {
         status: "spawn_authorized",
         to_generation_id: expected.generationId,
@@ -375,7 +428,7 @@ function validateJournal(value) {
   if (value.status === "stop_authorized") {
     if (value.to_generation_id !== null || value.next_handle !== null || value.launch_request_digest !== null || value.terminal_receipt_digest !== null || value.spawn_receipt_digest !== null || value.ready_receipt_digest !== null) invalid("stop authorization relationshipが不正です");
   } else if (value.status === "terminal_observed") {
-    if (value.to_generation_id !== null || value.next_handle !== null || value.launch_request_digest !== null || value.terminal_receipt_digest === null || value.spawn_receipt_digest !== null || value.ready_receipt_digest !== null) invalid("terminal observation relationshipが不正です");
+    if (value.to_generation_id !== null || value.next_handle !== null || value.terminal_receipt_digest === null || value.spawn_receipt_digest !== null || value.ready_receipt_digest !== null) invalid("terminal observation relationshipが不正です");
   } else if (value.status === "spawn_authorized") {
     if (value.to_generation_id === null || value.next_handle !== null || value.launch_request_digest === null || value.terminal_receipt_digest === null || value.spawn_receipt_digest !== null || value.ready_receipt_digest !== null) invalid("spawn authorization relationshipが不正です");
   } else if (value.status === "spawn_observed") {

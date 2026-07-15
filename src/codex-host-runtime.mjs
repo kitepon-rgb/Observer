@@ -37,6 +37,8 @@ export const CODEX_HOST_SPAWN_RESULT_SCHEMA = "observer.codex_host_spawn_result.
 export const CODEX_HOST_ACTIVATION_RESULT_SCHEMA = "observer.codex_host_activation_result.v1";
 export const CODEX_HOST_RESUME_RESULT_SCHEMA = "observer.codex_host_resume_result.v1";
 export const CODEX_HOST_STOP_RESULT_SCHEMA = "observer.codex_host_stop_result.v1";
+export const CODEX_GENERATION_ACTIVATION_RESULT_SCHEMA = "observer.codex_generation_activation_result.v1";
+export const CODEX_GENERATION_RECOVERY_RESULT_SCHEMA = "observer.codex_generation_recovery_result.v1";
 
 const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const JOURNAL_STATUSES = new Set([
@@ -92,6 +94,11 @@ export async function spawnCodexObserverThread({ stateRoot, request, session, ge
   }
 }
 
+export async function spawnCodexGenerationObserverThread({ stateRoot, request, session, generationId } = {}, dependencies = {}) {
+  requireGenerationId(generationId);
+  return spawnCodexObserverThread({ stateRoot, request, session, generationId }, dependencies);
+}
+
 export async function activateCodexObserver({ stateRoot, request, spawnResult, session, cycleId = null, generationId = null } = {}, dependencies = {}) {
   requireCodexLaunchRequest(request);
   requireInitializedSession(session);
@@ -132,6 +139,97 @@ export async function activateCodexObserver({ stateRoot, request, spawnResult, s
     ready_receipt: readyReceipt,
     journal: publicJournal(journal),
     watch_status: active,
+  };
+}
+
+export async function activateCodexGenerationObserver({
+  stateRoot,
+  request,
+  spawnResult,
+  session,
+  cycleId = null,
+  generationId,
+} = {}, dependencies = {}) {
+  requireCodexLaunchRequest(request);
+  requireInitializedSession(session);
+  requireGenerationId(generationId);
+  validateGenerationSpawnResult(spawnResult, request);
+  const effectiveCycleId = cycleId ?? generationId;
+  validateCycleId(effectiveCycleId);
+  const threadId = spawnResult.receipt.handle.value;
+  const durableSpawn = await readJournal({ stateRoot, request, generationId });
+  if (durableSpawn.status !== "thread_created" || durableSpawn.thread_id !== threadId) {
+    fail("E_CODEX_SPAWN_RESULT_INVALID", "Codex generation spawn receiptがdurable journalと一致しません");
+  }
+  await transitionJournal({
+    stateRoot, request, generationId, expected: ["thread_created"], status: "turn_prepared",
+    threadId, turnId: null, cycleId: effectiveCycleId, terminalStatus: null,
+  }, dependencies);
+  let operation;
+  try {
+    const result = await session.request("turn/start", buildCodexTurnStartParams({ request, threadId }));
+    operation = parseCodexTurnStartResult({ result, threadId, observedAt: now(dependencies) });
+  } catch (error) {
+    await transitionJournal({
+      stateRoot, request, generationId, expected: ["turn_prepared"], status: "turn_start_unknown",
+      threadId, turnId: null, cycleId: effectiveCycleId, terminalStatus: null,
+    }, dependencies);
+    if (error instanceof ObserverError && error.code.startsWith("E_CODEX_")) throw error;
+    fail("E_CODEX_TURN_START_UNKNOWN", "Codex turn/start結果が不明です。同じgenerationで別turnを開始しないでください");
+  }
+  const journal = await transitionJournal({
+    stateRoot, request, generationId, expected: ["turn_prepared"], status: "running",
+    threadId: operation.thread_id, turnId: operation.turn_id, cycleId: effectiveCycleId, terminalStatus: null,
+  }, dependencies);
+  return {
+    schema: CODEX_GENERATION_ACTIVATION_RESULT_SCHEMA,
+    operation,
+    ready_receipt: hostReceipt(request, "ready", operation.thread_id),
+    journal: publicJournal(journal),
+  };
+}
+
+export async function recoverCodexGenerationSpawn({ stateRoot, request, generationId } = {}) {
+  requireCodexLaunchRequest(request);
+  requireGenerationId(generationId);
+  let journal;
+  try {
+    journal = await readJournal({ stateRoot, request, generationId });
+  } catch (error) {
+    if (error instanceof ObserverError && error.code === "E_CODEX_JOURNAL_NOT_FOUND") {
+      return generationRecovery("unknown", "journal_missing", null);
+    }
+    throw error;
+  }
+  if (["thread_starting", "thread_start_unknown"].includes(journal.status)) {
+    return generationRecovery("unknown", journal.status, null);
+  }
+  if (journal.thread_id === null) return generationRecovery("unknown", "thread_handle_missing", null);
+  return generationRecovery("spawned", null, hostReceipt(request, "spawned", journal.thread_id));
+}
+
+export async function recoverCodexGenerationReady({ stateRoot, request, session, generationId } = {}, dependencies = {}) {
+  requireCodexLaunchRequest(request);
+  requireInitializedSession(session);
+  requireGenerationId(generationId);
+  let journal;
+  try {
+    journal = await readJournal({ stateRoot, request, generationId });
+  } catch (error) {
+    if (error instanceof ObserverError && error.code === "E_CODEX_JOURNAL_NOT_FOUND") {
+      return generationRecovery("unknown", "journal_missing", null);
+    }
+    throw error;
+  }
+  if (journal.status !== "running" || journal.thread_id === null || journal.turn_id === null) {
+    return generationRecovery("unknown", journal.status, null);
+  }
+  const observation = await readCodexObserverThread({ request, threadId: journal.thread_id, session }, dependencies);
+  const turn = observation.turns.find((entry) => entry.turn_id === journal.turn_id);
+  if (turn?.status !== "inProgress") return generationRecovery("unknown", "turn_not_in_progress", null);
+  return {
+    ...generationRecovery("ready", null, hostReceipt(request, "ready", journal.thread_id)),
+    operation: operationFromJournal(journal),
   };
 }
 
@@ -337,6 +435,17 @@ function validateSpawnResult(value, request) {
   }
 }
 
+function validateGenerationSpawnResult(value, request) {
+  const receipt = value?.receipt;
+  if (!isPlainObject(value) || !isPlainObject(receipt) ||
+      ![CODEX_HOST_SPAWN_RESULT_SCHEMA, CODEX_GENERATION_RECOVERY_RESULT_SCHEMA].includes(value.schema) ||
+      (value.schema === CODEX_GENERATION_RECOVERY_RESULT_SCHEMA && value.outcome !== "spawned") ||
+      receipt.provider !== "codex" || receipt.watch_id !== request.watch_id || receipt.target_id !== request.target_id ||
+      receipt.outcome !== "spawned" || receipt.handle?.kind !== "codex.thread" || !UUID_V7_RE.test(receipt.handle.value)) {
+    fail("E_CODEX_SPAWN_RESULT_INVALID", "Codex generation spawn resultがrequestと一致しません");
+  }
+}
+
 function operationFromJournal(journal) {
   if (journal.thread_id === null || journal.turn_id === null) fail("E_CODEX_TURN_OPERATION_INVALID", "Codex journalにturn handleがありません");
   const status = TERMINAL_STATUSES.has(journal.status) ? journal.status : "inProgress";
@@ -386,6 +495,15 @@ function validateGenerationId(value) {
   if (value !== null && (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value))) {
     fail("E_CODEX_GENERATION_ID_INVALID", "Codex generation IDが不正です");
   }
+}
+
+function requireGenerationId(value) {
+  if (value === null || value === undefined) fail("E_CODEX_GENERATION_ID_REQUIRED", "Codex generation runtimeにはgeneration IDが必要です");
+  validateGenerationId(value);
+}
+
+function generationRecovery(outcome, reason, receipt) {
+  return { schema: CODEX_GENERATION_RECOVERY_RESULT_SCHEMA, outcome, reason, receipt };
 }
 
 function validateTimestamp(value) {

@@ -6,10 +6,14 @@ import test from "node:test";
 
 import {
   activateCodexObserver,
+  activateCodexGenerationObserver,
   initializeCodexObserverSession,
   readCodexObserverThread,
+  recoverCodexGenerationReady,
+  recoverCodexGenerationSpawn,
   recoverCodexObserverReady,
   resumeCodexObserverThread,
+  spawnCodexGenerationObserverThread,
   spawnCodexObserverThread,
   stopCodexObserver,
 } from "../src/codex-host-runtime.mjs";
@@ -21,6 +25,7 @@ const TURN_ID = "019f62a2-2222-7222-8222-222222222222";
 const TARGET_ID = `p_${"a".repeat(64)}`;
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
 const NOW = "2026-07-15T05:00:00.000Z";
+const GENERATION_ID = `sha256:${"a".repeat(64)}`;
 
 function launchRequest() {
   return {
@@ -250,4 +255,144 @@ test("interrupt結果不明はstoppingを耐久化し同じturnへ再送しな�
   assert.equal(pending.journal.status, "stopping");
   assert.equal(pending.terminal_receipt, null);
   assert.equal(interrupts, 1);
+});
+
+test("Codex generation runtimeはgeneration namespaceを必須にして親watch遷移を呼ばない", async (t) => {
+  const root = await stateRoot(t);
+  const session = new FakeSession(async (method) => {
+    if (method === "thread/start") return threadResult();
+    if (method === "turn/start") return { turn: { id: TURN_ID, status: "inProgress", items: [] } };
+    throw new Error(`unexpected ${method}`);
+  });
+  await initialize(session);
+  await assert.rejects(
+    spawnCodexGenerationObserverThread({ stateRoot: root, request: launchRequest(), session }),
+    expectCode("E_CODEX_GENERATION_ID_REQUIRED"),
+  );
+  const spawned = await spawnCodexGenerationObserverThread({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  const activated = await activateCodexGenerationObserver({
+    stateRoot: root, request: launchRequest(), spawnResult: spawned, session, generationId: GENERATION_ID,
+  }, {
+    now: () => NOW,
+    confirmParentHostSpawn: async () => { throw new Error("must not call parent spawn"); },
+    confirmParentLaunch: async () => { throw new Error("must not call parent ready"); },
+  });
+  assert.equal(activated.ready_receipt.outcome, "ready");
+  assert.equal(activated.operation.thread_id, THREAD_ID);
+  assert.equal(activated.operation.turn_id, TURN_ID);
+  assert.equal(activated.journal.status, "running");
+  assert.equal(Object.hasOwn(activated, "watch_status"), false);
+});
+
+test("Codex generation runtimeはdurable journalと異なるspawn handleを拒否する", async (t) => {
+  const root = await stateRoot(t);
+  const session = new FakeSession(async (method) => {
+    if (method === "thread/start") return threadResult();
+    throw new Error(`unexpected ${method}`);
+  });
+  await initialize(session);
+  const spawned = await spawnCodexGenerationObserverThread({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  const conflicting = structuredClone(spawned);
+  conflicting.receipt.handle.value = "019f62a5-5555-7555-8555-555555555555";
+  await assert.rejects(
+    activateCodexGenerationObserver({
+      stateRoot: root, request: launchRequest(), spawnResult: conflicting, session, generationId: GENERATION_ID,
+    }, { now: () => NOW }),
+    expectCode("E_CODEX_SPAWN_RESULT_INVALID"),
+  );
+  assert.equal(session.calls.filter((entry) => entry[1] === "turn/start").length, 0);
+});
+
+test("Codex generation spawn recoveryはjournal欠損とthread_start_unknownをunknownのまま再送しない", async (t) => {
+  const root = await stateRoot(t);
+  let starts = 0;
+  const session = new FakeSession(async (method) => {
+    if (method === "thread/start") { starts += 1; throw new Error("connection closed"); }
+    throw new Error(`unexpected ${method}`);
+  });
+  await initialize(session);
+  const missing = await recoverCodexGenerationSpawn({
+    stateRoot: root, request: launchRequest(), generationId: GENERATION_ID,
+  });
+  assert.deepEqual(missing, {
+    schema: "observer.codex_generation_recovery_result.v1",
+    outcome: "unknown",
+    reason: "journal_missing",
+    receipt: null,
+  });
+  await assert.rejects(
+    spawnCodexGenerationObserverThread({ stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID }, { now: () => NOW }),
+    expectCode("E_CODEX_THREAD_START_UNKNOWN"),
+  );
+  const unknown = await recoverCodexGenerationSpawn({
+    stateRoot: root, request: launchRequest(), generationId: GENERATION_ID,
+  });
+  assert.equal(unknown.outcome, "unknown");
+  assert.equal(unknown.reason, "thread_start_unknown");
+  assert.equal(unknown.receipt, null);
+  assert.equal(starts, 1);
+});
+
+test("Codex generation recoveryはdurable thread spawnと同一inProgress turnのreadyだけを返す", async (t) => {
+  const root = await stateRoot(t);
+  const session = new FakeSession(async (method) => {
+    if (method === "thread/start") return threadResult();
+    if (method === "turn/start") return { turn: { id: TURN_ID, status: "inProgress", items: [] } };
+    if (method === "thread/read") return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: TURN_ID, status: "inProgress", items: [] }] } };
+    throw new Error(`unexpected ${method}`);
+  });
+  await initialize(session);
+  const spawned = await spawnCodexGenerationObserverThread({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  const recoveredSpawn = await recoverCodexGenerationSpawn({
+    stateRoot: root, request: launchRequest(), generationId: GENERATION_ID,
+  });
+  assert.equal(recoveredSpawn.outcome, "spawned");
+  assert.deepEqual(recoveredSpawn.receipt, spawned.receipt);
+
+  await activateCodexGenerationObserver({
+    stateRoot: root, request: launchRequest(), spawnResult: recoveredSpawn, session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  const ready = await recoverCodexGenerationReady({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, {
+    now: () => NOW,
+    confirmParentHostSpawn: async () => { throw new Error("must not call parent spawn"); },
+    confirmParentLaunch: async () => { throw new Error("must not call parent ready"); },
+  });
+  assert.equal(ready.outcome, "ready");
+  assert.equal(ready.receipt.outcome, "ready");
+  assert.equal(ready.operation.thread_id, THREAD_ID);
+  assert.equal(ready.operation.turn_id, TURN_ID);
+  assert.deepEqual(session.calls.filter((entry) => entry[1] === "turn/start").length, 1);
+});
+
+test("Codex generation turn_start_unknown recoveryは別turnを開始しない", async (t) => {
+  const root = await stateRoot(t);
+  let turns = 0;
+  const session = new FakeSession(async (method) => {
+    if (method === "thread/start") return threadResult();
+    if (method === "turn/start") { turns += 1; throw new Error("connection closed"); }
+    throw new Error(`unexpected ${method}`);
+  });
+  await initialize(session);
+  const spawned = await spawnCodexGenerationObserverThread({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  await assert.rejects(
+    activateCodexGenerationObserver({ stateRoot: root, request: launchRequest(), spawnResult: spawned, session, generationId: GENERATION_ID }, { now: () => NOW }),
+    expectCode("E_CODEX_TURN_START_UNKNOWN"),
+  );
+  const recovered = await recoverCodexGenerationReady({
+    stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
+  }, { now: () => NOW });
+  assert.equal(recovered.outcome, "unknown");
+  assert.equal(recovered.reason, "turn_start_unknown");
+  assert.equal(recovered.receipt, null);
+  assert.equal(turns, 1);
 });

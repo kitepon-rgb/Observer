@@ -8,6 +8,7 @@ import {
   activateNextGenerationHost,
   authorizeNextGenerationHostStart,
   confirmGenerationHostTerminal,
+  readGenerationHostRecoveryContext,
   prepareGenerationHostStop,
   recordNextGenerationHostSpawn,
 } from "../src/generation-host-lifecycle.mjs";
@@ -282,4 +283,68 @@ test("activation後・journal cleanup前のcrashは同じreadyだけで冪等回
   }, { now: () => T1 });
   assert.equal(recovered.generation.status, "active");
   await assert.rejects(rawJournal(stateRoot), { code: "ENOENT" });
+});
+
+test("recovery contextはraw handle／receipt／launch本文を出さずstatusをnext actionへ固定する", async () => {
+  const stateRoot = await setup();
+  await prepareGenerationHostStop({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID }, { now: () => T1 });
+  const stopping = await readGenerationHostRecoveryContext({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID });
+  assert.deepEqual(stopping, {
+    schema: "observer.generation_host_recovery_context.v1",
+    provider: "claude",
+    watch_id: WATCH_ID,
+    target_id: TARGET.targetId,
+    status: "stop_authorized",
+    from_generation_id: stopping.from_generation_id,
+    from_sequence: 1,
+    to_generation_id: null,
+    to_sequence: null,
+    action: "observe_terminal",
+  });
+  assert.equal(JSON.stringify(stopping).includes(OLD_JOB), false);
+
+  await confirmGenerationHostTerminal({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, terminalReceipt: receipt("stopped") }, { now: () => T1 });
+  const terminal = await readGenerationHostRecoveryContext({
+    stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, launchRequest: launchRequest(),
+  }, { now: () => T1 });
+  assert.equal(terminal.action, "authorize_start");
+  assert.equal(JSON.stringify(terminal).includes("/observer"), false);
+  assert.equal(JSON.stringify(terminal).includes("receipt"), false);
+
+  await authorizeNextGenerationHostStart({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, launchRequest: launchRequest() }, { now: () => T1 });
+  const authorized = await readGenerationHostRecoveryContext({
+    stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, launchRequest: launchRequest(),
+  }, { now: () => T1 });
+  assert.equal(authorized.action, "recover_spawn");
+  assert.equal(authorized.to_sequence, 2);
+
+  await recordNextGenerationHostSpawn({
+    stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, spawnReceipt: receipt("spawned", NEW_JOB),
+  }, { now: () => T1 });
+  const spawned = await readGenerationHostRecoveryContext({
+    stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, launchRequest: launchRequest(),
+  }, { now: () => T1 });
+  assert.equal(spawned.action, "recover_ready");
+  assert.equal(JSON.stringify(spawned).includes(NEW_JOB), false);
+});
+
+test("terminal_observed以降のrecovery contextはlaunch request digest完全一致を要求する", async () => {
+  const stateRoot = await setup();
+  await prepareGenerationHostStop({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID }, { now: () => T1 });
+  await confirmGenerationHostTerminal({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, terminalReceipt: receipt("stopped") }, { now: () => T1 });
+  const original = launchRequest();
+  await readGenerationHostRecoveryContext({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, launchRequest: original }, { now: () => T1 });
+
+  const alternate = launchRequest();
+  alternate.runtime_root = "/observer-alternate";
+  alternate.host.cwd = "/observer-alternate";
+  alternate.child_start.runtime_root = "/observer-alternate";
+  await assert.rejects(
+    readGenerationHostRecoveryContext({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, launchRequest: alternate }, { now: () => T1 }),
+    expectCode("E_GENERATION_HOST_LAUNCH_REQUEST_CONFLICT"),
+  );
+  await assert.rejects(
+    readGenerationHostRecoveryContext({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID }),
+    expectCode("E_GENERATION_HOST_LAUNCH_REQUEST_REQUIRED"),
+  );
 });
