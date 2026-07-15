@@ -322,6 +322,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       一入力が超過する場合のfail-closedを[ADR 0034](adr/0034-generation-budget-and-planned-rollover.md)へ固定した。
     - generation state／budget reservation、cycle transaction接続、host terminal／次generation起動を
       独立gateに分け、旧generationのterminal不明時は新世代を起動しない。
+    - [x] generation stateとmodel呼出し前のexact reservationを実装した。strict Worker Reportを手補正せず
+      importし、親のfocused 24/24、`npm run check`、対象2 pathの`git diff --check`を一度再確認して
+      Control revision 25でacceptした。実装はcommit `9a2b899`、受入証拠は
+      [ADR 0035](adr/0035-generation-state-store-acceptance.md)へ独立固定した。
+    - [ ] cycle cursor commitとgeneration completionを同一target transactionへ接続する。
+    - [ ] provider別host terminal確認と次generation activationを接続する。
 
 - [ ] **P4-3 過剰指摘抑制を実装する。**
   - 成果物: materiality、evidence、novelty、actionability、timing gateとdedupe / cooldown。
