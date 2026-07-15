@@ -454,7 +454,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 
 ## Phase 4: Observer AIとノイズ抑制
 
-- [ ] **P4-1 Observer起動契約と出力schemaを実装する。**
+- [x] **P4-1 Observer起動契約と出力schemaを実装する。**
   - 成果物: 親と同じproviderを選ぶhost resolver、read-only伴走者役割、禁止事項、`no_advisory` / advisory proposalの固定契約。
   - 完了条件: 異provider Observer、継続的反証、通常会話、実装、自由形式出力へ逸脱した結果をSupervisorが拒否する。
   - [x] 同provider resolverと両host共通runtime prompt、`observer.ai_output.v1`のstrict parser／canonical digestを
@@ -462,8 +462,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     - 静的人格はObserver rootの`AGENTS.md`／`CLAUDE.md`、wire protocolは生成promptを正本とする。
     - `no_advisory`への理由追加、複数proposal、未知field、自由文、Markdown、過大出力をfail closedにする。
     - focused gate: `node --test test/observer-ai-contract.test.mjs test/parent-launch.test.mjs test/claude-host-adapter.test.mjs test/codex-host-adapter.test.mjs` — 29/29 PASS。
-  - [ ] P4-2の信頼済みcycle contextとP4-3のsemantic gateを通した後、Mailbox publishより前に
-    Supervisorが本parserを必須実行し、provider／target／watch／cycleをAI自己申告なしで束縛する。
+  - [x] P4-2の信頼済みcycle contextとP4-3のsemantic gateを通した後、Mailbox publishより前に
+    Supervisorが本parserを必須実行し、provider／target／watch／cycleをAI自己申告なしで束縛した
+    （[ADR 0089](adr/0089-advisory-semantic-cycle-integration-acceptance.md)）。
 
 - [ ] **P4-2 bounded evidence収集を実装する。**
   - 成果物: 新規turn、plan、diff、git、test evidenceの最小snapshot。
@@ -512,7 +513,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
         （[ADR 0071](adr/0071-supervisor-planned-rollover-acceptance.md)）。
       - [ ] coreが返すauthorization／receiptを実Claude／Codex commandへ結ぶbindingとH受入を完了する。
 
-- [ ] **P4-3 過剰指摘抑制を実装する。**
+- [x] **P4-3 過剰指摘抑制を実装する。**
   - 成果物: materiality、evidence、novelty、actionability、timing gateとdedupe / cooldown。
   - 完了条件: 好み、一般論、証拠不足、対処中、同一指摘のfixtureで手紙を出さない。
   - [x] **P4-3a runtime deterministic gate:** evidence ref一意性／適格性、record-first current decision、
@@ -522,10 +523,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [x] **P4-3b cycle application integration:** acceptedだけをMailboxへexact publishし、suppressed専用result、
     crash replay、finalization／retentionを既存model operation順序へ接続した
     （[ADR 0089](adr/0089-advisory-semantic-cycle-integration-acceptance.md)）。
-  - [ ] **P4-3c semantic behavioral eval:** materiality、actionability、semantic timing、親が対処中かを
+  - [x] **P4-3c semantic behavioral eval:** materiality、actionability、semantic timing、親が対処中かを
     文字列heuristicへ落とさず、好み／一般論／対処中を`no_advisory`にするstrict eval fixtureを固定する。
     実provider採否はP4-4 H gateへ残し、runtime機械gateだけでP4-3を完了扱いしない
-    （[ADR 0090](adr/0090-semantic-behavioral-eval-contract.md)）。
+    （[ADR 0090](adr/0090-semantic-behavioral-eval-contract.md)、
+    [ADR 0091](adr/0091-semantic-behavioral-eval-acceptance.md)）。
 
 - [ ] **P4-4 severityと最小dogfoodを完了する。**
   - 成果物: `info`、`warning`、`review_required`の実例と採否記録。
