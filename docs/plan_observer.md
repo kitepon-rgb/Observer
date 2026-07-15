@@ -574,7 +574,16 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     （[ADR 0103](adr/0103-live-campaign-preflight-contract.md)）。実装 `bbe407d`、focused
     13/13、related 40/40、actual read-only preflight `h_required`、`npm run check` greenを
     [ADR 0104](adr/0104-live-campaign-preflight-acceptance.md)で受け入れた。
-  - [ ] **P5-1b live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
+  - [ ] **P5-1b1 Codex caller core 非H:** current parent、watch、host receipt、initial generation、
+    同一app-server transport、Supervisor loop、terminal stopを一processへ接続する
+    （[ADR 0105](adr/0105-production-parent-caller-gap-and-order.md)）。
+  - [ ] **P5-1b2 Codex parent entry／dotagents配布 非H:** 現在Codex親からexact contextを注入し、
+    isolated HOMEでinstall／verify／rollbackする。live providerは起動しない。
+  - [ ] **P5-1b3 Claude public surface characterization H:** 公開非対話reply ACK、exact result read、
+    job／session／Stop相関の実在を一回確認する。private protocolやheadless resumeへfallbackしない。
+  - [ ] **P5-1b4 Claude caller core 非H:** P5-1b3で実証した公開面だけをissue／recover／cleanup、
+    initial generation、Supervisor loopへ接続する。
+  - [ ] **P5-1b5 dual-host live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
     65秒超wait、実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
