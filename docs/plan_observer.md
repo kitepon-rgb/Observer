@@ -544,6 +544,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 - [ ] **P5-1 E2Eとfault injectionを完了する。**
   - 成果物: Codex `task_complete`／Claude実証済み完了証拠 → Throughline → 同provider Observer → Mailbox → 親Stop continuationの両host統合test。
   - 完了条件: timeout、thread切替、crash、重複通知、誤配送、claim失敗を含む受け入れ条件がgreenになる。
+  - [ ] **P5-1a 非H core E2E:** 実Observer state／transactionとversioned Throughline／Codex公開境界fixtureで、
+    Codexのcompleted cycleからsemantic decision、Mailbox、parent Stopまでを貫通する。silence、suppression、
+    crash replay、重複、誤配送、claim失敗をexact-once契約へ収束させ、Claudeはstate変更前の
+    `provider_unavailable`だけを受け入れる（[ADR 0092](adr/0092-host-neutral-core-e2e-contract.md)）。
+  - [ ] **P5-1b live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
+    65秒超wait、実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。
 
 - [ ] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
