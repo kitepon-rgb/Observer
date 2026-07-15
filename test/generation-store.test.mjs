@@ -1,0 +1,154 @@
+import assert from "node:assert/strict";
+import { lstat, mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import { ObserverError } from "../src/observer-error.mjs";
+import { ensureStatePath } from "../src/private-state.mjs";
+import {
+  GENERATION_MAX_COMPLETED_CYCLES,
+  GENERATION_MAX_MODEL_VISIBLE_BYTES,
+  activateGeneration,
+  beginNextGeneration,
+  completeGenerationCycle,
+  confirmGenerationTerminal,
+  initializeGeneration,
+  readGenerationState,
+  requestGenerationStop,
+  reserveGenerationInput,
+  validateGenerationState,
+} from "../src/generation-store.mjs";
+
+const TARGET_ID = `p_${"a".repeat(64)}`;
+const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
+const THREAD_SHA = "b".repeat(64);
+const CYCLE = `c_${"c".repeat(64)}`;
+const INPUT = `sha256:${"d".repeat(64)}`;
+const RESULT = `sha256:${"e".repeat(64)}`;
+const T0 = new Date("2026-07-15T00:00:00.000Z");
+const T1 = new Date("2026-07-15T00:01:00.000Z");
+
+function receipt(outcome = "ready", handle = "job-private-1") {
+  return {
+    schema: "observer.host_receipt.v1", provider: "claude", watch_id: WATCH_ID, target_id: TARGET_ID, outcome,
+    handle: { kind: "claude.job", value: handle },
+  };
+}
+function deps(time = T0) {
+  return {
+    now: () => time,
+    readWatchStatus: async () => ({ provider: "claude", watch_id: WATCH_ID, target_id: TARGET_ID, status: "active" }),
+  };
+}
+function expectCode(code) { return (error) => error instanceof ObserverError && error.code === code; }
+async function box() { return mkdtemp(join(tmpdir(), "observer-generation-")); }
+async function initialize(stateRoot) {
+  await ensureStatePath(stateRoot, "watches", TARGET_ID);
+  return initializeGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, provider: "claude", parentThreadSha256: THREAD_SHA, readyReceipt: receipt() }, deps());
+}
+
+test("initializeは既存active watch directoryを要求し、不正identityで空directoryを残さない", async () => {
+  const stateRoot = await box();
+  await assert.rejects(
+    initializeGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, provider: "claude", parentThreadSha256: THREAD_SHA, readyReceipt: receipt() }, deps()),
+    expectCode("E_GENERATION_NOT_FOUND"),
+  );
+  await assert.rejects(lstat(join(stateRoot, "watches")), { code: "ENOENT" });
+  await assert.rejects(
+    initializeGeneration({ stateRoot, targetId: "bad", watchId: WATCH_ID, provider: "claude", parentThreadSha256: THREAD_SHA, readyReceipt: receipt() }, deps()),
+    expectCode("E_GENERATION_STATE_INVALID"),
+  );
+  await assert.rejects(lstat(join(stateRoot, "watches")), { code: "ENOENT" });
+});
+
+test("active watchとready receiptを照合してraw handleなしのgeneration stateを作る", async () => {
+  const stateRoot = await box();
+  const state = await initialize(stateRoot);
+  assert.equal(state.status, "active");
+  assert.equal(state.sequence, 1);
+  assert.equal(state.completed_cycles, 0);
+  assert.equal(JSON.stringify(state).includes("job-private-1"), false);
+  const raw = await readFile(join(stateRoot, "watches", TARGET_ID, "generation.json"), "utf8");
+  assert.equal(raw.includes("job-private-1"), false);
+  assert.equal(raw.includes(THREAD_SHA), false);
+  assert.deepEqual(await readGenerationState({ stateRoot, targetId: TARGET_ID }), state);
+});
+
+test("同一reservationとcompletionは冪等、異なる値は拒否しbudgetはcompletion時だけ加算する", async () => {
+  const stateRoot = await box(); await initialize(stateRoot);
+  const first = await reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: 100 }, deps(T1));
+  const retry = await reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: 100 }, deps(T1));
+  assert.equal(first.outcome, "reserved"); assert.equal(retry.outcome, "reserved");
+  await assert.rejects(
+    reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: 101 }, deps(T1)),
+    expectCode("E_GENERATION_RESERVATION_CONFLICT"),
+  );
+  const complete = await completeGenerationCycle({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: 100, resultDigest: RESULT }, deps(T1));
+  assert.equal(complete.completed_cycles, 1); assert.equal(complete.model_visible_bytes, 100);
+  assert.equal((await completeGenerationCycle({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: 100, resultDigest: RESULT }, deps(T1))).completed_cycles, 1);
+  await assert.rejects(
+    completeGenerationCycle({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: 100, resultDigest: `sha256:${"f".repeat(64)}` }, deps(T1)),
+    expectCode("E_GENERATION_COMPLETION_CONFLICT"),
+  );
+});
+
+test("cycle上限とbyte上限はmodel前にplanned rolloverへ遷移し、fresh過大入力はfail closedする", async () => {
+  const stateRoot = await box(); await initialize(stateRoot);
+  await assert.rejects(
+    reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: GENERATION_MAX_MODEL_VISIBLE_BYTES + 1 }, deps(T1)),
+    expectCode("E_GENERATION_INPUT_TOO_LARGE"),
+  );
+  for (let index = 1; index <= GENERATION_MAX_COMPLETED_CYCLES; index += 1) {
+    const digit = index.toString(16);
+    const cycleId = `c_${digit.repeat(64)}`;
+    const inputDigest = `sha256:${digit.repeat(64)}`;
+    await reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId, inputDigest, modelVisibleBytes: 1 }, deps(T1));
+    await completeGenerationCycle({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId, inputDigest, modelVisibleBytes: 1, resultDigest: `sha256:${"f".repeat(64)}` }, deps(T1));
+  }
+  const rollover = await reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: `c_${"f".repeat(64)}`, inputDigest: `sha256:${"f".repeat(64)}`, modelVisibleBytes: 1 }, deps(T1));
+  assert.equal(rollover.outcome, "planned_rollover");
+  assert.equal(rollover.state.status, "rollover_requested");
+  assert.equal(rollover.state.rollover_reason, "completed_cycles");
+});
+
+test("terminal receipt確認前には次sequenceを開始できず、confirmed後だけstartingからactiveへ進む", async () => {
+  const stateRoot = await box(); await initialize(stateRoot);
+  const rollover = await reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: GENERATION_MAX_MODEL_VISIBLE_BYTES }, deps(T1));
+  await completeGenerationCycle({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE, inputDigest: INPUT, modelVisibleBytes: GENERATION_MAX_MODEL_VISIBLE_BYTES, resultDigest: RESULT }, deps(T1));
+  const planned = await reserveGenerationInput({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: `c_${"f".repeat(64)}`, inputDigest: `sha256:${"f".repeat(64)}`, modelVisibleBytes: 1 }, deps(T1));
+  assert.equal(rollover.outcome, "reserved"); assert.equal(planned.outcome, "planned_rollover");
+  await assert.rejects(beginNextGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID }, deps(T1)), expectCode("E_GENERATION_TRANSITION_INVALID"));
+  await requestGenerationStop({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID }, deps(T1));
+  await assert.rejects(confirmGenerationTerminal({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, terminalReceipt: receipt("stopped", "other-job") }, deps(T1)), expectCode("E_GENERATION_TERMINAL_HANDLE_MISMATCH"));
+  await confirmGenerationTerminal({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, terminalReceipt: receipt("stopped") }, deps(T1));
+  const starting = await beginNextGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID }, deps(T1));
+  assert.equal(starting.status, "starting"); assert.equal(starting.sequence, 2);
+  assert.deepEqual(await beginNextGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID }, deps(T1)), starting);
+  const active = await activateGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, readyReceipt: receipt("ready", "job-private-2") }, deps(T1));
+  assert.equal(active.status, "active"); assert.equal(active.sequence, 2);
+  assert.deepEqual(await activateGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, readyReceipt: receipt("ready", "job-private-2") }, deps(T1)), active);
+  await assert.rejects(activateGeneration({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, readyReceipt: receipt("ready", "job-private-3") }, deps(T1)), expectCode("E_GENERATION_ACTIVATION_CONFLICT"));
+});
+
+test("generation identity、status relationship、invalid timestampをfail closedで拒否する", async () => {
+  const stateRoot = await box();
+  const state = await initialize(stateRoot);
+  assert.throws(() => validateGenerationState({ ...state, generation_id: `sha256:${"f".repeat(64)}` }), expectCode("E_GENERATION_STATE_INVALID"));
+  assert.throws(() => validateGenerationState({ ...state, rollover_reason: "completed_cycles" }), expectCode("E_GENERATION_STATE_INVALID"));
+  assert.throws(() => validateGenerationState({ ...state, created_at: "not-a-time" }), expectCode("E_GENERATION_STATE_INVALID"));
+  assert.throws(() => validateGenerationState({ ...state, model_visible_bytes: 1 }), expectCode("E_GENERATION_STATE_INVALID"));
+  assert.throws(() => validateGenerationState({
+    ...state,
+    completed_cycles: 1,
+    model_visible_bytes: 1,
+    last_completed_cycle: { cycle_id: CYCLE, input_digest: INPUT, model_visible_bytes: 2, result_digest: RESULT },
+  }), expectCode("E_GENERATION_STATE_INVALID"));
+  assert.throws(() => validateGenerationState({
+    ...state,
+    completed_cycles: 1,
+    model_visible_bytes: GENERATION_MAX_MODEL_VISIBLE_BYTES,
+    last_completed_cycle: { cycle_id: CYCLE, input_digest: INPUT, model_visible_bytes: 1, result_digest: RESULT },
+    pending_reservation: { cycle_id: CYCLE, input_digest: INPUT, model_visible_bytes: 1 },
+  }), expectCode("E_GENERATION_STATE_INVALID"));
+});
