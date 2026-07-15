@@ -302,6 +302,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     - Throughline turn itemをexact検証し、最新側から最大12 KiBへboundする。
     - plan最大4 refs／6 KiB、git最大8 KiB、test receipt最大16件／4 KiB、全体32 KiBを強制する。
     - raw snapshotを保存せず、digest、bytes、件数、truncation／redaction flagsだけのreceiptを生成する。
+    - Control Run 1は契約不足でreject、Run 2はnative無応答をcancelledへ閉じた。未受入成果を成功扱いせず、
+      [ADR 0028](adr/0028-evidence-builder-control-wave-boundary.md)によりsuccessor Controlへ移送して継続する。
   - [ ] read-only collectorを実装し、承認済みplan ref、git HEAD／status／diff evidence、既存test receiptを
     snapshot builderへ渡す。collector unavailableを空の成功へ丸めず、利用不能refとして明示する。
   - [ ] generation stateへcycle数とmodel-visible byte数を耐久化し、8 cycle／256 KiB到達前の
