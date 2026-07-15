@@ -140,7 +140,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - 成果物: project read-only、Observer state / Mailbox write-onlyの実行profileと拒否test。
   - 完了条件: project内writeが失敗し、監視とMailbox publishは成功する。
   - [x] Codex native custom agentのTOML指定だけではunrestricted親のoverrideを防げないことを実測した。
-  - [ ] app-server persistent threadのアプリ内表示、per-thread read-only、65秒超wait、crash回収、停止をcharacterizationする。
+  - [x] app-server persistent threadのper-thread read-only、project write拒否、別processからの`thread/read`／`thread/list`回収をcharacterizationした（[ADR 0009](adr/0009-codex-appserver-characterization.md)）。
+  - [ ] Codexアプリ内表示、65秒超wait、adapter crash後のturn resume、明示interrupt／停止、Observer MCP限定writeをcharacterizationする。
   - [ ] Claude backgroundをread-only tool allowlistで起動し、project write拒否とObserver MCP成功をcharacterizationする。
 
 **Gate:** 手紙を生成しない最小Observerが、親の再作成と一時間timeoutを含めて継続監視できる。
