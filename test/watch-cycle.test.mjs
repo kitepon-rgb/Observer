@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { runWatchCycle } from "../src/watch-cycle.mjs";
+import { runFixedThroughReplay, runWatchCycle } from "../src/watch-cycle.mjs";
 
 const TARGET = { schema: "observer.project_target.v1", targetId: `p_${"a".repeat(64)}`, projectRoot: "/project" };
 const THREAD = "b".repeat(64);
@@ -67,9 +67,47 @@ test("watch cycle keeps the current state when changed read is projection pendin
     wait: async () => ({ schema: "throughline.observer_wait.v1", status: "changed", afterCursor: CURRENT.cursor, throughCursor: "tlc1.fixed" }),
     read: async () => read({ status: "projection_pending", afterCursor: CURRENT.cursor, throughCursor: null, host: "claude", turns: [] }),
   } });
-  assert.deepEqual(pending, { status: "projection_pending", proposed_state: CURRENT, turns: [] });
+  assert.deepEqual(pending, { status: "projection_pending", proposed_state: CURRENT, turns: [], fixed_through_cursor: "tlc1.fixed" });
   await assert.rejects(runWatchCycle({ current: CURRENT, client: {
     wait: async () => ({ schema: "throughline.observer_wait.v1", status: "changed", afterCursor: CURRENT.cursor, throughCursor: "tlc1.fixed" }),
     read: async () => read({ status: "delta", afterCursor: "tlc1.other", throughCursor: "tlc1.fixed" }),
   } }), { code: "E_PARENT_CURSOR_MISMATCH" });
+});
+
+test("fixed-through replay never invokes wait or expands a prepared cursor", async () => {
+  const calls = [];
+  const replayed = await runFixedThroughReplay({ target: TARGET, current: CURRENT, throughCursor: "tlc1.prepared", client: {
+    wait: async () => assert.fail("replay must not invoke wait"),
+    read: async (input) => {
+      calls.push(input);
+      return read({ status: "delta", afterCursor: CURRENT.cursor, throughCursor: "tlc1.prepared", turns: [{ n: 1 }] });
+    },
+  } });
+  assert.equal(replayed.proposed_state.cursor, "tlc1.prepared");
+  assert.deepEqual(calls.map(({ afterCursor, throughCursor }) => ({ afterCursor, throughCursor })), [{ afterCursor: CURRENT.cursor, throughCursor: "tlc1.prepared" }]);
+
+  const oriented = await runFixedThroughReplay({ target: TARGET, throughCursor: "tlc1.snapshot", client: {
+    read: async (input) => {
+      assert.equal(input.throughCursor, "tlc1.snapshot");
+      return read({ throughCursor: "tlc1.snapshot", host: null });
+    },
+  } });
+  assert.equal(oriented.proposed_state.cursor, "tlc1.snapshot");
+});
+
+test("fixed-through orientation replay accepts pending with null through cursor before succeeding", async () => {
+  let reads = 0;
+  const client = {
+    read: async (input) => {
+      reads++;
+      assert.equal(input.throughCursor, "tlc1.prepared-snapshot");
+      return reads === 1
+        ? read({ status: "projection_pending", throughCursor: null, host: null, complete: false, nextToken: null })
+        : read({ status: "snapshot", throughCursor: "tlc1.prepared-snapshot", host: null });
+    },
+  };
+  assert.equal((await runFixedThroughReplay({ target: TARGET, throughCursor: "tlc1.prepared-snapshot", client })).status, "projection_pending");
+  const recovered = await runFixedThroughReplay({ target: TARGET, throughCursor: "tlc1.prepared-snapshot", client });
+  assert.equal(recovered.status, "oriented");
+  assert.equal(recovered.proposed_state.cursor, "tlc1.prepared-snapshot");
 });

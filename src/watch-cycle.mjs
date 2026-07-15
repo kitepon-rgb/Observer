@@ -27,6 +27,24 @@ export async function runWatchCycle({ target, current = null, client, timeoutSec
   return readChanged({ current, throughCursor: wait.throughCursor, client, signal });
 }
 
+/**
+ * Rebuilds a journaled cycle at its recorded cursor without consulting wait.
+ * Recovery must never expand the journal's transaction to a newer cursor.
+ */
+export async function runFixedThroughReplay({ target, current = null, throughCursor, client, signal } = {}) {
+  if (!client || typeof client.read !== "function") fail("E_WATCH_CLIENT", "Throughline clientが不正です");
+  if (typeof throughCursor !== "string" || throughCursor.length === 0) fail("E_PARENT_CURSOR_MISMATCH", "fixed through cursorが不正です");
+  if (current === null) {
+    const read = await client.read({ projectPath: target?.projectRoot, throughCursor, signal });
+    const resolution = resolveParentSnapshot({ target, readResult: read });
+    if (resolution.status === "pending") return { status: "projection_pending", proposed_state: null, turns: [] };
+    if (read.throughCursor !== throughCursor) fail("E_PARENT_CURSOR_MISMATCH", "snapshotがfixed through cursorへ連結していません");
+    return { status: "oriented", proposed_state: resolution.state, turns: read.turns };
+  }
+  validateParentState(current);
+  return readChanged({ current, throughCursor, client, signal });
+}
+
 async function orient({ target, client, signal }) {
   const read = await client.read({ projectPath: target.projectRoot, signal });
   const resolution = resolveParentSnapshot({ target, readResult: read });
@@ -51,7 +69,9 @@ async function readChanged({ current, throughCursor, client, signal }) {
       fail("E_PARENT_CURSOR_MISMATCH", "read resultがwait cursorへ連結していません");
     }
     const transition = proposeParentTransition({ current, readResult: read });
-    if (transition.status === "pending") return { status: "projection_pending", proposed_state: current, turns: [] };
+    if (transition.status === "pending") return {
+      status: "projection_pending", proposed_state: current, turns: [], fixed_through_cursor: throughCursor,
+    };
     if (read.throughCursor !== throughCursor) {
       fail("E_PARENT_CURSOR_MISMATCH", "read resultがwait cursorへ連結していません");
     }
