@@ -138,8 +138,9 @@ apply成功へ丸めない。generic completedからのrecoveryでも同じclean
 Throughlineは、turn本文を返さないread-only long-poll CLIと、完了turnを取得するread CLIを提供する。外部Supervisor
 runtimeだけがこの二入口を子processとして呼び、保存cursor、fixed-through evidence、model operation、apply、cursor
 commitを一意に所有する。Observer AIへwait／read toolを公開しない。既存のObserver MCP adapterは公開Throughline
-adapterとして残すが、production AI loopのownerにはせず、Phase 2完了前にdiagnostics／compatibility surfaceとしての
-存廃を別Taskで裁定する。ObserverはDB / WALを直接読まない。
+adapterとして残すが、production AI loopのownerにはしない。Observer MCPは
+[ADR 0097](adr/0097-observer-mcp-compatibility-diagnostics-contract.md)によりread-only compatibility／diagnostics
+surfaceとして維持し、production AIのtool allowlistは空のままにする。ObserverはDB / WALを直接読まない。
 
 ```text
 wait_for_turn_change(
@@ -180,6 +181,8 @@ wait_for_turn_change(
 - cursorはThroughlineだけが解釈するopaque tokenとし、Observerは比較、加工、採番せずそのまま保存して返す。
 - 一回の待機上限は既定3600秒。外部Supervisorが一target一processのbounded stepとして待機し、AI host turnを待機に使わない。
 - Observer MCPのwait / read toolはread-only注釈を維持するが、production Observer AIのtool allowlistへ含めない。
+- installer／host diagnosticsは`observer-mcp --diagnostics`の決定的なsanitized JSONでversion、protocol、
+  exact read／wait surface、production AI無効を確認する。MCP greenをprovider delivery成功へ読み替えない。
 - changed応答へturn本文を含めない。
 - 外部Supervisorはchanged後、`read_completed_turns(project_root, after_cursor, through_cursor)`相当の入口から完了turnを取得する。
 - read入口は初回の`snapshot`、通常の`delta`、親作り直しの`thread_switched`、rollback等の`resync_required`、DB freshness待ちの`projection_pending`を区別する。

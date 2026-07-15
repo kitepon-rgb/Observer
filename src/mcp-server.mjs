@@ -8,8 +8,13 @@ import { readWatchStatus } from "./watch-store.mjs";
 export const OBSERVER_MCP_PROTOCOL_VERSION = "2025-11-25";
 export const OBSERVER_MCP_SERVER_VERSION = "0.0.0";
 export const OBSERVER_MCP_MAX_MESSAGE_BYTES = 64 * 1024;
+export const OBSERVER_MCP_DIAGNOSTICS_SCHEMA = "observer.mcp_diagnostics.v1";
+export const OBSERVER_MCP_PROTOCOL_VERSIONS = Object.freeze([
+  OBSERVER_MCP_PROTOCOL_VERSION,
+  "2025-06-18",
+]);
 
-const SUPPORTED_PROTOCOL_VERSIONS = new Set([OBSERVER_MCP_PROTOCOL_VERSION, "2025-06-18"]);
+const SUPPORTED_PROTOCOL_VERSIONS = new Set(OBSERVER_MCP_PROTOCOL_VERSIONS);
 const TARGET_ID_RE = /^p_[a-f0-9]{64}$/;
 const WATCH_ID_RE = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const CURSOR_MAX_BYTES = 4096;
@@ -99,6 +104,17 @@ export const OBSERVER_MCP_TOOLS = Object.freeze([
   },
 ]);
 
+export function observerMcpDiagnostics() {
+  return {
+    schema: OBSERVER_MCP_DIAGNOSTICS_SCHEMA,
+    status: "ready",
+    server_version: OBSERVER_MCP_SERVER_VERSION,
+    protocol_versions: [...OBSERVER_MCP_PROTOCOL_VERSIONS],
+    tools: OBSERVER_MCP_TOOLS.map((tool) => tool.name),
+    production_ai_surface: "disabled",
+  };
+}
+
 class ProtocolError extends Error {
   constructor(code, message) {
     super(message);
@@ -147,7 +163,11 @@ export function createObserverMcpSession({
       return {
         protocolVersion: SUPPORTED_PROTOCOL_VERSIONS.has(requested) ? requested : OBSERVER_MCP_PROTOCOL_VERSION,
         capabilities: { tools: { listChanged: false } },
-        serverInfo: { name: "observer", version: OBSERVER_MCP_SERVER_VERSION, description: "Completed-turn Observer read and wait server" },
+        serverInfo: {
+          name: "observer",
+          version: OBSERVER_MCP_SERVER_VERSION,
+          description: "Read-only completed-turn compatibility and diagnostics adapter",
+        },
       };
     }
     if (phase !== "ready") throw new ProtocolError(-32600, "MCP session is not initialized");

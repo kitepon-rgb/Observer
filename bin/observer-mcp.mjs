@@ -1,11 +1,17 @@
 #!/usr/bin/env node
 
-import { OBSERVER_MCP_SERVER_VERSION, runObserverMcpStdio } from "../src/mcp-server.mjs";
+import {
+  observerMcpDiagnostics,
+  OBSERVER_MCP_SERVER_VERSION,
+  runObserverMcpStdio,
+} from "../src/mcp-server.mjs";
 
 const args = process.argv.slice(2);
 
 if (args.length === 1 && args[0] === "--version") {
   process.stdout.write(`${OBSERVER_MCP_SERVER_VERSION}\n`);
+} else if (args.length === 1 && args[0] === "--diagnostics") {
+  process.stdout.write(`${JSON.stringify(observerMcpDiagnostics())}\n`);
 } else if (args.length === 1 && args[0] === "--stdio") {
   try {
     runObserverMcpStdio();
@@ -14,6 +20,6 @@ if (args.length === 1 && args[0] === "--version") {
     process.exitCode = 1;
   }
 } else {
-  process.stderr.write("usage: observer-mcp --stdio | --version\n");
+  process.stderr.write("usage: observer-mcp --stdio | --version | --diagnostics\n");
   process.exitCode = 2;
 }

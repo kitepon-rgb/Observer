@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { PassThrough } from "node:stream";
 import test from "node:test";
 
 import { ObserverError } from "../src/observer-error.mjs";
 import {
   createObserverMcpSession,
+  observerMcpDiagnostics,
+  OBSERVER_MCP_DIAGNOSTICS_SCHEMA,
   OBSERVER_MCP_PROTOCOL_VERSION,
+  OBSERVER_MCP_PROTOCOL_VERSIONS,
   OBSERVER_MCP_SERVER_VERSION,
   runObserverMcpStdio,
 } from "../src/mcp-server.mjs";
@@ -83,6 +87,7 @@ test("MCP lifecycleはinitialize前toolを拒否し固定read/wait surfaceだけ
     assert.equal(tool.inputSchema.additionalProperties, false);
   }
   assert.equal((await session.receive(request(4, "initialize", { protocolVersion: OBSERVER_MCP_PROTOCOL_VERSION, capabilities: {}, clientInfo: {} }))).error.code, -32600);
+  assert.equal((await session.receive(request(5, "tools/call", { name: "observer_write", arguments: {} }))).error.code, -32602);
   session.close();
 });
 
@@ -164,10 +169,24 @@ test("stdio transportはnewline JSON-RPCだけをstdoutへ出し不正JSONで閉
   server.close();
 });
 
-test("observer-mcp executableはversionと引数契約を固定する", () => {
+test("observer-mcp executableはversion、diagnostics、package bin、引数契約を固定する", () => {
   const version = spawnSync(process.execPath, ["bin/observer-mcp.mjs", "--version"], { encoding: "utf8" });
   assert.equal(version.status, 0, version.stderr);
   assert.equal(version.stdout.trim(), OBSERVER_MCP_SERVER_VERSION);
+  const diagnostics = spawnSync(process.execPath, ["bin/observer-mcp.mjs", "--diagnostics"], { encoding: "utf8" });
+  assert.equal(diagnostics.status, 0, diagnostics.stderr);
+  assert.equal(diagnostics.stderr, "");
+  assert.deepEqual(JSON.parse(diagnostics.stdout), observerMcpDiagnostics());
+  assert.deepEqual(observerMcpDiagnostics(), {
+    schema: OBSERVER_MCP_DIAGNOSTICS_SCHEMA,
+    status: "ready",
+    server_version: OBSERVER_MCP_SERVER_VERSION,
+    protocol_versions: [...OBSERVER_MCP_PROTOCOL_VERSIONS],
+    tools: ["observer_read", "observer_wait"],
+    production_ai_surface: "disabled",
+  });
+  const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(manifest.bin["observer-mcp"], "bin/observer-mcp.mjs");
   const invalid = spawnSync(process.execPath, ["bin/observer-mcp.mjs"], { encoding: "utf8" });
   assert.equal(invalid.status, 2);
   assert.equal(invalid.stdout, "");
