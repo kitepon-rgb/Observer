@@ -140,7 +140,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 
 - [ ] **P2-4 一時間wait loopとcursor回復を実装する。**
   - 成果物: host-neutralな`observer watch <absolute-project-root>`、active watch transaction、親別launcherと、Claude／Codex adapterでchanged / timeout / restartを処理する監視loop。
-  - 完了条件: ユーザー明示指示を受けた親だけが同provider Observerを一体起動する。timeout時は定型報告だけでDoneし、同じturn内の次監視サイクルで同じcursorから再待機し、停止中の更新も回収する。二重起動、transport / schema / state failureではfail closedまたはfaultedになり、takeover、自動再起動、Stop continuationを繰り返さない。
+  - 完了条件: ユーザー明示指示を受けた親だけが同provider Observerを一体起動する。外部Supervisorが一target一processで
+    wait／read／cursor／model operation／applyを所有し、timeoutではAIを起動せず同じcursorから次のbounded wait stepへ戻る。
+    二重起動、transport / schema / state failureではfail closedまたはfaultedになり、takeover、自動再起動、provider request再送を行わない。
   - [x] Throughline公開CLI clientと、cursorをまだ保存しない一監視cycleを実装する（[ADR 0003](adr/0003-throughline-subprocess-cycle.md)）。
     - bounded JSON、UTF-8 byte収集、strict schema、Abort時のSIGTERM→SIGKILL terminal cleanup、
       orientation／timeout／fixed-through pagination／projection pendingを実装した。
@@ -179,6 +181,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
         exact tool surfaceを検証し、handle先行耐久化を守る分離runtimeを実装した（[ADR 0015](adr/0015-claude-host-runtime-boundary.md)）。
         - Claude `--bg`のshort IDをspawn直後に耐久化し、observe／readyを同じ関数へ畳み込まない。
         - MCP tool surfaceは実装済みの`observer_read`／`observer_wait`だけへexact固定し、wildcardを許さない。
+        - [x] [ADR 0060](adr/0060-supervisor-owned-cycle-runtime.md)の所有権訂正によりproduction Observer AIの
+          tool allowlistを空へ変更した。MCP server自体は削除せず、compatibility／diagnostics裁定を後続Taskへ残した。
         - spawn結果不明時はwatch固有nameとcwdから回収し、同じwatchを再spawnしない。
         - 検証: focused 23件、parent-launch接続7件、`npm run check`、実binary read-only diagnosticsがgreen。
       - [x] Codex app-serverの純粋adapterとsession runtimeをparent-launchへ配線した（[ADR 0018](adr/0018-codex-host-runtime-boundary.md)）。
@@ -248,8 +252,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
               crash matrixをfocused fixtureで固定する。
             - [ ] Claude／Codexのexact operation result readをprovider固有journalへ実装し、handle欠損を
               別operationへの再送で隠さない（[ADR 0055](adr/0055-provider-exact-result-journal-contract.md)）。
-              - Codexは保存済みthread／turnの`thread/read`だけからexact `agentMessage` itemを再読し、
-                cycleごとのStop sealと直前item baselineで同一turn内の結果を分離する。Claudeはjob／sessionを
+              - Codexは保存済みthread／cycle turnの`thread/read`だけからexact `agentMessage` itemを再読する。
+                Claudeはjob／sessionを
                 束縛した`Stop.last_assistant_message`をhook中にcanonical保存する。
               - `logs`／transcript／private provider state／別turn／別job／新規requestへのfallbackを禁止する。
               - provider journal coreとfake public-surface fixtureを先に受け入れるが、この時点では本TODOを閉じない。
@@ -262,11 +266,17 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
                   [ADR 0057](adr/0057-supervisor-provider-cleanup-acceptance.md)で固定した。
               - Claude job `sessionId`／Stop `session_id`の一致、Codex hook trustとin-progress item再読はlive H gateで
                 version固定し、未実証をproduction対応済みにしない。
-              - [x] host-neutral canonical cycle requestとCodexの
+              - [x] **SUPERSEDED:** host-neutral canonical cycle requestとCodexの
                 `thread/read baseline -> turn/steer -> ACK -> accepted journal` fixtureをcommit `1bb7b07`、
                 focused 22/22、Supervisor関連16/16、[ADR 0059](adr/0059-codex-cycle-request-delivery-acceptance.md)で
-                受け入れた。provider journal欠損とaccepted-before-generic-accepted回収も同じ単位で補正した。
-              - [ ] Codex production Supervisor caller／Stop hookを接続し、session／turn／baseline順序をlive H gateで固定する。
+                受け入れたが、AI wait loopとSupervisorの二重所有およびStop idle問題が判明したため、
+                [ADR 0060](adr/0060-supervisor-owned-cycle-runtime.md)で`turn/steer`／Stop continuation部分をsupersedeした。
+                canonical requestとprovider journal欠損補正は維持する。
+              - [x] 外部Supervisor単一所有とCodexの
+                `thread/read context -> cycle turn/start -> ACK -> accepted journal`をcommit `3f35dbb`でcorrective実装した。
+                focused 38/38、Supervisor関連16/16、static gateを通し、
+                [ADR 0061](adr/0061-supervisor-owned-cycle-core-acceptance.md)で受け入れた。
+              - [ ] Codex production Supervisor callerを接続し、cycleごとのsession／turn／exact result順序をlive H gateで固定する。
               - [ ] Claude background jobへの公開非対話reply ACKと隔離`--settings` Stop hookをlive H gateで実証して接続する。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
@@ -456,8 +466,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 ## v1受け入れ条件
 
 1. projectの絶対パスだけで監視を開始でき、Claude／Codexの親スレッド再作成へ自動追従する。
-2. Codexの`task_complete`またはClaudeの実証済み完了証拠だけでhost-bound completed cursorが進み、Observer MCP adapterから呼ばれた最大一時間のThroughline wait中のObserverを起こす。
-3. timeout時はObserver自身へ待機継続を一言残し、各hostのproject-local Stop continuationで同じcursorから自動再待機する。
+2. Codexの`task_complete`またはClaudeの実証済み完了証拠だけでhost-bound completed cursorが進み、外部Supervisorの最大一時間Throughline waitを起こす。
+3. timeout時はAIやMailboxへ報告せず、外部Supervisorが同じcursorから次のbounded wait stepを開始する。
 4. crash、timeout境界、重複通知があっても確定turnを失わず、同じturnを二重監査しない。
 5. ObserverはprojectとThroughlineをread-onlyで扱い、実装、停止、Task変更を行えない。
 6. Observerは親と同じprovider familyで動き、正常進行では沈黙し、証拠、重要性、行動可能性のある助言だけを送る。継続的な反証役にならない。
