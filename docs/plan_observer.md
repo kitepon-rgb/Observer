@@ -1,6 +1,6 @@
 # Observer v1 実装計画
 
-**Status:** Active — Claude／Codex両host対応へ改訂（Throughline変更hold）
+**Status:** Active — Claude／Codex両host対応と実Throughline CLI統合を進行中
 
 **作成日:** 2026-07-14
 
@@ -16,12 +16,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 
 ---
 
-## オーナーhold
+## Throughline変更裁定
 
-- Throughline repoのsource、test、package、hook、設定は変更しない。
-- Throughline側へ最初の実装変更を入れる直前で停止し、オーナーへ報告する。
-- hold中は、Observer単体で完結するP2-1、P2-2、P3-1、P3-2の基盤を先行できる。
-- fake Throughline CLIをtest境界に使ってよいが、未実装の実Throughline APIを成功扱いしない。
+- 当初のThroughline変更holdは、オーナーの続行指示により解除済み。
+- Throughline側は自身の`docs/14_observer_completed_turn_feed_plan.md`、独立Control、独立gate、独立commitで進める。
+- Observerは公開`observer-read`／`observer-wait` CLIだけを利用し、ThroughlineのDB／WAL／libraryへ依存しない。
 
 ---
 
@@ -78,9 +77,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - 成果物: `observer-wait`、`observer-read`とThroughline側test。詳細TODOはThroughline側正本で管理する。
   - 完了条件: Claude／Codex両hostでin-flight除外、即時changed、待機changed、timeout、呼出競合、thread／host switch、rollback、再起動のgateがThroughline repoでgreenになる。
 
-- [ ] **P1-3 Observerからblack-box検証する。**
+- [x] **P1-3 Observerからblack-box検証する。**
   - 成果物: Observer MCP adapterからThroughline公開CLIだけを使うcontract test。
   - 完了条件: 短縮timeout fixtureでchanged / timeout / missed-wakeup防止を再現し、Throughline実CLIを通した65秒超live callと3600秒設定が受理される。
+  - 実装: `test/throughline-black-box.integration.mjs`から実Throughline CLIだけを起動し、待機中changed、
+    1秒timeout、呼出前completionの即時changed、DB未projection時の`projection_pending`を2.27秒で固定した。
+    Throughline側の隔離HOME black-boxで65秒超live changedと3600秒設定は確認済み。Control revision 49で親受入済み。
 
 **Gate:** ObserverがThroughlineのDB / WALへ依存せず、新規turnを失わず待てる。
 
