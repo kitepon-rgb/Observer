@@ -196,9 +196,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
           crash recoveryと非永続inputを固定した（[ADR 0036](adr/0036-cycle-generation-exact-once-transaction.md)、
           [ADR 0037](adr/0037-cycle-generation-exact-once-acceptance.md)）。
         - cursor、dedupe／cooldown receipt、boundedな未解決仮説だけを引き継ぎ、raw会話／tool logは保存しない。
-        - [ ] Claude／Codex固有のterminal stopと次generation startを、watch継続の短命host journalと
-          旧→新handle CASで接続し、旧terminal不明では新世代を起動しない
-          （[ADR 0038](adr/0038-generation-host-rollover-transaction.md)）。
+        - [x] watch継続の短命host journal、旧terminal確認、旧→新handle CAS、ready後activation、
+          Codex generation namespace、Claude live候補限定をfake fixtureで実装した
+          （[ADR 0038](adr/0038-generation-host-rollover-transaction.md)、
+          [ADR 0040](adr/0040-generation-host-rollover-core-acceptance.md)）。
+        - [ ] 上記record-first coreをClaude／Codex固有のterminal stop／次generation start commandへ接続する。
         - [ ] parent rebind、planned rollover、fault recoveryを別transition／receiptにして統合する。
       P2-5のread-only強制がgreenになるまでlive childは起動しない。
 
@@ -333,11 +335,15 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       importし、親のfocused 24/24、`npm run check`、対象2 pathの`git diff --check`を一度再確認して
       Control revision 25でacceptした。実装はcommit `9a2b899`、受入証拠は
       [ADR 0035](adr/0035-generation-state-store-acceptance.md)へ独立固定した。
-    - [ ] cycle cursor commitとgeneration completionを同一target transactionへ接続する。
+    - [x] cycle cursor commitとgeneration completionを同一target transactionへ接続した。
       - Supervisorをinput構築とmodel処理へ分離し、予約成功後だけmodel callbackを呼ぶ。
       - pending cycle v2へinput digest／bytesを保存し、cursor／generation／cleanupを同じlockで
-        crash-recoverableに適用する契約を[ADR 0036](adr/0036-cycle-generation-exact-once-transaction.md)へ固定した。
+        crash-recoverableに適用した（[ADR 0036](adr/0036-cycle-generation-exact-once-transaction.md)、
+        [ADR 0037](adr/0037-cycle-generation-exact-once-acceptance.md)）。
     - [ ] provider別host terminal確認と次generation activationを接続する。
+      - [x] host-neutral journal／watch handle CAS／provider recovery補助をfake fixtureで実装した
+        （[ADR 0040](adr/0040-generation-host-rollover-core-acceptance.md)）。
+      - [ ] coreが返すauthorization／receiptを実Claude／Codex commandへ結ぶbindingとH受入を完了する。
 
 - [ ] **P4-3 過剰指摘抑制を実装する。**
   - 成果物: materiality、evidence、novelty、actionability、timing gateとdedupe / cooldown。
