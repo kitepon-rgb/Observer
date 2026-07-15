@@ -1,5 +1,7 @@
+import { fileURLToPath } from "node:url";
 import { isAbsolute } from "node:path";
 
+import { runCodexParentWatchProcess } from "./codex-parent-caller.mjs";
 import { ObserverError, fail } from "./observer-error.mjs";
 import { runObserverLiveCampaignPreflight } from "./live-campaign-preflight.mjs";
 import { defaultStateRoot } from "./private-state.mjs";
@@ -17,6 +19,10 @@ const WATCH = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const PROCESS_STATUSES = new Set([
   "cancelled", "faulted", "provider_unavailable", "stopping", "stopped",
 ]);
+const CODEX_PARENT_CALLER_STATUSES = new Set([
+  "cancelled", "faulted", "provider_unavailable", "stopping", "stopped",
+]);
+const OBSERVER_PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 export function observerUsage() {
   return [
@@ -27,6 +33,7 @@ export function observerUsage() {
     "       observer watch status <absolute-project-root> [--state-root <absolute-path>]",
     "       observer watch stop <absolute-project-root> [--state-root <absolute-path>]",
     "       observer target register <absolute-project-root> [--state-root <absolute-path>]",
+    "       observer parent codex run <absolute-project-root> --throughline-command <absolute-path> --codex-command <absolute-path> [--state-root <absolute-path>] [--expected-previous-watch-id <id>] [--timeout-seconds <1..3600>] [--poll-interval-ms <100..60000>] [--plan-ref <file:relative-path>]...",
     "       observer supervisor run <absolute-project-root> --watch-id <id> --runtime-root <absolute-path> --throughline-command <absolute-path> --codex-command <absolute-path> [--state-root <absolute-path>] [--timeout-seconds <1..3600>] [--poll-interval-ms <100..60000>] [--plan-ref <file:relative-path>]...",
   ].join("\n");
 }
@@ -37,6 +44,7 @@ export function parseObserverArguments(argv) {
   if (argv[0] === "campaign" && argv[1] === "preflight") return parseCampaignPreflight(argv);
   if (argv[0] === "watch") return parseWatch(argv);
   if (argv[0] === "target" && argv[1] === "register") return parseTargetRegister(argv);
+  if (argv[0] === "parent" && argv[1] === "codex" && argv[2] === "run") return parseParentCodexRun(argv);
   if (argv[0] === "supervisor" && argv[1] === "run") return parseSupervisorRun(argv);
   fail("E_USAGE", observerUsage());
 }
@@ -82,6 +90,34 @@ export async function executeObserverCommand(argv, { signal, parentContext } = {
       },
       exitCode: 0,
     };
+  }
+
+  if (command.kind === "parent_codex_run") {
+    const result = await (dependencies.runCodexParentWatchProcess ?? runCodexParentWatchProcess)({
+      stateRoot: command.stateRoot,
+      projectRoot: command.projectRoot,
+      runtimeRoot: OBSERVER_PACKAGE_ROOT,
+      throughlineCommand: command.throughlineCommand,
+      codexCommand: command.codexCommand,
+      parentContext: {
+        schema: "observer.parent_watch_context.v1",
+        parent_provider: "codex",
+        runtime_root: OBSERVER_PACKAGE_ROOT,
+        expected_previous_watch_id: command.expectedPreviousWatchId,
+        authorization: {
+          schema: "observer.parent_authorization.v1",
+          intent: "start_observer",
+          parent_provider: "codex",
+        },
+      },
+      planRefs: command.planRefs,
+      testReceipts: [],
+      timeoutSeconds: command.timeoutSeconds,
+      pollIntervalMs: command.pollIntervalMs,
+      signal,
+    }, dependencies.codexParentCallerDependencies);
+    validateCodexParentCallerResult(result);
+    return { result, exitCode: exitCodeForProcessResult(result.status) };
   }
 
   const target = await (dependencies.readRegisteredProjectTarget ?? readRegisteredProjectTarget)({
@@ -236,6 +272,56 @@ function parseSupervisorRun(argv) {
   };
 }
 
+function parseParentCodexRun(argv) {
+  if (argv.length < 4) fail("E_USAGE", observerUsage());
+  const projectRoot = argv[3];
+  validateAbsolute(projectRoot, "E_PROJECT_PATH_NOT_ABSOLUTE", "project rootは絶対パスで指定してください");
+  const single = new Map([
+    ["--throughline-command", "throughlineCommand"],
+    ["--codex-command", "codexCommand"],
+    ["--state-root", "stateRoot"],
+    ["--expected-previous-watch-id", "expectedPreviousWatchId"],
+    ["--timeout-seconds", "timeoutSeconds"],
+    ["--poll-interval-ms", "pollIntervalMs"],
+  ]);
+  const values = {};
+  const planRefs = [];
+  for (let index = 4; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (index + 1 >= argv.length) fail("E_USAGE", observerUsage());
+    const value = argv[index + 1];
+    if (flag === "--plan-ref") {
+      if (planRefs.length >= 4 || planRefs.includes(value) || !isPlanRef(value)) fail("E_USAGE", observerUsage());
+      planRefs.push(value);
+      index += 1;
+      continue;
+    }
+    const key = single.get(flag);
+    if (key === undefined || Object.hasOwn(values, key)) fail("E_USAGE", observerUsage());
+    values[key] = value;
+    index += 1;
+  }
+  for (const key of ["throughlineCommand", "codexCommand"]) {
+    if (!Object.hasOwn(values, key)) fail("E_USAGE", observerUsage());
+    validateAbsolute(values[key], "E_USAGE", observerUsage());
+  }
+  if (values.stateRoot !== undefined) validateAbsolute(values.stateRoot, "E_USAGE", observerUsage());
+  if (values.expectedPreviousWatchId !== undefined && !WATCH.test(values.expectedPreviousWatchId)) {
+    fail("E_USAGE", observerUsage());
+  }
+  return {
+    kind: "parent_codex_run",
+    projectRoot,
+    stateRoot: values.stateRoot ?? defaultStateRoot(),
+    throughlineCommand: values.throughlineCommand,
+    codexCommand: values.codexCommand,
+    expectedPreviousWatchId: values.expectedPreviousWatchId ?? null,
+    timeoutSeconds: parseBoundedInteger(values.timeoutSeconds, 1, 3600, 3600),
+    pollIntervalMs: parseBoundedInteger(values.pollIntervalMs, 100, 60_000, 1_000),
+    planRefs,
+  };
+}
+
 function parseBoundedInteger(value, minimum, maximum, fallback) {
   if (value === undefined) return fallback;
   if (!/^(?:0|[1-9]\d*)$/.test(value)) fail("E_USAGE", observerUsage());
@@ -261,6 +347,15 @@ function validateProcessResult(value) {
       !["claude", "codex"].includes(value.provider) ||
       (value.cycle_id !== null && (typeof value.cycle_id !== "string" || !/^c_[a-f0-9]{64}$/.test(value.cycle_id)))) {
     fail("E_SUPERVISOR_CLI_RESULT_INVALID", "Supervisor process resultが不正です");
+  }
+}
+
+function validateCodexParentCallerResult(value) {
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "cycle_id,provider,schema,status" ||
+      value.schema !== "observer.codex_parent_caller_result.v1" || !CODEX_PARENT_CALLER_STATUSES.has(value.status) ||
+      value.provider !== "codex" ||
+      (value.cycle_id !== null && (typeof value.cycle_id !== "string" || !/^c_[a-f0-9]{64}$/.test(value.cycle_id)))) {
+    fail("E_CODEX_PARENT_CLI_RESULT_INVALID", "Codex parent caller resultが不正です");
   }
 }
 

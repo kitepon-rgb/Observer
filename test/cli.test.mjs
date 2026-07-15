@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   executeObserverCommand,
@@ -132,6 +133,120 @@ test("watch dispatcherは親contextをstart/stopだけへ渡し、provider_unava
   assert.deepEqual(calls, [{ stateRoot: "/state", projectRoot: "/project", parentContext }]);
   assert.equal(outcome.exitCode, 1);
   assert.equal(outcome.result.status, "provider_unavailable");
+});
+
+test("parent codex run CLIはabsolute入力だけをparseし、runtime root引数を受け付けない", () => {
+  const parsed = parseObserverArguments([
+    "parent", "codex", "run", "/project",
+    "--throughline-command", "/bin/throughline",
+    "--codex-command", "/bin/codex",
+    "--state-root", "/state",
+    "--expected-previous-watch-id", "w_11111111-1111-4111-8111-111111111111",
+    "--timeout-seconds", "120",
+    "--poll-interval-ms", "250",
+    "--plan-ref", "file:docs/plan.md",
+  ]);
+  assert.deepEqual(parsed, {
+    kind: "parent_codex_run",
+    projectRoot: "/project",
+    stateRoot: "/state",
+    throughlineCommand: "/bin/throughline",
+    codexCommand: "/bin/codex",
+    expectedPreviousWatchId: "w_11111111-1111-4111-8111-111111111111",
+    timeoutSeconds: 120,
+    pollIntervalMs: 250,
+    planRefs: ["file:docs/plan.md"],
+  });
+  assert.throws(() => parseObserverArguments([
+    "parent", "codex", "run", "/project",
+    "--throughline-command", "relative",
+    "--codex-command", "/bin/codex",
+  ]), { code: "E_USAGE" });
+  assert.throws(() => parseObserverArguments([
+    "parent", "codex", "run", "/project",
+    "--throughline-command", "/bin/throughline",
+    "--codex-command", "/bin/codex",
+    "--runtime-root", "/forbidden",
+  ]), { code: "E_USAGE" });
+  assert.throws(() => parseObserverArguments([
+    "parent", "codex", "run", "/project",
+    "--throughline-command", "/bin/throughline",
+    "--codex-command", "/bin/codex",
+    "--expected-previous-watch-id", "not-a-watch",
+  ]), { code: "E_USAGE" });
+});
+
+test("parent codex runはinstalled package rootとexact context、signalをcallerへ渡しsanitized resultを既存exit契約へ写像する", async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const expectedRuntimeRoot = fileURLToPath(new URL("../", new URL("../src/observer-cli.mjs", import.meta.url)));
+  const outcome = await executeObserverCommand([
+    "parent", "codex", "run", "/project",
+    "--throughline-command", "/bin/throughline",
+    "--codex-command", "/bin/codex",
+    "--state-root", "/state",
+    "--expected-previous-watch-id", "w_11111111-1111-4111-8111-111111111111",
+    "--plan-ref", "file:docs/plan.md",
+  ], { signal: controller.signal }, {
+    runCodexParentWatchProcess: async (received) => {
+      assert.equal(received.runtimeRoot, expectedRuntimeRoot);
+      assert.equal(received.signal, controller.signal);
+      assert.deepEqual(received.parentContext, {
+        schema: "observer.parent_watch_context.v1",
+        parent_provider: "codex",
+        runtime_root: expectedRuntimeRoot,
+        expected_previous_watch_id: "w_11111111-1111-4111-8111-111111111111",
+        authorization: {
+          schema: "observer.parent_authorization.v1",
+          intent: "start_observer",
+          parent_provider: "codex",
+        },
+      });
+      assert.deepEqual(received.planRefs, ["file:docs/plan.md"]);
+      assert.deepEqual(received.testReceipts, []);
+      return {
+        schema: "observer.codex_parent_caller_result.v1",
+        status: "cancelled",
+        provider: "codex",
+        cycle_id: null,
+      };
+    },
+  });
+  assert.deepEqual(outcome, {
+    result: {
+      schema: "observer.codex_parent_caller_result.v1",
+      status: "cancelled",
+      provider: "codex",
+      cycle_id: null,
+    },
+    exitCode: 130,
+  });
+});
+
+test("parent codex runはknown faultを非0へ写像し、unsanitized caller resultを拒否する", async () => {
+  const argv = [
+    "parent", "codex", "run", "/project",
+    "--throughline-command", "/bin/throughline",
+    "--codex-command", "/bin/codex",
+  ];
+  const faulted = await executeObserverCommand(argv, {}, {
+    runCodexParentWatchProcess: async () => ({
+      schema: "observer.codex_parent_caller_result.v1",
+      status: "faulted",
+      provider: "codex",
+      cycle_id: null,
+    }),
+  });
+  assert.equal(faulted.exitCode, 1);
+  await assert.rejects(executeObserverCommand(argv, {}, {
+    runCodexParentWatchProcess: async () => ({
+      schema: "observer.codex_parent_caller_result.v1",
+      status: "stopped",
+      provider: "codex",
+      cycle_id: null,
+      secret: "must-not-pass",
+    }),
+  }), { code: "E_CODEX_PARENT_CLI_RESULT_INVALID" });
 });
 
 test("supervisor run CLIはabsolute runtimeとwatch identityをexact parseする", () => {
