@@ -134,6 +134,23 @@ test("spawn unknown回収は固有nameとcwdの0件・1件・複数件を分離�
   assert.throws(() => recoverClaudeSpawnFromAgentList({ stdout: JSON.stringify([entry, { ...entry, id: "job-2" }]), expected, observedAt }), expectCode("E_CLAUDE_JOB_CORRELATION_FAILED"));
 });
 
+test("generation spawn回収はterminal履歴を候補から除外し複数live候補を拒否する", () => {
+  const expected = { name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111", cwd: "/observer" };
+  const observedAt = "2026-07-15T02:00:00.000Z";
+  const entry = (id, state) => ({ id, name: expected.name, cwd: expected.cwd, kind: "background", state });
+  const found = recoverClaudeSpawnFromAgentList({
+    stdout: JSON.stringify([entry("job-old", "done"), entry("job-new", "working")]), expected, observedAt,
+  });
+  assert.equal(found.status, "found");
+  assert.equal(found.observation.job_id, "job-new");
+  assert.deepEqual(recoverClaudeSpawnFromAgentList({
+    stdout: JSON.stringify([entry("job-old", "done"), entry("job-stopped", "stopped")]), expected, observedAt,
+  }), { status: "not_visible" });
+  assert.throws(() => recoverClaudeSpawnFromAgentList({
+    stdout: JSON.stringify([entry("job-a", "working"), entry("job-b", "blocked"), entry("job-old", "failed")]), expected, observedAt,
+  }), expectCode("E_CLAUDE_JOB_CORRELATION_FAILED"));
+});
+
 test("agents JSONはjob identityを相関しallowlist fieldだけへ縮約する", () => {
   const stdout = JSON.stringify([{ id: "job-1", name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111", cwd: "/observer", kind: "background", state: "working", sessionId: "private-session", startedAt: 123, extra: "drop" }]);
   const observation = observeClaudeAgentList({

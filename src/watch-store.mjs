@@ -17,6 +17,7 @@ import { TARGET_SCHEMA } from "./project-target.mjs";
 
 export const ACTIVE_WATCH_SCHEMA = "observer.active_watch.v1";
 export const WATCH_STATUS_SCHEMA = "observer.watch_status.v1";
+export const WATCH_HOST_BINDING_SCHEMA = "observer.watch_host_binding.v1";
 
 const TARGET_ID_RE = /^p_[a-f0-9]{64}$/;
 const WATCH_ID_RE = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -153,6 +154,57 @@ export async function readWatchStatus({ stateRoot, targetId }) {
   if (paths === null) return null;
   const current = await readCurrent(paths.currentPath);
   return current === null ? null : publicWatchStatus(current);
+}
+
+// Private runtime surface. The raw handle returned here must not be forwarded to
+// logs or durable public receipts; generation rollover uses it only to build a
+// correlated host request and to perform the old -> new CAS below.
+export async function readWatchHostBinding({ stateRoot, targetId, watchId }) {
+  validateTargetId(targetId);
+  validateWatchId(watchId);
+  const paths = await requireWatchPaths(stateRoot, targetId);
+  const current = await requireCurrent(paths.currentPath);
+  requireTransition(current, watchId, ["active"]);
+  return {
+    schema: WATCH_HOST_BINDING_SCHEMA,
+    watch_id: current.watch_id,
+    target_id: current.target_id,
+    project_root: current.project_root,
+    provider: current.provider,
+    status: current.status,
+    launch_handle: structuredClone(current.launch_handle),
+  };
+}
+
+export async function compareAndSwapWatchLaunchHandle({
+  stateRoot,
+  targetId,
+  watchId,
+  expectedLaunchHandle,
+  nextLaunchHandle,
+}, dependencies = {}) {
+  validateTargetId(targetId);
+  validateWatchId(watchId);
+  validateLaunchHandle(expectedLaunchHandle);
+  validateLaunchHandle(nextLaunchHandle);
+  const paths = await requireWatchPaths(stateRoot, targetId);
+  return withWatchTransaction(paths.lockPath, async () => {
+    const current = await requireCurrent(paths.currentPath);
+    requireTransition(current, watchId, ["active"]);
+    if (sameLaunchHandle(current.launch_handle, nextLaunchHandle)) {
+      return { outcome: "already_swapped", status: publicWatchStatus(current) };
+    }
+    if (!sameLaunchHandle(current.launch_handle, expectedLaunchHandle)) {
+      fail("E_WATCH_LAUNCH_HANDLE_CAS_MISMATCH", "watch launch handleが旧handleと一致しません");
+    }
+    const next = validateWatchState({
+      ...current,
+      launch_handle: structuredClone(nextLaunchHandle),
+      updated_at: nextTimestamp(current, dependencies.now),
+    });
+    await atomicReplacePrivateFile(paths.currentPath, serialize(next));
+    return { outcome: "swapped", status: publicWatchStatus(next) };
+  });
 }
 
 export async function inspectWatchTransactionLock({ stateRoot, targetId }) {

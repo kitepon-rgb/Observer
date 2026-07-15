@@ -63,16 +63,17 @@ export async function initializeCodexObserverSession({ session } = {}, dependenc
   return verification;
 }
 
-export async function spawnCodexObserverThread({ stateRoot, request, session } = {}, dependencies = {}) {
+export async function spawnCodexObserverThread({ stateRoot, request, session, generationId = null } = {}, dependencies = {}) {
   requireCodexLaunchRequest(request);
   requireInitializedSession(session);
-  await createJournal({ stateRoot, request, timestamp: now(dependencies) });
+  validateGenerationId(generationId);
+  await createJournal({ stateRoot, request, generationId, timestamp: now(dependencies) });
   let result;
   try {
     result = await session.request("thread/start", buildCodexThreadStartParams(request));
     const observation = parseCodexThreadStartResult({ result, request, observedAt: now(dependencies) });
     const journal = await transitionJournal({
-      stateRoot, request, expected: ["thread_starting"], status: "thread_created",
+      stateRoot, request, generationId, expected: ["thread_starting"], status: "thread_created",
       threadId: observation.thread_id, turnId: null, cycleId: null, terminalStatus: null,
     }, dependencies);
     return {
@@ -83,7 +84,7 @@ export async function spawnCodexObserverThread({ stateRoot, request, session } =
     };
   } catch (error) {
     await transitionJournal({
-      stateRoot, request, expected: ["thread_starting"], status: "thread_start_unknown",
+      stateRoot, request, generationId, expected: ["thread_starting"], status: "thread_start_unknown",
       threadId: null, turnId: null, cycleId: null, terminalStatus: null,
     }, dependencies);
     if (error instanceof ObserverError && error.code.startsWith("E_CODEX_")) throw error;
@@ -91,17 +92,18 @@ export async function spawnCodexObserverThread({ stateRoot, request, session } =
   }
 }
 
-export async function activateCodexObserver({ stateRoot, request, spawnResult, session, cycleId = null } = {}, dependencies = {}) {
+export async function activateCodexObserver({ stateRoot, request, spawnResult, session, cycleId = null, generationId = null } = {}, dependencies = {}) {
   requireCodexLaunchRequest(request);
   requireInitializedSession(session);
   validateSpawnResult(spawnResult, request);
+  validateGenerationId(generationId);
   const effectiveCycleId = cycleId ?? request.watch_id;
   validateCycleId(effectiveCycleId);
   const confirmSpawn = dependencies.confirmParentHostSpawn ?? confirmParentHostSpawn;
   const launching = await confirmSpawn({ stateRoot, request, receipt: spawnResult.receipt }, dependencies.parentDependencies ?? {});
   if (launching?.status !== "launching") fail("E_CODEX_PARENT_LAUNCH_STATE_INVALID", "Codex thread handleがlaunchingへ耐久化されていません");
   await transitionJournal({
-    stateRoot, request, expected: ["thread_created"], status: "turn_prepared",
+    stateRoot, request, generationId, expected: ["thread_created"], status: "turn_prepared",
     threadId: spawnResult.receipt.handle.value, turnId: null, cycleId: effectiveCycleId, terminalStatus: null,
   }, dependencies);
   let operation;
@@ -110,14 +112,14 @@ export async function activateCodexObserver({ stateRoot, request, spawnResult, s
     operation = parseCodexTurnStartResult({ result, threadId: spawnResult.receipt.handle.value, observedAt: now(dependencies) });
   } catch (error) {
     await transitionJournal({
-      stateRoot, request, expected: ["turn_prepared"], status: "turn_start_unknown",
+      stateRoot, request, generationId, expected: ["turn_prepared"], status: "turn_start_unknown",
       threadId: spawnResult.receipt.handle.value, turnId: null, cycleId: effectiveCycleId, terminalStatus: null,
     }, dependencies);
     if (error instanceof ObserverError && error.code.startsWith("E_CODEX_")) throw error;
     fail("E_CODEX_TURN_START_UNKNOWN", "Codex turn/start結果が不明です。同じcycleを再実行しないでください");
   }
   const journal = await transitionJournal({
-    stateRoot, request, expected: ["turn_prepared"], status: "running",
+    stateRoot, request, generationId, expected: ["turn_prepared"], status: "running",
     threadId: operation.thread_id, turnId: operation.turn_id, cycleId: effectiveCycleId, terminalStatus: null,
   }, dependencies);
   const readyReceipt = hostReceipt(request, "ready", operation.thread_id);
@@ -133,10 +135,11 @@ export async function activateCodexObserver({ stateRoot, request, spawnResult, s
   };
 }
 
-export async function recoverCodexObserverReady({ stateRoot, request, session } = {}, dependencies = {}) {
+export async function recoverCodexObserverReady({ stateRoot, request, session, generationId = null } = {}, dependencies = {}) {
   requireCodexLaunchRequest(request);
   requireInitializedSession(session);
-  const journal = await readJournal({ stateRoot, request });
+  validateGenerationId(generationId);
+  const journal = await readJournal({ stateRoot, request, generationId });
   if (journal.status !== "running" || journal.thread_id === null || journal.turn_id === null) {
     fail("E_CODEX_READY_RECOVERY_UNAVAILABLE", "ready回収に使えるdurable turn handleがありません");
   }
@@ -174,14 +177,15 @@ export async function readCodexObserverThread({ request, threadId, session } = {
   return parseCodexThreadReadResult({ result, expectedThreadId: threadId, expectedCwd: request.runtime_root, observedAt: now(dependencies) });
 }
 
-export async function stopCodexObserver({ stateRoot, request, launchRequest, session, previousInterruptReceipt = null } = {}, dependencies = {}) {
+export async function stopCodexObserver({ stateRoot, request, launchRequest, session, previousInterruptReceipt = null, generationId = null } = {}, dependencies = {}) {
   validateCodexStopRequest(request);
   requireCodexLaunchRequest(launchRequest);
   requireInitializedSession(session);
+  validateGenerationId(generationId);
   if (request.watch_id !== launchRequest.watch_id || request.target_id !== launchRequest.target_id || request.handle.value === null) {
     fail("E_CODEX_STOP_CORRELATION_FAILED", "Codex stop requestがlaunch requestと一致しません");
   }
-  const journal = await readJournal({ stateRoot, request: launchRequest });
+  const journal = await readJournal({ stateRoot, request: launchRequest, generationId });
   if (journal.thread_id !== request.handle.value || journal.turn_id === null || ["thread_start_unknown", "turn_start_unknown"].includes(journal.status)) {
     fail("E_CODEX_STOP_CORRELATION_FAILED", "Codex stopに必要なdurable turn handleがありません");
   }
@@ -192,7 +196,7 @@ export async function stopCodexObserver({ stateRoot, request, launchRequest, ses
     const terminalJournal = TERMINAL_STATUSES.has(journal.status)
       ? journal
       : await transitionJournal({
-          stateRoot, request: launchRequest, expected: ["running", "stopping"], status: plan.terminal_status,
+          stateRoot, request: launchRequest, generationId, expected: ["running", "stopping"], status: plan.terminal_status,
           threadId: journal.thread_id, turnId: journal.turn_id, cycleId: journal.cycle_id, terminalStatus: plan.terminal_status,
         }, dependencies);
     return {
@@ -210,7 +214,7 @@ export async function stopCodexObserver({ stateRoot, request, launchRequest, ses
     return { schema: CODEX_HOST_STOP_RESULT_SCHEMA, command_receipt: previousInterruptReceipt, terminal_receipt: null, terminal_status: null, journal: publicJournal(journal) };
   }
   const stopping = await transitionJournal({
-    stateRoot, request: launchRequest, expected: ["running"], status: "stopping",
+    stateRoot, request: launchRequest, generationId, expected: ["running"], status: "stopping",
     threadId: journal.thread_id, turnId: journal.turn_id, cycleId: journal.cycle_id, terminalStatus: null,
   }, dependencies);
   let result;
@@ -223,8 +227,8 @@ export async function stopCodexObserver({ stateRoot, request, launchRequest, ses
   return { schema: CODEX_HOST_STOP_RESULT_SCHEMA, command_receipt: commandReceipt, terminal_receipt: null, terminal_status: null, journal: publicJournal(stopping) };
 }
 
-async function createJournal({ stateRoot, request, timestamp }) {
-  const paths = await journalPaths(stateRoot, request);
+async function createJournal({ stateRoot, request, generationId, timestamp }) {
+  const paths = await journalPaths(stateRoot, request, generationId);
   return withLock(paths.lockPath, async () => {
     const journal = validateJournal({
       schema: CODEX_HOST_JOURNAL_SCHEMA,
@@ -248,8 +252,8 @@ async function createJournal({ stateRoot, request, timestamp }) {
   });
 }
 
-async function transitionJournal({ stateRoot, request, expected, status, threadId, turnId, cycleId, terminalStatus }, dependencies) {
-  const paths = await journalPaths(stateRoot, request);
+async function transitionJournal({ stateRoot, request, generationId = null, expected, status, threadId, turnId, cycleId, terminalStatus }, dependencies) {
+  const paths = await journalPaths(stateRoot, request, generationId);
   return withLock(paths.lockPath, async () => {
     const current = validateJournal(await readPrivateJson(paths.journalPath));
     if (!expected.includes(current.status)) fail("E_CODEX_JOURNAL_TRANSITION_INVALID", "Codex host journalの状態遷移が不正です");
@@ -268,8 +272,8 @@ async function transitionJournal({ stateRoot, request, expected, status, threadI
   });
 }
 
-async function readJournal({ stateRoot, request }) {
-  const paths = await journalPaths(stateRoot, request);
+async function readJournal({ stateRoot, request, generationId = null }) {
+  const paths = await journalPaths(stateRoot, request, generationId);
   try {
     return validateJournal(await readPrivateJson(paths.journalPath));
   } catch (error) {
@@ -278,9 +282,11 @@ async function readJournal({ stateRoot, request }) {
   }
 }
 
-async function journalPaths(stateRoot, request) {
+async function journalPaths(stateRoot, request, generationId = null) {
+  validateGenerationId(generationId);
   const directory = await ensureStatePath(stateRoot, "codex-operations", request.target_id);
-  return { journalPath: join(directory, `${request.watch_id}.json`), lockPath: join(directory, `${request.watch_id}.lock`) };
+  const namespace = generationId === null ? request.watch_id : `${request.watch_id}.${generationId.slice("sha256:".length)}`;
+  return { journalPath: join(directory, `${namespace}.json`), lockPath: join(directory, `${namespace}.lock`) };
 }
 
 async function withLock(lockPath, operation) {
@@ -374,6 +380,12 @@ function publicJournal(value) {
 
 function validateCycleId(value) {
   if (typeof value !== "string" || value.length < 1 || value.length > 128 || /[\u0000-\u001f\u007f]/u.test(value)) fail("E_CODEX_CYCLE_ID_INVALID", "Codex cycle IDが不正です");
+}
+
+function validateGenerationId(value) {
+  if (value !== null && (typeof value !== "string" || !/^sha256:[a-f0-9]{64}$/.test(value))) {
+    fail("E_CODEX_GENERATION_ID_INVALID", "Codex generation IDが不正です");
+  }
 }
 
 function validateTimestamp(value) {

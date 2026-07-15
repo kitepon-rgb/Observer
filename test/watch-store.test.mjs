@@ -9,9 +9,11 @@ import { acquirePrivateLock, ensureStatePath } from "../src/private-state.mjs";
 import {
   activateWatch,
   attachWatchLaunchHandle,
+  compareAndSwapWatchLaunchHandle,
   completeWatchStop,
   inspectWatchTransactionLock,
   readWatchStatus,
+  readWatchHostBinding,
   recordWatchFaultAfterChildExit,
   recordWatchFaultBeforeChildStart,
   recoverWatchTransactionLock,
@@ -169,4 +171,34 @@ test("残留transaction lockは観測nonce一致時だけ明示回復する", as
   );
   assert.equal(await recoverWatchTransactionLock({ stateRoot, targetId: TARGET.targetId, expectedNonce: observed.nonce }), true);
   assert.equal(await inspectWatchTransactionLock({ stateRoot, targetId: TARGET.targetId }), null);
+});
+
+test("active watch handleは旧→新CASだけを許しpublic statusへraw handleを出さない", async () => {
+  const stateRoot = await box();
+  const starting = await reserveActiveWatch({ stateRoot, target: TARGET, provider: "claude" }, { randomUUID: () => UUID_A, now: () => T0 });
+  const oldHandle = { kind: "claude.job", value: "job-old" };
+  const newHandle = { kind: "claude.job", value: "job-new" };
+  await attachWatchLaunchHandle({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: oldHandle }, { now: () => T0 });
+  await activateWatch({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: oldHandle }, { now: () => T0 });
+  const binding = await readWatchHostBinding({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id });
+  assert.deepEqual(binding.launch_handle, oldHandle);
+  const swapped = await compareAndSwapWatchLaunchHandle({
+    stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id,
+    expectedLaunchHandle: oldHandle, nextLaunchHandle: newHandle,
+  }, { now: () => T1 });
+  assert.equal(swapped.outcome, "swapped");
+  assert.equal("launch_handle" in swapped.status, false);
+  const retry = await compareAndSwapWatchLaunchHandle({
+    stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id,
+    expectedLaunchHandle: oldHandle, nextLaunchHandle: newHandle,
+  }, { now: () => T1 });
+  assert.equal(retry.outcome, "already_swapped");
+  await assert.rejects(
+    compareAndSwapWatchLaunchHandle({
+      stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id,
+      expectedLaunchHandle: { kind: "claude.job", value: "third" },
+      nextLaunchHandle: { kind: "claude.job", value: "fourth" },
+    }, { now: () => T1 }),
+    expectCode("E_WATCH_LAUNCH_HANDLE_CAS_MISMATCH"),
+  );
 });

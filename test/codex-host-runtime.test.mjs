@@ -141,6 +141,31 @@ test("thread/start結果不明はcwd singletonへattachせず耐久unknownで同
   assert.equal(journal.thread_id, null);
 });
 
+test("rollover Codex journalはgeneration IDでnamespaceし旧terminal journalを上書きしない", async (t) => {
+  const root = await stateRoot(t);
+  const generationA = `sha256:${"a".repeat(64)}`;
+  const generationB = `sha256:${"b".repeat(64)}`;
+  const threadA = "019f62a3-3333-7333-8333-333333333333";
+  const threadB = "019f62a4-4444-7444-8444-444444444444";
+  let starts = 0;
+  const session = new FakeSession(async (method) => {
+    if (method !== "thread/start") throw new Error(`unexpected ${method}`);
+    starts += 1;
+    const threadId = starts === 1 ? threadA : threadB;
+    return { ...threadResult(), thread: { ...threadResult().thread, id: threadId } };
+  });
+  await initialize(session);
+  const first = await spawnCodexObserverThread({ stateRoot: root, request: launchRequest(), session, generationId: generationA }, { now: () => NOW });
+  const second = await spawnCodexObserverThread({ stateRoot: root, request: launchRequest(), session, generationId: generationB }, { now: () => NOW });
+  assert.equal(first.receipt.handle.value, threadA);
+  assert.equal(second.receipt.handle.value, threadB);
+  const base = join(root, "codex-operations", TARGET_ID);
+  const firstJournal = JSON.parse(await readFile(join(base, `${WATCH_ID}.${"a".repeat(64)}.json`), "utf8"));
+  const secondJournal = JSON.parse(await readFile(join(base, `${WATCH_ID}.${"b".repeat(64)}.json`), "utf8"));
+  assert.equal(firstJournal.thread_id, threadA);
+  assert.equal(secondJournal.thread_id, threadB);
+});
+
 test("turn/start結果不明はturn IDを推測せず同cycle再実行とready回収を拒否する", async (t) => {
   const root = await stateRoot(t);
   let turns = 0;

@@ -79,12 +79,15 @@ export function recoverClaudeSpawnFromAgentList({ stdout, expected, observedAt }
   if (!Array.isArray(entries) || entries.some((entry) => !isPlainObject(entry))) {
     fail("E_CLAUDE_AGENT_LIST_INVALID", "Claude agent list schemaが不正です");
   }
-  const matches = entries.filter((entry) => entry.name === expected.name && entry.cwd === expected.cwd && entry.kind === "background");
-  if (matches.length === 0) return { status: "not_visible" };
-  if (matches.length !== 1) fail("E_CLAUDE_JOB_CORRELATION_FAILED", "Claude job recovery identityが重複しています");
-  const entry = matches[0];
-  validateJobId(entry.id, "E_CLAUDE_JOB_CORRELATION_FAILED");
-  if (typeof entry.state !== "string" || !KNOWN_STATES.has(entry.state)) fail("E_CLAUDE_JOB_STATE_UNKNOWN", "Claude job stateが未知です");
+  const matchingHistory = entries.filter((entry) => entry.name === expected.name && entry.cwd === expected.cwd && entry.kind === "background");
+  for (const entry of matchingHistory) {
+    validateJobId(entry.id, "E_CLAUDE_JOB_CORRELATION_FAILED");
+    if (typeof entry.state !== "string" || !KNOWN_STATES.has(entry.state)) fail("E_CLAUDE_JOB_STATE_UNKNOWN", "Claude job stateが未知です");
+  }
+  const liveMatches = matchingHistory.filter((entry) => entry.state === "working" || entry.state === "blocked");
+  if (liveMatches.length === 0) return { status: "not_visible" };
+  if (liveMatches.length !== 1) fail("E_CLAUDE_JOB_CORRELATION_FAILED", "Claude live job recovery identityが重複しています");
+  const entry = liveMatches[0];
   return {
     status: "found",
     observation: {
