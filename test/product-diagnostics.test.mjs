@@ -21,6 +21,12 @@ test("source package diagnosticsはsanitized manifestと5 binaryを固定する"
   assert.equal(result.status, "ready");
   assert.equal(result.manifest.schema, OBSERVER_PRODUCT_MANIFEST_SCHEMA);
   assert.deepEqual(result.manifest, observerProductManifest());
+  assert.deepEqual(result.manifest.dependencies, [
+    { name: "node", version: ">=22.13", scope: "runtime" },
+    { name: "throughline", version: "0.6.3", scope: "supervisor" },
+    { name: "aiterm-mcp", version: "0.14.0", scope: "claude_transport" },
+    { name: "codex", version: "codex-cli 0.144.3", scope: "codex_host" },
+  ]);
   assert.deepEqual(result.checks, [
     { name: "package_manifest", status: "ok" },
     { name: "instruction_files", status: "ok" },

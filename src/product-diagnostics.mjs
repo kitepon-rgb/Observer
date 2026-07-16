@@ -2,7 +2,7 @@ import { lstat, readFile, realpath } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
-import { SUPPORTED_CLAUDE_VERSION } from "./claude-host-runtime.mjs";
+import { SUPPORTED_AITERM_VERSION } from "./aiterm-process-transport.mjs";
 import { SUPPORTED_CODEX_VERSION } from "./codex-process-transport.mjs";
 import { OBSERVER_MCP_SERVER_VERSION } from "./mcp-server.mjs";
 import { fail } from "./observer-error.mjs";
@@ -39,7 +39,7 @@ export function observerProductManifest() {
     dependencies: [
       { name: "node", version: ">=22.13", scope: "runtime" },
       { name: "throughline", version: SUPPORTED_THROUGHLINE_VERSION, scope: "supervisor" },
-      { name: "claude", version: SUPPORTED_CLAUDE_VERSION, scope: "claude_host" },
+      { name: "aiterm-mcp", version: SUPPORTED_AITERM_VERSION, scope: "claude_transport" },
       { name: "codex", version: SUPPORTED_CODEX_VERSION, scope: "codex_host" },
     ],
     diagnostics: [
