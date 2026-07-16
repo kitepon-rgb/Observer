@@ -1,5 +1,7 @@
 # Observer core E2E history順序fixture訂正
 
+完了。fixture訂正はcommit `a400995`、P5-1b4d最終Phase fullは393/393 green。
+
 ## 目的
 
 P5-1b4d Phase full regressionで再現したadvisory cooldown E2Eの順序誤仮定を、製品のcanonical history
