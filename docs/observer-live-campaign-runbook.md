@@ -133,7 +133,8 @@ launch／terminal、rollback検証が必要である。fixture receiptや片host
 - Claude parent controllerのPATH先頭がcampaign prefixでなく、captureとreadのThroughline実行物が
   一致しない。
 - Aiterm controllerがglobal tmux socketを再利用し、caller processと異なるstale PATHをsessionへ継承する。
-- campaign専用runtimeでも、最終tmux socket pathがhostのUnix-domain socket上限を超える。
+- campaign専用runtimeでも、実物`<TMPDIR>/claude-tmux-sockets/claude.sock`のpathがhostの
+  Unix-domain socket上限を超える。
 - spawn結果を既知handleへ相関できない、または同じhandleの回収入口を失った。
 - project fingerprintが変化した。
 - raw host log、prompt、config本文、raw ID、token、cookie、credentialがreceiptへ混入した。

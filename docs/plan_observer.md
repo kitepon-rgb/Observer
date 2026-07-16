@@ -725,7 +725,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
         session terminal確認後に修理gateを独立commitで閉じてからliveを再開する。
         focused 28/28、related 48/48、`npm run check`、対象docs lint、dotagents isolated package gateが
         greenとなり、[ADR 0128](adr/0128-parent-hook-state-root-binding-acceptance.md)で受け入れた。
-      - [ ] **P5-1b5b-r2 Throughline capture実行物束縛:** state root修理後のClaude attemptで
+      - [x] **P5-1b5b-r2 Throughline capture実行物束縛:** state root修理後のClaude attemptで
         hook errorは消えたが、Aiterm parentがglobal PATHの旧`throughline process-turn`を実行し、
         DB sessionだけ増えてcompleted receipt fileが作られなかった。read側だけでなくcapture側も
         campaign candidateへ束縛するため、Aiterm controllerのPATH先頭をcampaign prefixへ固定する
@@ -735,10 +735,18 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           server作成時のstale環境が新sessionへ継承されreceiptは0件だった。campaign専用0700
           `TMPDIR`でAiterm socket／log／stateを隔離し、candidate PATHを持つfresh serverだけを使う
           （[ADR 0130](adr/0130-aiterm-campaign-runtime-isolation.md)）。
-        - [ ] **P5-1b5b-r4 socket長境界:** campaign root配下の`aiterm-runtime`では最終tmux socketが
+        - [x] **P5-1b5b-r4 socket長境界:** campaign root配下の`aiterm-runtime`では最終tmux socketが
           105 bytesとなり、macOSの104-byte `sun_path`へ収まらずsession生成前に失敗した。短い0700
-          `r`を使い、最終pathを103 bytes以下とlaunch前に実測する
-          （[ADR 0131](adr/0131-aiterm-runtime-socket-length-bound.md)）。
+          `r2`を使い、実物`<TMPDIR>/claude-tmux-sockets/claude.sock`を94 bytesとlaunch前に実測した。
+          ADR 0131の予測名／92 bytesは[ADR 0132](adr/0132-queue19e-socket-and-stop-flush-correction.md)で
+          訂正する。
+        - [x] **P5-1b5b-r5 Throughline Stop flush barrier:** 短い専用runtimeではAiterm session、
+          candidate-first PATH、実Claude `end_turn`、Stop hook error 0まで成立したが、async Stopがfinal
+          assistant行のtranscript可視化より先に一回だけbackfillし、DB本文／receiptが0件になった。
+          Throughlineが`last_assistant_message`を本文でなくlatest logical groupのbounded barrierに使う修理を
+          commit `a46b915`で独立確定し、focused 14/14、subprocess 2/2、related 78/78を通した。
+          失敗attemptはlive成功へ含めず、candidate再梱包後に通常campaignを再開する
+          （[ADR 0132](adr/0132-queue19e-socket-and-stop-flush-correction.md)）。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
