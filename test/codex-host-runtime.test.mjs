@@ -17,6 +17,7 @@ import {
   spawnCodexGenerationObserverThread,
   spawnCodexObserverThread,
   stopCodexObserver,
+  waitForCodexBootstrapCompletion,
 } from "../src/codex-host-runtime.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
 
@@ -110,10 +111,15 @@ test("initialize結果不明または不正のsessionを再initializeしない",
 test("thread handleを親stateへ耐久化してからだけturn/startし別turn handleをjournalへ保存する", async (t) => {
   const root = await stateRoot(t);
   const order = [];
+  let bootstrapReads = 0;
   const session = new FakeSession(async (method) => {
     order.push(method);
     if (method === "thread/start") return threadResult();
     if (method === "turn/start") return { turn: { id: TURN_ID, status: "inProgress", items: [] } };
+    if (method === "thread/read") {
+      bootstrapReads += 1;
+      return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: TURN_ID, status: bootstrapReads === 1 ? "inProgress" : "completed", items: [] }] } };
+    }
     throw new Error(`unexpected ${method}`);
   });
   await initialize(session);
@@ -122,10 +128,12 @@ test("thread handleを親stateへ耐久化してからだけturn/startし別turn
   assert.equal(spawned.journal.status, "thread_created");
   const activated = await activateCodexObserver({ stateRoot: root, request: launchRequest(), spawnResult: spawned, session }, {
     now: () => NOW,
+    bootstrapPollIntervalMs: 0,
+    sleep: async () => { order.push("bootstrap-wait"); },
     confirmParentHostSpawn: async () => { order.push("parent-handle-durable"); return { status: "launching" }; },
     confirmParentLaunch: async () => { order.push("parent-active"); return { status: "active" }; },
   });
-  assert.deepEqual(order, ["thread/start", "parent-handle-durable", "turn/start", "parent-active"]);
+  assert.deepEqual(order, ["thread/start", "parent-handle-durable", "turn/start", "thread/read", "bootstrap-wait", "thread/read", "parent-active"]);
   assert.equal(activated.operation.thread_id, THREAD_ID);
   assert.equal(activated.operation.turn_id, TURN_ID);
   assert.equal(activated.journal.status, "running");
@@ -218,6 +226,7 @@ test("interrupt空ACKではstoppingを維持し同じturnのterminal read後だ�
   const spawned = await spawnCodexObserverThread({ stateRoot: root, request: launchRequest(), session }, { now: () => NOW });
   await activateCodexObserver({ stateRoot: root, request: launchRequest(), spawnResult: spawned, session }, {
     now: () => NOW,
+    waitForCodexBootstrapCompletion: async () => {},
     confirmParentHostSpawn: async () => ({ status: "launching" }),
     confirmParentLaunch: async () => ({ status: "active" }),
   });
@@ -246,6 +255,7 @@ test("interrupt結果不明はstoppingを耐久化し同じturnへ再送しな�
   const spawned = await spawnCodexObserverThread({ stateRoot: root, request: launchRequest(), session }, { now: () => NOW });
   await activateCodexObserver({ stateRoot: root, request: launchRequest(), spawnResult: spawned, session }, {
     now: () => NOW,
+    waitForCodexBootstrapCompletion: async () => {},
     confirmParentHostSpawn: async () => ({ status: "launching" }),
     confirmParentLaunch: async () => ({ status: "active" }),
   });
@@ -264,6 +274,7 @@ test("Codex generation runtimeはgeneration namespaceを必須にして親watch�
   const session = new FakeSession(async (method) => {
     if (method === "thread/start") return threadResult();
     if (method === "turn/start") return { turn: { id: TURN_ID, status: "inProgress", items: [] } };
+    if (method === "thread/read") return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: TURN_ID, status: "completed", items: [] }] } };
     throw new Error(`unexpected ${method}`);
   });
   await initialize(session);
@@ -339,12 +350,12 @@ test("Codex generation spawn recoveryはjournal欠損とthread_start_unknownをu
   assert.equal(starts, 1);
 });
 
-test("Codex generation recoveryはdurable thread spawnと同一inProgress turnのreadyだけを返す", async (t) => {
+test("Codex generation recoveryはdurable thread spawnと同一completed bootstrapのreadyだけを返す", async (t) => {
   const root = await stateRoot(t);
   const session = new FakeSession(async (method) => {
     if (method === "thread/start") return threadResult();
     if (method === "turn/start") return { turn: { id: TURN_ID, status: "inProgress", items: [] } };
-    if (method === "thread/read") return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: TURN_ID, status: "inProgress", items: [] }] } };
+    if (method === "thread/read") return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: TURN_ID, status: "completed", items: [] }] } };
     throw new Error(`unexpected ${method}`);
   });
   await initialize(session);
@@ -438,7 +449,7 @@ test("Codex generation terminal観測は同一durable turnのterminalだけをra
     },
   });
   assert.doesNotMatch(JSON.stringify(observed), new RegExp(`${THREAD_ID}|${TURN_ID}`));
-  assert.deepEqual(session.calls.map((entry) => entry[1]).filter(Boolean), ["initialize", "initialized", "thread/start", "turn/start", "thread/read"]);
+  assert.deepEqual(session.calls.map((entry) => entry[1]).filter(Boolean), ["initialize", "initialized", "thread/start", "turn/start", "thread/read", "thread/read"]);
 });
 
 test("Codex generation terminal観測はinProgressをpendingとして返し、別turnやjournal欠損へfallbackしない", async (t) => {
@@ -465,7 +476,7 @@ test("Codex generation terminal観測はinProgressをpendingとして返し、�
   }, { now: () => NOW });
   await activateCodexGenerationObserver({
     stateRoot: root, request: launchRequest(), spawnResult: spawned, session, generationId: GENERATION_ID,
-  }, { now: () => NOW });
+  }, { now: () => NOW, waitForCodexBootstrapCompletion: async () => {} });
   const pending = await observeCodexGenerationTerminal({
     stateRoot: root, request: launchRequest(), session, generationId: GENERATION_ID,
   }, { now: () => NOW });
@@ -477,4 +488,48 @@ test("Codex generation terminal観測はinProgressをpendingとして返し、�
   assert.equal(mismatched.outcome, "unknown");
   assert.equal(mismatched.reason, "durable_turn_missing");
   assert.deepEqual(session.calls.map((entry) => entry[1]).filter(Boolean), ["initialize", "initialized", "thread/start", "turn/start", "thread/read", "thread/read"]);
+});
+
+test("Codex bootstrap waitはfailed／interrupted／timeout／別turnをfail closedにする", async () => {
+  const operation = {
+    schema: "observer.codex_turn_operation.v1",
+    thread_id: THREAD_ID,
+    turn_id: TURN_ID,
+    status: "inProgress",
+    observed_at: NOW,
+  };
+  for (const [status, code] of [["failed", "E_CODEX_BOOTSTRAP_TERMINAL_FAILURE"], ["interrupted", "E_CODEX_BOOTSTRAP_TERMINAL_FAILURE"]]) {
+    const session = new FakeSession(async (method) => {
+      if (method === "thread/read") return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: TURN_ID, status, items: [] }] } };
+      throw new Error(`unexpected ${method}`);
+    });
+    await initialize(session);
+    await assert.rejects(
+      waitForCodexBootstrapCompletion({ request: launchRequest(), operation, session }, { now: () => NOW }),
+      expectCode(code),
+    );
+  }
+
+  const pending = new FakeSession(async (method) => {
+    if (method === "thread/read") return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: TURN_ID, status: "inProgress", items: [] }] } };
+    throw new Error(`unexpected ${method}`);
+  });
+  await initialize(pending);
+  await assert.rejects(
+    waitForCodexBootstrapCompletion({ request: launchRequest(), operation, session: pending }, {
+      now: () => NOW, bootstrapAttempts: 2, bootstrapPollIntervalMs: 0, sleep: async () => {},
+    }),
+    expectCode("E_CODEX_BOOTSTRAP_TIMEOUT"),
+  );
+  assert.equal(pending.calls.filter((entry) => entry[1] === "thread/read").length, 2);
+
+  const mismatched = new FakeSession(async (method) => {
+    if (method === "thread/read") return { thread: { id: THREAD_ID, cwd: ROOT, turns: [{ id: OTHER_TURN_ID, status: "completed", items: [] }] } };
+    throw new Error(`unexpected ${method}`);
+  });
+  await initialize(mismatched);
+  await assert.rejects(
+    waitForCodexBootstrapCompletion({ request: launchRequest(), operation, session: mismatched }, { now: () => NOW }),
+    expectCode("E_CODEX_BOOTSTRAP_TURN_MISSING"),
+  );
 });

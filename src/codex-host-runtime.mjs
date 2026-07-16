@@ -48,6 +48,8 @@ const JOURNAL_STATUSES = new Set([
 ]);
 const TERMINAL_STATUSES = new Set(["completed", "interrupted", "failed"]);
 const GENERATION_TERMINAL_OBSERVATION_STATUSES = new Set(["running", "stopping", ...TERMINAL_STATUSES]);
+const CODEX_BOOTSTRAP_POLL_INTERVAL_MS = 1_000;
+const CODEX_BOOTSTRAP_ATTEMPTS = 60;
 const claimedSessions = new WeakSet();
 const initializedSessions = new WeakSet();
 
@@ -131,6 +133,11 @@ export async function activateCodexObserver({ stateRoot, request, spawnResult, s
     stateRoot, request, generationId, expected: ["turn_prepared"], status: "running",
     threadId: operation.thread_id, turnId: operation.turn_id, cycleId: effectiveCycleId, terminalStatus: null,
   }, dependencies);
+  await (dependencies.waitForCodexBootstrapCompletion ?? waitForCodexBootstrapCompletion)({
+    request,
+    operation,
+    session,
+  }, dependencies);
   const readyReceipt = hostReceipt(request, "ready", operation.thread_id);
   const confirmReady = dependencies.confirmParentLaunch ?? confirmParentLaunch;
   const active = await confirmReady({ stateRoot, request, receipt: readyReceipt }, dependencies.parentDependencies ?? {});
@@ -183,6 +190,11 @@ export async function activateCodexGenerationObserver({
     stateRoot, request, generationId, expected: ["turn_prepared"], status: "running",
     threadId: operation.thread_id, turnId: operation.turn_id, cycleId: effectiveCycleId, terminalStatus: null,
   }, dependencies);
+  await (dependencies.waitForCodexBootstrapCompletion ?? waitForCodexBootstrapCompletion)({
+    request,
+    operation,
+    session,
+  }, dependencies);
   return {
     schema: CODEX_GENERATION_ACTIVATION_RESULT_SCHEMA,
     operation,
@@ -228,7 +240,7 @@ export async function recoverCodexGenerationReady({ stateRoot, request, session,
   }
   const observation = await readCodexObserverThread({ request, threadId: journal.thread_id, session }, dependencies);
   const turn = observation.turns.find((entry) => entry.turn_id === journal.turn_id);
-  if (turn?.status !== "inProgress") return generationRecovery("unknown", "turn_not_in_progress", null);
+  if (turn?.status !== "completed") return generationRecovery("unknown", "bootstrap_not_completed", null);
   return {
     ...generationRecovery("ready", null, hostReceipt(request, "ready", journal.thread_id)),
     operation: operationFromJournal(journal),
@@ -295,7 +307,7 @@ export async function recoverCodexObserverReady({ stateRoot, request, session, g
   }
   const observation = await readCodexObserverThread({ request, threadId: journal.thread_id, session }, dependencies);
   const turn = observation.turns.find((entry) => entry.turn_id === journal.turn_id);
-  if (turn?.status !== "inProgress") fail("E_CODEX_READY_RECOVERY_UNAVAILABLE", "保存済みCodex turnはrunningではありません");
+  if (turn?.status !== "completed") fail("E_CODEX_READY_RECOVERY_UNAVAILABLE", "保存済みCodex bootstrap turnはcompletedではありません");
   const receipt = hostReceipt(request, "ready", journal.thread_id);
   const confirmReady = dependencies.confirmParentLaunch ?? confirmParentLaunch;
   const active = await confirmReady({ stateRoot, request, receipt }, dependencies.parentDependencies ?? {});
@@ -325,6 +337,36 @@ export async function readCodexObserverThread({ request, threadId, session } = {
     fail("E_CODEX_THREAD_READ_FAILED", "保存済みCodex threadをreadできません");
   }
   return parseCodexThreadReadResult({ result, expectedThreadId: threadId, expectedCwd: request.runtime_root, observedAt: now(dependencies) });
+}
+
+export async function waitForCodexBootstrapCompletion({ request, operation, session } = {}, dependencies = {}) {
+  requireCodexLaunchRequest(request);
+  requireInitializedSession(session);
+  if (!isPlainObject(operation) || operation.schema !== CODEX_TURN_OPERATION_SCHEMA ||
+      !hasExactKeys(operation, ["observed_at", "schema", "status", "thread_id", "turn_id"]) ||
+      !UUID_V7_RE.test(operation.thread_id) || !UUID_V7_RE.test(operation.turn_id) ||
+      typeof operation.observed_at !== "string" || Number.isNaN(Date.parse(operation.observed_at))) {
+    fail("E_CODEX_BOOTSTRAP_OPERATION_INVALID", "Codex bootstrap operationが不正です");
+  }
+  if (operation.status !== "inProgress") fail("E_CODEX_BOOTSTRAP_OPERATION_INVALID", "Codex bootstrap operationがrunningではありません");
+  const attempts = dependencies.bootstrapAttempts ?? CODEX_BOOTSTRAP_ATTEMPTS;
+  const pollIntervalMs = dependencies.bootstrapPollIntervalMs ?? CODEX_BOOTSTRAP_POLL_INTERVAL_MS;
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 300 ||
+      !Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 0 || pollIntervalMs > 60_000) {
+    fail("E_CODEX_BOOTSTRAP_WAIT_CONFIG", "Codex bootstrap wait設定が不正です");
+  }
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const observation = await readCodexObserverThread({ request, threadId: operation.thread_id, session }, dependencies);
+    const turn = observation.turns.find((entry) => entry.turn_id === operation.turn_id);
+    if (!turn) fail("E_CODEX_BOOTSTRAP_TURN_MISSING", "保存済みCodex bootstrap turnを回収できません");
+    if (turn.status === "completed") return observation;
+    if (["failed", "interrupted"].includes(turn.status)) {
+      fail("E_CODEX_BOOTSTRAP_TERMINAL_FAILURE", "Codex bootstrap turnが正常完了しませんでした");
+    }
+    if (turn.status !== "inProgress") fail("E_CODEX_BOOTSTRAP_STATE_INVALID", "Codex bootstrap turn状態が不正です");
+    if (attempt + 1 < attempts) await (dependencies.sleep ?? delay)(pollIntervalMs);
+  }
+  fail("E_CODEX_BOOTSTRAP_TIMEOUT", "Codex bootstrap turnが期限内に完了しませんでした");
 }
 
 export async function stopCodexObserver({ stateRoot, request, launchRequest, session, previousInterruptReceipt = null, generationId = null } = {}, dependencies = {}) {
@@ -579,6 +621,10 @@ function validateTimestamp(value) {
 
 function now(dependencies) {
   return (dependencies.now ?? (() => new Date().toISOString()))();
+}
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function serialize(value) {

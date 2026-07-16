@@ -793,6 +793,16 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           closeAndWait terminal確認へ固定する。focused 13/13、related 69/69はgreen。独立commit後、
           実Codex正常停止で閉じる
           （[ADR 0137](adr/0137-codex-child-signal-isolation.md)）。
+        - [ ] **P5-1b5b-r12 Codex bootstrap terminal ready gate:** 実Codex parentのseed `task_complete`後、
+          Observer bootstrap turnがまだ`inProgress`なのにwatch／generationをreadyへ進め、最初のcycleが
+          `E_CODEX_CYCLE_TURN_ACTIVE`で停止した。`turn/start` ACKをAI readyにせず、同じdurable
+          thread／turnの`thread/read`でbootstrap `completed`を確認してからready receiptとwatch activationへ
+          進む。`failed | interrupted | timeout`は別turnを再送せずfail loudにする。initial／generation
+          activationとready recoveryを同じ契約へ揃え、focused／related gate、独立commit、実Codex再Hで閉じる
+          （[ADR 0138](adr/0138-codex-bootstrap-terminal-ready-gate.md)）。
+          - [x] 実装gate: `completed`前のreadyを禁止し、failed／interrupted／timeout／別turnをfail closedに
+            固定した。focused 17/17、related 111/111、`npm run check`、新規ADR lint、diff checkがgreen。
+          - [ ] 実Codex candidateで初回cycle commit、65秒超継続、follow-up後の第2cycle、正常停止を確認する。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
