@@ -725,6 +725,12 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
         session terminal確認後に修理gateを独立commitで閉じてからliveを再開する。
         focused 28/28、related 48/48、`npm run check`、対象docs lint、dotagents isolated package gateが
         greenとなり、[ADR 0128](adr/0128-parent-hook-state-root-binding-acceptance.md)で受け入れた。
+      - [ ] **P5-1b5b-r2 Throughline capture実行物束縛:** state root修理後のClaude attemptで
+        hook errorは消えたが、Aiterm parentがglobal PATHの旧`throughline process-turn`を実行し、
+        DB sessionだけ増えてcompleted receipt fileが作られなかった。read側だけでなくcapture側も
+        campaign candidateへ束縛するため、Aiterm controllerのPATH先頭をcampaign prefixへ固定する
+        （[ADR 0129](adr/0129-throughline-capture-runtime-binding.md)）。手動transcript投入やglobal更新へ
+        fallbackせず、失敗sessionを公開closeしてからliveを再開する。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
