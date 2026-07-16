@@ -58,6 +58,7 @@ test("Aiterm stdioはinitialize 2025-11-25、必須3 tools、structured launch r
   assert.ok(transport instanceof AitermMcpTransport);
   assert.deepEqual({ command: invocation.command, args: invocation.args }, { command: AITERM, args: [] });
   assert.equal(invocation.options.cwd, ROOT); assert.equal(invocation.options.shell, false);
+  assert.equal(invocation.options.detached, true, "親terminal signalをAiterm MCP childへ直接配送しない");
   const structured = { schema: "aiterm.agent-launch-result.v1", provider: "claude", session_id: "claude_1", managed_completion: true };
   child.handler = (message, current) => {
     if (message.method === "tools/call") {

@@ -44,6 +44,7 @@ export async function startAitermMcpTransport({ verification } = {}, dependencie
     child = spawnProcess(verification.aiterm.realpath, [], {
       cwd: verification.runtime_root,
       env: boundedEnv(dependencies.env ?? process.env),
+      detached: true,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
