@@ -4,7 +4,7 @@
 
 ## Status
 
-Accepted。実装gateはgreen。queue 19eの実正常停止再検証を受入れへ残す。
+Accepted。実装gateとqueue 19eの実正常停止再検証はgreen。
 
 ## Context
 
@@ -35,4 +35,6 @@ groupでspawnされるため、terminal SIGINTを直接受けてこの順序よ�
 
 - focused Aiterm transport＋Claude runtime: 9 passed、0 failed、0 skipped。
 - related transport＋caller＋Supervisor＋CLI: 43 passed、0 failed、0 skipped。
-- 実SIGINT再検証はqueue 19e live Hで行い、fixture greenへ代入しない。
+- 修理commit: `396cf05`。
+- 再pack候補の実SIGINT: caller `cancelled`、exit 130、managed session残留0。
+- 同じruntimeの親sessionは公開closeで`closed`。fixture greenをlive成功へ代入していない。

@@ -769,12 +769,13 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           500ms×11回連続へ固定し、非readyでstreakをリセットした。pure 21/21、focused agent 4/4、
           related 113/113、build、新規ADR lint、diff checkがgreen。再pack候補の実managed Claudeで
           request／output可視、初回cycle commit、model operation残留なしを確認した。
-        - [ ] **P5-1b5b-r9 SIGINT時のAiterm子process signal隔離:** r8候補の正常停止で、foreground
+        - [x] **P5-1b5b-r9 SIGINT時のAiterm子process signal隔離:** r8候補の正常停止で、foreground
           Observerと同じprocess groupのAiterm MCP childがSIGINTを先に受け、session closeより前にtransportが
           terminalとなった。callerは`E_AITERM_TRANSPORT_CLOSED`で非0終了しmanaged sessionが1件残留したため、
           別processの公開`pty_close`で回収した。Aiterm childを親terminal signalから隔離し、Observerの
           AbortSignalだけでSupervisorをcancelして`pty_close`→MCP closeの既存順序を完遂する。
-          detached child修理はfocused 9/9、related 43/43でgreen。独立commit後、実正常停止の再Hで閉じる
+          detached child修理はcommit `396cf05`、focused 9/9、related 43/43でgreen。再pack候補の実正常停止は
+          caller `cancelled`／exit 130、managed session残留0、親session公開close `closed`を確認して閉じた
           （[ADR 0135](adr/0135-aiterm-child-signal-isolation.md)）。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
