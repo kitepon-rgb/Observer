@@ -60,7 +60,7 @@ Observer、Throughline、Aitermの受入済みrepo HEADをそれぞれpackし、
 - Throughlineは同prefixの`observer-read`がcampaign projectのexact JSONを返す。
 - Claude parentを保持するAiterm controller processはcampaign専用の短い0700 `TMPDIR`と
   `PATH=<campaign-prefix>/bin:$PATH`で起動し、global tmux serverを再利用しない。
-  macOSでは`<TMPDIR>/claude-tmux-sockets/claude-mcp`を103 bytes以下にし、launch前に実測する。
+  macOSでは実物`<TMPDIR>/claude-tmux-sockets/claude.sock`を103 bytes以下にし、launch前に実測する。
   settings内のbare `throughline process-turn`も同じcandidateへ解決する。read側だけcandidateへ向け、
   capture側をglobal packageへ残してはならない。
 - Aitermはpreflightのstdio initialize／tool schemaを唯一のversion・surface gateとする。
