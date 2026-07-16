@@ -650,10 +650,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       structured statusをgeneric model callbackへ変換するClaude provider operationを実装した。
       focused 8/8、related 58/58、`npm run check` green。受入証拠は
       [ADR 0117](adr/0117-aiterm-transport-and-claude-operation-acceptance.md)。
-    - [ ] P5-1b4b: 新規production routeのprivate host handleを`claude.session`へ分離し、promptless
-      managed `claude_agent` launch、structured receipt、watch activation、initial generationを接続する。
-      旧`claude.job` background routeはblocked履歴互換だけに限定する。
-    - [ ] P5-1b4c: Claude provider runtimeをproduction step、Supervisor process、親caller、CLIへ接続し、
+    - [x] P5-1b4b: 新規production routeのprivate host handleを`claude.session`へ分離し、promptless
+      managed `claude_agent` launch、structured receipt、watch activation、initial generationを接続した。
+      明示launch拒否とtransport unknownをjournalで分離し、unknown時だけrecover-onlyを許す。旧`claude.job`
+      background routeはblocked履歴互換だけに限定した。focused 27/27、related 35/35、`npm run check` green。
+      受入証拠は[ADR 0118](adr/0118-aiterm-claude-session-launch-acceptance.md)。
+    - [ ] P5-1b4c（NEXT）: Claude provider runtimeをproduction step、Supervisor process、親caller、CLIへ接続し、
       通常completed cycle間で同じsession handleを再利用する。
     - [ ] P5-1b4d: rollback／parent rebindのstop／relaunch／recoveryをAiterm公開toolだけへ接続し、
       focused／related gate、親反証、独立commitで19dを閉じる。

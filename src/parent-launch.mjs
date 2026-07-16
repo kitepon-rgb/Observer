@@ -51,7 +51,30 @@ export async function prepareParentLaunch({
   authorization,
   expectedPreviousWatchId = null,
 } = {}, dependencies = {}) {
+  return prepareParentLaunchWithRoute({
+    stateRoot, projectRoot, runtimeRoot, authorization, expectedPreviousWatchId,
+  }, "background", dependencies);
+}
+
+export async function prepareAitermClaudeParentLaunch({
+  stateRoot,
+  projectRoot,
+  runtimeRoot,
+  authorization,
+  expectedPreviousWatchId = null,
+} = {}, dependencies = {}) {
+  return prepareParentLaunchWithRoute({
+    stateRoot, projectRoot, runtimeRoot, authorization, expectedPreviousWatchId,
+  }, "aiterm", dependencies);
+}
+
+async function prepareParentLaunchWithRoute({
+  stateRoot, projectRoot, runtimeRoot, authorization, expectedPreviousWatchId,
+}, claudeRoute, dependencies) {
   const provider = validateAuthorization(authorization, "start_observer");
+  if (claudeRoute === "aiterm" && provider !== "claude") {
+    fail("E_PARENT_PROVIDER_MISMATCH", "Aiterm Claude launchにはClaude親authorizationが必要です");
+  }
   const canonicalRuntimeRoot = await (dependencies.canonicalDirectory ?? canonicalDirectory)(runtimeRoot);
   const registered = await (dependencies.registerProjectTarget ?? registerProjectTarget)({ stateRoot, projectRoot });
   const target = publicTarget(registered);
@@ -61,7 +84,7 @@ export async function prepareParentLaunch({
     provider,
     expectedPreviousWatchId,
   });
-  return launchRequest({ target, starting, provider, runtimeRoot: canonicalRuntimeRoot });
+  return launchRequest({ target, starting, provider, runtimeRoot: canonicalRuntimeRoot, claudeRoute });
 }
 
 export function buildGenerationLaunchRequest({ target, watchId, provider, runtimeRoot } = {}) {
@@ -72,7 +95,18 @@ export function buildGenerationLaunchRequest({ target, watchId, provider, runtim
   validateWatchId(watchId);
   validateAbsolutePath(target.projectRoot, "project root", "E_PARENT_LAUNCH_SCHEMA");
   validateAbsolutePath(runtimeRoot, "runtime root", "E_PARENT_LAUNCH_SCHEMA");
-  return launchRequest({ target, starting: { watch_id: watchId }, provider, runtimeRoot });
+  return launchRequest({ target, starting: { watch_id: watchId }, provider, runtimeRoot, claudeRoute: "background" });
+}
+
+export function buildAitermClaudeGenerationLaunchRequest({ target, watchId, runtimeRoot } = {}) {
+  requirePlainObject(target, "project target", "E_PARENT_LAUNCH_SCHEMA");
+  requireExactKeys(target, ["projectRoot", "schema", "targetId"], "project target", "E_PARENT_LAUNCH_SCHEMA");
+  if (target.schema !== "observer.project_target.v1") fail("E_PARENT_LAUNCH_SCHEMA", "project target schemaが不正です");
+  validateTargetId(target.targetId);
+  validateWatchId(watchId);
+  validateAbsolutePath(target.projectRoot, "project root", "E_PARENT_LAUNCH_SCHEMA");
+  validateAbsolutePath(runtimeRoot, "runtime root", "E_PARENT_LAUNCH_SCHEMA");
+  return launchRequest({ target, starting: { watch_id: watchId }, provider: "claude", runtimeRoot, claudeRoute: "aiterm" });
 }
 
 export async function confirmParentLaunch({ stateRoot, request, receipt } = {}, dependencies = {}) {
@@ -173,7 +207,7 @@ export function validateParentHostReceipt(value, expectedOutcome) {
   return value;
 }
 
-function launchRequest({ target, starting, provider, runtimeRoot }) {
+function launchRequest({ target, starting, provider, runtimeRoot, claudeRoute }) {
   const childStart = {
     schema: CHILD_START_SCHEMA,
     mode: "observe",
@@ -192,12 +226,19 @@ function launchRequest({ target, starting, provider, runtimeRoot }) {
         ephemeral: false,
         service_name: "observer",
       }
-    : {
+    : claudeRoute === "aiterm"
+      ? {
+          kind: "aiterm.claude_agent.v1",
+          cwd: runtimeRoot,
+          agent_done: true,
+          session_name: claudeSessionNameFor(target.targetId, starting.watch_id),
+        }
+      : {
         kind: "claude.background_agent.v1",
         agent: "observer",
         name: claudeJobNameFor(target.targetId, starting.watch_id),
         cwd: runtimeRoot,
-      };
+        };
   const request = {
     schema: PARENT_LAUNCH_REQUEST_SCHEMA,
     provider,
@@ -205,7 +246,7 @@ function launchRequest({ target, starting, provider, runtimeRoot }) {
     target_id: target.targetId,
     project_root: target.projectRoot,
     runtime_root: runtimeRoot,
-    required_handle_kind: handleKindFor(provider),
+    required_handle_kind: handleKindFor(provider, claudeRoute),
     host,
     child_start: childStart,
   };
@@ -246,7 +287,7 @@ function validateLaunchRequest(value) {
   validateWatchId(value.watch_id);
   validateAbsolutePath(value.project_root, "project root", "E_PARENT_LAUNCH_SCHEMA");
   validateAbsolutePath(value.runtime_root, "runtime root", "E_PARENT_LAUNCH_SCHEMA");
-  if (value.required_handle_kind !== handleKindFor(value.provider)) fail("E_PARENT_LAUNCH_SCHEMA", "launch handle kindがproviderと一致しません");
+  if (!handleKindAllowed(value.provider, value.required_handle_kind)) fail("E_PARENT_LAUNCH_SCHEMA", "launch handle kindがproviderと一致しません");
   validateChildStart(value.child_start, value);
   validateHostRequest(value.host, value);
   return value;
@@ -272,6 +313,14 @@ function validateHostRequest(value, request) {
     }
     return;
   }
+  if (request.required_handle_kind === "claude.session") {
+    requireExactKeys(value, ["agent_done", "cwd", "kind", "session_name"], "Aiterm Claude host request", "E_PARENT_LAUNCH_SCHEMA");
+    if (value.kind !== "aiterm.claude_agent.v1" || value.cwd !== request.runtime_root || value.agent_done !== true ||
+        value.session_name !== claudeSessionNameFor(request.target_id, request.watch_id)) {
+      fail("E_PARENT_LAUNCH_SCHEMA", "Aiterm Claude host requestが不正です");
+    }
+    return;
+  }
   requireExactKeys(value, ["agent", "cwd", "kind", "name"], "Claude host request", "E_PARENT_LAUNCH_SCHEMA");
   if (value.kind !== "claude.background_agent.v1" || value.agent !== "observer" || value.name !== claudeJobNameFor(request.target_id, request.watch_id) || value.cwd !== request.runtime_root) {
     fail("E_PARENT_LAUNCH_SCHEMA", "Claude host requestが不正です");
@@ -282,6 +331,12 @@ export function claudeJobNameFor(targetId, watchId) {
   validateTargetId(targetId);
   validateWatchId(watchId);
   return `observer-${targetId.slice(2, 14)}-${watchId.slice(2)}`;
+}
+
+export function claudeSessionNameFor(targetId, watchId) {
+  validateTargetId(targetId);
+  validateWatchId(watchId);
+  return `obs_${targetId.slice(2, 14)}_${watchId.slice(2).replaceAll("-", "")}`;
 }
 
 function validateStopRequest(value) {
@@ -316,7 +371,7 @@ function requireReceiptMatches(request, receipt) {
   if (receipt.provider !== request.provider || receipt.watch_id !== request.watch_id || receipt.target_id !== request.target_id) {
     fail("E_PARENT_HOST_RECEIPT_MISMATCH", "host receiptがrequestと一致しません");
   }
-  const expected = request.required_handle_kind ?? handleKindFor(request.provider);
+  const expected = request.required_handle_kind ?? request.handle?.kind ?? handleKindFor(request.provider);
   if (receipt.handle.kind !== expected) fail("E_PARENT_HOST_RECEIPT_MISMATCH", "host receipt handle kindがrequestと一致しません");
   if (receipt.terminal !== undefined && receipt.terminal.thread_id !== receipt.handle.value) {
     fail("E_PARENT_STOP_HANDLE_MISMATCH", "Codex terminal threadが保存済みhandleと一致しません");
@@ -329,7 +384,7 @@ function requireReceiptMatches(request, receipt) {
 function validateHandle(value, provider, code) {
   requirePlainObject(value, "host handle", code);
   requireExactKeys(value, ["kind", "value"], "host handle", code);
-  if (value.kind !== handleKindFor(provider) || typeof value.value !== "string") fail(code, "host handleがproviderと一致しません");
+  if (!handleKindAllowed(provider, value.kind) || typeof value.value !== "string") fail(code, "host handleがproviderと一致しません");
   if (provider === "codex" ? !CODEX_THREAD_ID_RE.test(value.value) : !CLAUDE_JOB_ID_RE.test(value.value)) fail(code, "host handle valueが不正です");
 }
 
@@ -347,8 +402,12 @@ function publicTarget(value) {
   return { schema: value.schema, targetId: value.targetId, projectRoot: value.projectRoot };
 }
 
-function handleKindFor(provider) {
-  return provider === "codex" ? "codex.thread" : "claude.job";
+function handleKindFor(provider, claudeRoute = "background") {
+  return provider === "codex" ? "codex.thread" : claudeRoute === "aiterm" ? "claude.session" : "claude.job";
+}
+
+function handleKindAllowed(provider, kind) {
+  return provider === "codex" ? kind === "codex.thread" : kind === "claude.job" || kind === "claude.session";
 }
 
 function isProvider(value) {

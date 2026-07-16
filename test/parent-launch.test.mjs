@@ -11,7 +11,9 @@ import {
   HOST_RECEIPT_SCHEMA,
   PARENT_AUTHORIZATION_SCHEMA,
   PARENT_LAUNCH_REQUEST_SCHEMA,
+  claudeSessionNameFor,
   prepareParentLaunch,
+  prepareAitermClaudeParentLaunch,
   recordParentLaunchFailure,
   requestParentLaunchFailureCleanup,
   requestParentStop,
@@ -129,6 +131,29 @@ test("Claude親は同じtransactionからbackground agent用requestを得る", a
     name: "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111",
     cwd: "/observer",
   });
+});
+
+test("Aiterm production routeは旧claude.job互換を残したまま決定的claude.session requestを作る", async () => {
+  const request = await prepareAitermClaudeParentLaunch({
+    stateRoot: "/state",
+    projectRoot: "/project",
+    runtimeRoot: "/observer",
+    authorization: auth("claude"),
+  }, prepareDependencies("claude", []));
+  const sessionName = claudeSessionNameFor(TARGET_ID, WATCH_ID);
+  assert.equal(request.required_handle_kind, "claude.session");
+  assert.equal(request.host.kind, "aiterm.claude_agent.v1");
+  assert.equal(request.host.session_name, sessionName);
+  assert.equal(sessionName, "obs_aaaaaaaaaaaa_11111111111141118111111111111111");
+  await assert.rejects(
+    prepareAitermClaudeParentLaunch({
+      stateRoot: "/state",
+      projectRoot: "/project",
+      runtimeRoot: "/observer",
+      authorization: auth("codex"),
+    }, prepareDependencies("codex", [])),
+    expectCode("E_PARENT_PROVIDER_MISMATCH"),
+  );
 });
 
 test("planned rolloverは新watchを予約せず既存identityから同じlaunch requestを再構成する", () => {

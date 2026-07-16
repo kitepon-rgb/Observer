@@ -94,6 +94,22 @@ test("launch handleをactive前に耐久化し、公開statusへ出さずwatch I
   assert.deepEqual(await readWatchStatus({ stateRoot, targetId: TARGET.targetId }), active);
 });
 
+test("Aiterm Claude session handleは耐久化してactiveへ進め、private bindingだけで再開照合できる", async () => {
+  const stateRoot = await box();
+  const starting = await reserveActiveWatch({ stateRoot, target: TARGET, provider: "claude" }, { randomUUID: () => UUID_A, now: () => T0 });
+  const handle = { kind: "claude.session", value: "obs_aaaaaaaaaaaa_11111111111141118111111111111111" };
+  await attachWatchLaunchHandle({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: handle }, { now: () => T1 });
+  const active = await activateWatch({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: handle }, { now: () => T1 });
+  assert.equal(active.status, "active");
+  assert.equal("launch_handle" in active, false);
+  const binding = await readWatchHostBinding({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id });
+  assert.deepEqual(binding.launch_handle, handle);
+  await assert.rejects(
+    activateWatch({ stateRoot, targetId: TARGET.targetId, watchId: starting.watch_id, launchHandle: { ...handle, value: "other-session" } }, { now: () => T1 }),
+    expectCode("E_WATCH_TRANSITION_INVALID"),
+  );
+});
+
 test("stopはstoppingを保持して再試行でき、確認後だけhandleを消してstoppedへ閉じる", async () => {
   const stateRoot = await box();
   const starting = await reserveActiveWatch({ stateRoot, target: TARGET, provider: "codex" }, { randomUUID: () => UUID_A, now: () => T0 });

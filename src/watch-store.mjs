@@ -428,7 +428,10 @@ function validateLaunchHandle(handle) {
 
 function validateProviderLaunchHandle(handle, provider) {
   validateLaunchHandle(handle);
-  if (handle.kind !== (provider === "codex" ? "codex.thread" : "claude.job")) {
+  const valid = provider === "codex"
+    ? handle.kind === "codex.thread"
+    : handle.kind === "claude.job" || handle.kind === "claude.session";
+  if (!valid) {
     fail("E_WATCH_LAUNCH_HANDLE_INVALID", "launch handle kindがproviderと一致しません");
   }
 }
