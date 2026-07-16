@@ -818,13 +818,18 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           uid 501・gid 20で復元し、candidate dry-runが両provider `changed=yes`となることを確認した。
           両projectは空のまま。intentional fault、push、publish、deploy、loginは未実施。
           不変受入証拠は[ADR 0139](adr/0139-queue19e-dual-host-live-acceptance.md)。
-        - [ ] **P5-1b5b-r15 Codex process-group cleanup訂正:** campaign cleanupで、終了済みCodex
+        - [x] **P5-1b5b-r15 Codex process-group cleanup訂正:** campaign cleanupで、終了済みCodex
           app-server二attemptが起動したMCP process群16件がcampaign rootを`cwd`にしたまま残留していた。
           app-server leaderだけのterminal確認をprocess残留0へ読み替えたADR 0139の該当証拠を失効させる。
           detached app-serverの終了は、固有process group全体へSIGTERM→SIGKILLを配送し、leader closeと
           process group消滅の両方をboundedに確認して初めて成功とする。既存孤児は所有PIDへの通常SIGTERMで
           16/16終了しcampaign rootを削除した。実装、focused／related gate、fresh subprocess実証を独立commitで
-          閉じる（[ADR 0140](adr/0140-codex-process-group-cleanup-correction.md)）。
+          閉じる（[ADR 0140](adr/0140-codex-process-group-cleanup-correction.md)）。実装は
+          commit `c936cfd`へ独立固定し、focused 16/16、Codex caller／Supervisor related 13/13、
+          `npm run check`がgreen。
+          実OS fixtureではleader終了後もSIGTERMを無視する子を同じgroupに残し、bounded SIGKILL後に
+          group／子PIDとも不在を確認した。受入証拠は
+          [ADR 0141](adr/0141-codex-process-group-cleanup-acceptance.md)。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
