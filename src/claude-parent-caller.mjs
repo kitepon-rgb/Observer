@@ -1,9 +1,11 @@
 import { isAbsolute } from "node:path";
 
 import {
+  AITERM_CLAUDE_STOP_RESULT_SCHEMA,
   activateAitermClaudeObserver,
   recoverAitermClaudeSpawn,
   spawnAitermClaudeObserver,
+  stopAitermClaudeObserver,
 } from "./aiterm-claude-host-runtime.mjs";
 import {
   AITERM_PROCESS_VERIFICATION_SCHEMA,
@@ -12,8 +14,10 @@ import {
 import { fail } from "./observer-error.mjs";
 import {
   PARENT_LAUNCH_REQUEST_SCHEMA,
+  completeParentStop,
   prepareAitermClaudeParentLaunch,
   recordParentLaunchFailure,
+  requestParentLaunchFailureCleanup,
   validateParentHostReceipt,
 } from "./parent-launch.mjs";
 import {
@@ -101,6 +105,8 @@ export async function runClaudeParentWatchProcess({
   let owned = null;
   let claimed = false;
   let primaryFailure = null;
+  let spawnReceipt = null;
+  let activationConfirmed = false;
   try {
     try {
       owned = await (dependencies.createClaudeSupervisorRuntime ?? createClaudeSupervisorRuntime)({
@@ -139,8 +145,8 @@ export async function runClaudeParentWatchProcess({
       }
     }
     validateSpawnResult(spawnResult, request);
+    spawnReceipt = structuredClone(spawnResult.receipt);
 
-    owned = (dependencies.attachClaudeSessionShutdown ?? attachClaudeSessionShutdown)(owned);
     const activation = await (
       dependencies.activateAitermClaudeObserver ?? activateAitermClaudeObserver
     )({
@@ -150,6 +156,8 @@ export async function runClaudeParentWatchProcess({
       parentThreadSha256: parent.thread_sha256,
     }, dependencies.claudeHostDependencies);
     validateActivation(activation, request);
+    activationConfirmed = true;
+    owned = (dependencies.attachClaudeSessionShutdown ?? attachClaudeSessionShutdown)(owned);
 
     const run = dependencies.runSupervisorProcess ?? runSupervisorProcess;
     const processResult = await run({
@@ -177,6 +185,17 @@ export async function runClaudeParentWatchProcess({
     };
   } catch (error) {
     primaryFailure = error;
+    if (owned !== null && !claimed && spawnReceipt !== null && !activationConfirmed) {
+      try {
+        await cleanupFailedClaudeLaunch({ owned, stateRoot, request, spawnReceipt, dependencies });
+      } catch (cleanupFailure) {
+        primaryFailure = new AggregateError(
+          [error, cleanupFailure],
+          "Claude pre-ready失敗とlaunch cleanupが失敗しました",
+        );
+        throw primaryFailure;
+      }
+    }
     throw error;
   } finally {
     if (owned !== null && !claimed && typeof owned.close === "function") {
@@ -193,6 +212,28 @@ export async function runClaudeParentWatchProcess({
       }
     }
   }
+}
+
+async function cleanupFailedClaudeLaunch({ owned, stateRoot, request, spawnReceipt, dependencies }) {
+  const stopRequest = await (
+    dependencies.requestParentLaunchFailureCleanup ?? requestParentLaunchFailureCleanup
+  )({
+    stateRoot,
+    request,
+    receipt: spawnReceipt,
+    faultCode: "E_OBSERVER_LAUNCH_CONFIRM_FAILED",
+  }, dependencies.parentDependencies);
+  const stopped = await (dependencies.stopAitermClaudeObserver ?? stopAitermClaudeObserver)({
+    stateRoot,
+    request: stopRequest,
+    transport: owned.providerRuntime.transport,
+  }, dependencies.claudeHostDependencies);
+  validateClaudeStopResult(stopped, stopRequest);
+  await (dependencies.completeParentStop ?? completeParentStop)({
+    stateRoot,
+    request: stopRequest,
+    receipt: stopped.terminal_receipt,
+  }, dependencies.parentDependencies);
 }
 
 async function recordPreSpawnFailure({ stateRoot, request, error }, dependencies) {
@@ -291,6 +332,23 @@ function validateActivation(value, request) {
   }
   validateParentHostReceipt(value.ready_receipt, "ready");
   requireReceiptIdentity(value.ready_receipt, request, "E_CLAUDE_PARENT_ACTIVATION_INVALID");
+}
+
+function validateClaudeStopResult(value, request) {
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !==
+      "schema,stop_command_receipt,terminal_receipt" ||
+      value.schema !== AITERM_CLAUDE_STOP_RESULT_SCHEMA ||
+      !isPlainObject(value.stop_command_receipt) || !isPlainObject(value.terminal_receipt)) {
+    fail("E_CLAUDE_PARENT_STOP_RESULT_INVALID", "Claude pre-ready stop resultが不正です");
+  }
+  validateParentHostReceipt(value.terminal_receipt, "stopped");
+  if (value.terminal_receipt.provider !== request.provider ||
+      value.terminal_receipt.watch_id !== request.watch_id ||
+      value.terminal_receipt.target_id !== request.target_id ||
+      value.terminal_receipt.handle?.kind !== request.handle.kind ||
+      value.terminal_receipt.handle.value !== request.handle.value) {
+    fail("E_CLAUDE_PARENT_STOP_RESULT_INVALID", "Claude pre-ready stop identityが一致しません");
+  }
 }
 
 function requireReceiptIdentity(receipt, request, code) {

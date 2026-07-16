@@ -18,6 +18,7 @@ import {
   completeParentStop,
   prepareParentLaunch,
   recordParentLaunchFailure,
+  requestParentLaunchFailureCleanup,
   requestParentStop,
   validateParentHostReceipt,
 } from "./parent-launch.mjs";
@@ -108,6 +109,8 @@ export async function runCodexParentWatchProcess({
   let owned = null;
   let claimed = false;
   let primaryFailure = null;
+  let spawnReceipt = null;
+  let activationConfirmed = false;
   try {
     try {
       owned = await (dependencies.createCodexSupervisorRuntime ?? createCodexSupervisorRuntime)({
@@ -129,6 +132,7 @@ export async function runCodexParentWatchProcess({
       session: owned.providerRuntime.session,
     }, dependencies.codexHostDependencies);
     validateSpawnResult(spawnResult, request);
+    spawnReceipt = structuredClone(spawnResult.receipt);
 
     const activation = await (dependencies.activateCodexObserver ?? activateCodexObserver)({
       stateRoot,
@@ -137,6 +141,7 @@ export async function runCodexParentWatchProcess({
       session: owned.providerRuntime.session,
     }, dependencies.codexHostDependencies);
     validateActivation(activation, request);
+    activationConfirmed = true;
     owned = withTerminalShutdown({
       owned,
       stateRoot,
@@ -181,6 +186,25 @@ export async function runCodexParentWatchProcess({
     };
   } catch (error) {
     primaryFailure = error;
+    if (owned !== null && !claimed && spawnReceipt !== null && !activationConfirmed) {
+      try {
+        await cleanupFailedCodexLaunch({
+          owned,
+          stateRoot,
+          request,
+          spawnReceipt,
+          stopPollIntervalMs,
+          stopAttempts,
+          dependencies,
+        });
+      } catch (cleanupFailure) {
+        primaryFailure = new AggregateError(
+          [error, cleanupFailure],
+          "Codex pre-ready失敗とlaunch cleanupが失敗しました",
+        );
+        throw primaryFailure;
+      }
+    }
     throw error;
   } finally {
     if (owned !== null && !claimed && typeof owned.close === "function") {
@@ -197,6 +221,34 @@ export async function runCodexParentWatchProcess({
       }
     }
   }
+}
+
+async function cleanupFailedCodexLaunch({
+  owned,
+  stateRoot,
+  request,
+  spawnReceipt,
+  stopPollIntervalMs,
+  stopAttempts,
+  dependencies,
+}) {
+  const stopRequest = await (
+    dependencies.requestParentLaunchFailureCleanup ?? requestParentLaunchFailureCleanup
+  )({
+    stateRoot,
+    request,
+    receipt: spawnReceipt,
+    faultCode: "E_OBSERVER_LAUNCH_CONFIRM_FAILED",
+  }, dependencies.parentDependencies);
+  await completeCodexStop({
+    session: owned.providerRuntime.session,
+    stateRoot,
+    request,
+    stopRequest,
+    stopPollIntervalMs,
+    stopAttempts,
+    dependencies,
+  });
 }
 
 async function recordPreSpawnFailure({ stateRoot, request, error }, dependencies) {
@@ -296,6 +348,20 @@ async function ensureCodexTerminal({
       parent_provider: "codex",
     },
   }, dependencies.parentDependencies);
+  await completeCodexStop({
+    session,
+    stateRoot,
+    request,
+    stopRequest,
+    stopPollIntervalMs,
+    stopAttempts,
+    dependencies,
+  });
+}
+
+async function completeCodexStop({
+  session, stateRoot, request, stopRequest, stopPollIntervalMs, stopAttempts, dependencies,
+}) {
   let previousInterruptReceipt = null;
   for (let attempt = 0; attempt < stopAttempts; attempt += 1) {
     const stopped = await (dependencies.stopCodexObserver ?? stopCodexObserver)({
@@ -305,7 +371,7 @@ async function ensureCodexTerminal({
       session,
       previousInterruptReceipt,
     }, dependencies.codexHostDependencies);
-    validateStopResult(stopped);
+    validateStopResult(stopped, stopRequest);
     if (stopped.command_receipt !== null) previousInterruptReceipt = stopped.command_receipt;
     if (stopped.terminal_receipt !== null) {
       await (dependencies.completeParentStop ?? completeParentStop)({
@@ -322,7 +388,7 @@ async function ensureCodexTerminal({
   fail("E_CODEX_PARENT_STOP_TERMINAL_UNKNOWN", "Codex turn terminalをbounded poll内で確認できません");
 }
 
-function validateStopResult(value) {
+function validateStopResult(value, request) {
   if (!isPlainObject(value) || Object.keys(value).sort().join(",") !==
       "command_receipt,journal,schema,terminal_receipt,terminal_status" ||
       value.schema !== CODEX_HOST_STOP_RESULT_SCHEMA || !isPlainObject(value.journal) ||
@@ -332,7 +398,16 @@ function validateStopResult(value) {
       (value.terminal_receipt === null) !== (value.terminal_status === null)) {
     fail("E_CODEX_PARENT_STOP_RESULT_INVALID", "Codex stop resultが不正です");
   }
-  if (value.terminal_receipt !== null) validateParentHostReceipt(value.terminal_receipt, "stopped");
+  if (value.terminal_receipt !== null) {
+    validateParentHostReceipt(value.terminal_receipt, "stopped");
+    if (value.terminal_receipt.provider !== request.provider ||
+        value.terminal_receipt.watch_id !== request.watch_id ||
+        value.terminal_receipt.target_id !== request.target_id ||
+        value.terminal_receipt.handle?.kind !== request.handle.kind ||
+        value.terminal_receipt.handle.value !== request.handle.value) {
+      fail("E_CODEX_PARENT_STOP_RESULT_INVALID", "Codex stop result identityが一致しません");
+    }
+  }
 }
 
 function waitForStopPoll(milliseconds) {

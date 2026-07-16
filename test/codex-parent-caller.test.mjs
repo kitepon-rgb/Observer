@@ -75,12 +75,12 @@ function receipt(outcome) {
   };
 }
 
-function terminalReceipt() {
+function terminalReceipt(status = "interrupted") {
   return {
     ...receipt("stopped"),
     terminal: {
       schema: "observer.codex_turn_terminal.v1",
-      status: "interrupted",
+      status,
       thread_id: THREAD_ID,
       turn_id: THREAD_ID,
       observed_at: "2026-07-16T00:00:00.000Z",
@@ -98,6 +98,14 @@ function stopRequest() {
     handle: { kind: "codex.thread", value: THREAD_ID },
     terminal: "stopped",
     fault_code: null,
+  };
+}
+
+function failedLaunchStopRequest() {
+  return {
+    ...stopRequest(),
+    terminal: "faulted",
+    fault_code: "E_OBSERVER_LAUNCH_CONFIRM_FAILED",
   };
 }
 
@@ -241,10 +249,12 @@ test("spawn unknownは別runtime・別spawnへretryせず、予約済みwatchを
 
 test("ready unknownは別runtime・別turnへretryせず、generationを作らない", async () => {
   const unknown = Object.assign(new Error("ready unknown"), { code: "E_CODEX_TURN_START_UNKNOWN" });
+  const cleanupUnknown = Object.assign(new Error("turn terminal unknown"), { code: "E_CODEX_STOP_CORRELATION_FAILED" });
   let runtimes = 0;
   let spawns = 0;
   let activations = 0;
   let generations = 0;
+  let cleanups = 0;
   let closes = 0;
   await assert.rejects(runCodexParentWatchProcess(input(), dependencies({
     createCodexSupervisorRuntime: async () => {
@@ -253,11 +263,75 @@ test("ready unknownは別runtime・別turnへretryせず、generationを作ら�
     },
     spawnCodexObserverThread: async () => { spawns += 1; return { receipt: receipt("spawned") }; },
     activateCodexObserver: async () => { activations += 1; throw unknown; },
+    requestParentLaunchFailureCleanup: async () => { cleanups += 1; return failedLaunchStopRequest(); },
+    stopCodexObserver: async () => { throw cleanupUnknown; },
     initializeGeneration: async () => { generations += 1; },
-  })), (error) => error === unknown);
-  assert.deepEqual({ runtimes, spawns, activations, generations, closes }, {
-    runtimes: 1, spawns: 1, activations: 1, generations: 0, closes: 1,
+  })), (error) => error instanceof AggregateError && error.errors[0] === unknown && error.errors[1] === cleanupUnknown);
+  assert.deepEqual({ runtimes, spawns, activations, generations, cleanups, closes }, {
+    runtimes: 1, spawns: 1, activations: 1, generations: 0, cleanups: 1, closes: 1,
   });
+});
+
+test("Codex bootstrap failed／interrupted／timeoutは同じhandleをterminal後にwatch faultへ閉じる", async (t) => {
+  for (const [code, terminalStatus] of [
+    ["E_CODEX_BOOTSTRAP_TERMINAL_FAILURE", "failed"],
+    ["E_CODEX_BOOTSTRAP_TERMINAL_FAILURE", "interrupted"],
+    ["E_CODEX_BOOTSTRAP_TIMEOUT", "interrupted"],
+  ]) {
+    await t.test(`${code}:${terminalStatus}`, async () => {
+      const calls = [];
+      const failure = Object.assign(new Error(`${code}:${terminalStatus}`), { code });
+      const runtime = ownedRuntime(async () => { calls.push("transport-close"); });
+      let stopAttempts = 0;
+      await assert.rejects(runCodexParentWatchProcess(input({ stopAttempts: 2, stopPollIntervalMs: 100 }), dependencies({
+        createCodexSupervisorRuntime: async () => runtime,
+        activateCodexObserver: async () => { calls.push("ready-failed"); throw failure; },
+        requestParentLaunchFailureCleanup: async ({ request: launchRequest, receipt: spawnReceipt, faultCode }) => {
+          calls.push("cleanup-request");
+          assert.deepEqual(launchRequest, request());
+          assert.deepEqual(spawnReceipt, receipt("spawned"));
+          assert.equal(faultCode, "E_OBSERVER_LAUNCH_CONFIRM_FAILED");
+          return failedLaunchStopRequest();
+        },
+        stopCodexObserver: async ({ request: receivedStop, launchRequest, session, previousInterruptReceipt }) => {
+          calls.push("provider-terminal");
+          assert.deepEqual(receivedStop, failedLaunchStopRequest());
+          assert.deepEqual(launchRequest, request());
+          assert.equal(session, runtime.providerRuntime.session);
+          stopAttempts += 1;
+          if (code === "E_CODEX_BOOTSTRAP_TIMEOUT" && stopAttempts === 1) {
+            assert.equal(previousInterruptReceipt, null);
+            return stopResult({ commandReceipt: { schema: "observer.codex_interrupt_receipt.v1" } });
+          }
+          return stopResult({ terminal: terminalReceipt(terminalStatus) });
+        },
+        waitForStopPoll: async (milliseconds) => { calls.push(`poll:${milliseconds}`); },
+        completeParentStop: async ({ request: receivedStop, receipt: receivedReceipt }) => {
+          calls.push("watch-faulted");
+          assert.deepEqual(receivedStop, failedLaunchStopRequest());
+          assert.equal(receivedReceipt.terminal.status, terminalStatus);
+        },
+        initializeGeneration: async () => { assert.fail("generationを作らない"); },
+        runSupervisorProcess: async () => { assert.fail("Supervisorへ渡さない"); },
+      })), (error) => error === failure);
+      const expected = ["ready-failed", "cleanup-request", "provider-terminal"];
+      if (code === "E_CODEX_BOOTSTRAP_TIMEOUT") expected.push("poll:100", "provider-terminal");
+      expected.push("watch-faulted", "transport-close");
+      assert.deepEqual(calls, expected);
+    });
+  }
+});
+
+test("Codex pre-ready cleanup失敗は元のready失敗とともにfail loudにする", async () => {
+  const failure = Object.assign(new Error("bootstrap failed"), { code: "E_CODEX_BOOTSTRAP_TERMINAL_FAILURE" });
+  const cleanupFailure = new Error("watch cleanup failed");
+  let closes = 0;
+  await assert.rejects(runCodexParentWatchProcess(input(), dependencies({
+    createCodexSupervisorRuntime: async () => ownedRuntime(async () => { closes += 1; }),
+    activateCodexObserver: async () => { throw failure; },
+    requestParentLaunchFailureCleanup: async () => { throw cleanupFailure; },
+  })), (error) => error instanceof AggregateError && error.errors[0] === failure && error.errors[1] === cleanupFailure);
+  assert.equal(closes, 1);
 });
 
 test("generation conflictは再試行・別runtime・別spawnへ丸めず、所有runtimeを一度だけ閉じる", async () => {
