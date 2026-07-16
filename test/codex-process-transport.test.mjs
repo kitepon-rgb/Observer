@@ -79,6 +79,7 @@ test("app-serverをshellなし・Observer cwd・環境allowlistで生成する",
   });
   assert.ok(transport instanceof CodexProcessTransport);
   assert.deepEqual({ command: invocation.command, args: invocation.args }, { command: CODEX, args: ["app-server"] });
+  assert.equal(invocation.options.detached, true, "親terminal signalをCodex app-server childへ直接配送しない");
   assert.equal(invocation.options.cwd, ROOT);
   assert.equal(invocation.options.shell, false);
   assert.deepEqual(invocation.options.env, { NO_COLOR: "1", HOME: "/home", PATH: "/bin" });

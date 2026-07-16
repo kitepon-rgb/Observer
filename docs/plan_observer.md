@@ -786,6 +786,13 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           related 52/52はgreen。commit `ebd8ae6`の再pack候補でstrict parse、初回cycle commit、pending／
           model operation残留なしを確認して閉じた
           （[ADR 0136](adr/0136-cycle-response-contract-per-turn.md)）。
+        - [ ] **P5-1b5b-r11 Codex app-server child signal隔離:** Claude正常停止で根治した同じprocess group
+          問題がCodex app-server transportにも残っている。foreground callerのSIGINTがapp-server childへ
+          直接届くと、Observerのcancel処理より先にtransport terminalとなり、turn interrupt／terminal回収を
+          完遂できない。Codex childもdetached process group、stdio所有、unrefなし、既存
+          closeAndWait terminal確認へ固定する。focused 13/13、related 69/69はgreen。独立commit後、
+          実Codex正常停止で閉じる
+          （[ADR 0137](adr/0137-codex-child-signal-isolation.md)）。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。

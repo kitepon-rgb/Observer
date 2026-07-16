@@ -45,6 +45,7 @@ export async function startCodexAppServerTransport({ verification, onNotificatio
     child = spawnProcess(verification.codex.realpath, ["app-server"], {
       cwd: verification.runtime_root,
       env: boundedEnv(dependencies.env ?? process.env),
+      detached: true,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
