@@ -53,7 +53,11 @@ export async function startCodexAppServerTransport({ verification, onNotificatio
   } catch {
     fail("E_CODEX_PROCESS_START_FAILED", "Codex app-server processを起動できません");
   }
-  return new CodexProcessTransport(child, { onNotification });
+  return new CodexProcessTransport(child, {
+    onNotification,
+    signalProcessGroup: dependencies.signalProcessGroup,
+    probeProcessGroup: dependencies.probeProcessGroup,
+  });
 }
 
 export class CodexProcessTransport {
@@ -68,12 +72,26 @@ export class CodexProcessTransport {
   #resolveTerminal;
   #terminalPromise;
   #terminationController = new AbortController();
+  #processGroupTarget;
+  #signalProcessGroup;
+  #probeProcessGroup;
+  #sentSignals = new Set();
+  #terminationFailure = null;
 
-  constructor(child, { onNotification = null } = {}) {
+  constructor(child, {
+    onNotification = null,
+    signalProcessGroup = defaultSignalProcessGroup,
+    probeProcessGroup = defaultProbeProcessGroup,
+  } = {}) {
     validateChild(child);
+    if (!Number.isSafeInteger(child.pid) || child.pid <= 0) fail("E_CODEX_PROCESS_GROUP_INVALID", "Codex app-server process group IDが不正です");
     if (onNotification !== null && typeof onNotification !== "function") fail("E_CODEX_NOTIFICATION_HANDLER_INVALID", "Codex notification handlerが不正です");
+    if (typeof signalProcessGroup !== "function" || typeof probeProcessGroup !== "function") fail("E_CODEX_PROCESS_GROUP_INVALID", "Codex app-server process group操作が不正です");
     this.#child = child;
     this.#onNotification = onNotification;
+    this.#processGroupTarget = -child.pid;
+    this.#signalProcessGroup = signalProcessGroup;
+    this.#probeProcessGroup = probeProcessGroup;
     this.#terminalPromise = new Promise((resolve) => { this.#resolveTerminal = resolve; });
     child.stdout.on("data", (chunk) => this.#consumeStdout(chunk));
     child.stdout.on("end", () => this.#abort("E_CODEX_TRANSPORT_UNKNOWN", "Codex app-server stdoutが終了しました"));
@@ -115,27 +133,15 @@ export class CodexProcessTransport {
       fail("E_CODEX_PROCESS_TERMINATION_CONFIG", "Codex process終了待機設定が不正です");
     }
     this.close();
-    if (this.#terminal !== null) return structuredClone(this.#terminal);
-    let killTimer;
-    let unknownTimer;
-    const unknown = new Promise((_resolve, reject) => {
-      killTimer = setTimeout(() => {
-        if (this.#terminal === null) {
-          try { this.#child.kill("SIGKILL"); } catch {}
-        }
-      }, terminateGraceMs);
-      unknownTimer = setTimeout(() => {
-        if (this.#terminal === null) {
-          reject(new ObserverError("E_CODEX_PROCESS_TERMINATION_UNKNOWN", "Codex app-server processの終了を確認できません"));
-        }
-      }, terminateGraceMs + killGraceMs);
-    });
-    try {
-      return await Promise.race([this.#terminalPromise, unknown]);
-    } finally {
-      clearTimeout(killTimer);
-      clearTimeout(unknownTimer);
-    }
+    this.#ensureProcessGroupSignal("SIGTERM");
+    this.#throwTerminationFailure();
+    const terminated = await this.#waitForTerminalAndGroupAbsence(terminateGraceMs);
+    if (terminated !== null) return terminated;
+    if (this.#probeGroupAlive()) this.#ensureProcessGroupSignal("SIGKILL");
+    this.#throwTerminationFailure();
+    const killed = await this.#waitForTerminalAndGroupAbsence(killGraceMs);
+    if (killed !== null) return killed;
+    throw terminationUnknown();
   }
 
   #write(message) {
@@ -228,16 +234,17 @@ export class CodexProcessTransport {
   }
 
   #abort(code, message, terminate = true) {
-    if (this.#closed) return;
+    if (this.#closed) {
+      if (terminate) this.#ensureProcessGroupSignal("SIGTERM");
+      return;
+    }
     this.#closed = true;
     this.#terminationController.abort();
     const error = new ObserverError(code, message);
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
     try { this.#child.stdin.end(); } catch {}
-    if (terminate) {
-      try { this.#child.kill("SIGTERM"); } catch {}
-    }
+    if (terminate) this.#ensureProcessGroupSignal("SIGTERM");
   }
 
   #recordTerminal(exitCode, signal) {
@@ -252,6 +259,47 @@ export class CodexProcessTransport {
       signal: normalizedSignal,
     };
     this.#resolveTerminal(structuredClone(this.#terminal));
+  }
+
+  #ensureProcessGroupSignal(signal) {
+    if (this.#sentSignals.has(signal) || this.#terminationFailure !== null) return;
+    this.#sentSignals.add(signal);
+    try {
+      const delivered = this.#signalProcessGroup(this.#processGroupTarget, signal);
+      if (typeof delivered !== "boolean") throw new TypeError("process group signal result must be boolean");
+    } catch {
+      this.#terminationFailure = terminationUnknown();
+    }
+  }
+
+  #probeGroupAlive() {
+    this.#throwTerminationFailure();
+    try {
+      const alive = this.#probeProcessGroup(this.#processGroupTarget);
+      if (typeof alive !== "boolean") throw new TypeError("process group probe result must be boolean");
+      return alive;
+    } catch {
+      this.#terminationFailure = terminationUnknown();
+      throw this.#terminationFailure;
+    }
+  }
+
+  #throwTerminationFailure() {
+    if (this.#terminationFailure !== null) throw this.#terminationFailure;
+  }
+
+  async #waitForTerminalAndGroupAbsence(timeoutMs) {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      this.#throwTerminationFailure();
+      const groupAlive = this.#probeGroupAlive();
+      if (this.#terminal !== null && !groupAlive) return structuredClone(this.#terminal);
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return null;
+      const delay = new Promise((resolve) => setTimeout(resolve, Math.min(10, remaining)));
+      if (this.#terminal === null) await Promise.race([this.#terminalPromise, delay]);
+      else await delay;
+    }
   }
 }
 
@@ -325,6 +373,30 @@ function validateVerification(value) {
 
 function validateChild(child) {
   if ((typeof child !== "object" && typeof child !== "function") || child === null || typeof child.on !== "function" || typeof child.kill !== "function" || typeof child.stdin?.write !== "function" || typeof child.stdin?.end !== "function" || typeof child.stdout?.on !== "function" || typeof child.stderr?.on !== "function") fail("E_CODEX_PROCESS_HANDLE_INVALID", "Codex app-server process handleが不正です");
+}
+
+function defaultSignalProcessGroup(target, signal) {
+  try {
+    process.kill(target, signal);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+function defaultProbeProcessGroup(target) {
+  try {
+    process.kill(target, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+function terminationUnknown() {
+  return new ObserverError("E_CODEX_PROCESS_TERMINATION_UNKNOWN", "Codex app-server process groupの終了を確認できません");
 }
 
 function validateMethodAndParams(method, params) {

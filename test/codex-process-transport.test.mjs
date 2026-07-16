@@ -1,7 +1,12 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   CODEX_PROCESS_VERIFICATION_SCHEMA,
@@ -24,8 +29,9 @@ function verification() {
 }
 
 class FakeChild extends EventEmitter {
-  constructor() {
+  constructor({ pid = 4242 } = {}) {
     super();
+    this.pid = pid;
     this.stdout = new PassThrough();
     this.stderr = new PassThrough();
     this.lines = [];
@@ -50,6 +56,32 @@ class FakeChild extends EventEmitter {
   }
 }
 
+function processGroupHarness({ alive = true, signalFailure = null, probeFailure = null } = {}) {
+  const state = { alive, probes: [], signals: [] };
+  return {
+    state,
+    options: {
+      signalProcessGroup: (target, signal) => {
+        state.signals.push([target, signal]);
+        if (signalFailure?.signal === signal) throw signalFailure.error;
+        return state.alive;
+      },
+      probeProcessGroup: (target) => {
+        state.probes.push(target);
+        if (probeFailure !== null) throw probeFailure;
+        return state.alive;
+      },
+    },
+  };
+}
+
+function transportFor(child, harness = processGroupHarness(), options = {}) {
+  return {
+    harness,
+    transport: new CodexProcessTransport(child, { ...harness.options, ...options }),
+  };
+}
+
 function expectCode(code) {
   return (error) => error instanceof ObserverError && error.code === code;
 }
@@ -71,11 +103,13 @@ test("Codex executable identityとversionをObserver rootで二重確認する",
 
 test("app-serverをshellなし・Observer cwd・環境allowlistで生成する", async () => {
   const child = new FakeChild();
+  const harness = processGroupHarness();
   let invocation;
   const transport = await startCodexAppServerTransport({ verification: verification() }, {
     recheckIdentity: async () => {},
     env: { HOME: "/home", PATH: "/bin", SECRET_TOKEN: "no" },
     spawn: (command, args, options) => { invocation = { command, args, options }; return child; },
+    ...harness.options,
   });
   assert.ok(transport instanceof CodexProcessTransport);
   assert.deepEqual({ command: invocation.command, args: invocation.args }, { command: CODEX, args: ["app-server"] });
@@ -84,6 +118,7 @@ test("app-serverをshellなし・Observer cwd・環境allowlistで生成する",
   assert.equal(invocation.options.shell, false);
   assert.deepEqual(invocation.options.env, { NO_COLOR: "1", HOME: "/home", PATH: "/bin" });
   transport.close();
+  assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"]]);
   await assert.rejects(
     startCodexAppServerTransport({ verification: { ...verification(), runtime_root: "relative" } }),
     expectCode("E_CODEX_PROCESS_VERIFICATION_INVALID"),
@@ -92,7 +127,7 @@ test("app-serverをshellなし・Observer cwd・環境allowlistで生成する",
 
 test("JSONL request IDをout-of-order responseへexact相関しjsonrpc headerを送らない", async () => {
   const child = new FakeChild();
-  const transport = new CodexProcessTransport(child);
+  const { transport } = transportFor(child);
   const first = transport.request("thread/read", { threadId: "one" });
   const second = transport.request("thread/read", { threadId: "two" });
   await new Promise((resolve) => setImmediate(resolve));
@@ -108,31 +143,32 @@ test("JSONL request IDをout-of-order responseへexact相関しjsonrpc headerを
 
 test("notificationをbounded callbackへ渡しserver requestをprotocol違反にする", async () => {
   const child = new FakeChild();
+  const harness = processGroupHarness();
   const notifications = [];
-  const transport = new CodexProcessTransport(child, { onNotification: (message) => notifications.push(message) });
+  const { transport } = transportFor(child, harness, { onNotification: (message) => notifications.push(message) });
   child.respond({ method: "turn/completed", params: { turn: { id: "turn" } } });
   assert.deepEqual(notifications, [{ method: "turn/completed", params: { turn: { id: "turn" } } }]);
   const pending = transport.request("thread/read", {});
   child.respond({ id: 99, method: "item/commandExecution/requestApproval", params: {} });
   await assert.rejects(pending, expectCode("E_CODEX_TRANSPORT_PROTOCOL"));
-  assert.equal(child.killed, "SIGTERM");
+  assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"]]);
 });
 
 test("error responseはraw payloadを露出せず未知または重複response IDはfail closedにする", async () => {
   const child = new FakeChild();
-  const transport = new CodexProcessTransport(child);
+  const { harness, transport } = transportFor(child);
   const failed = transport.request("thread/read", {});
   child.respond({ id: 1, error: { code: -1, message: "secret raw detail" } });
   await assert.rejects(failed, (error) => expectCode("E_CODEX_APP_SERVER_RESPONSE_ERROR")(error) && !error.message.includes("secret"));
   const pending = transport.request("thread/read", {});
   child.respond({ id: 1, result: {} });
   await assert.rejects(pending, expectCode("E_CODEX_TRANSPORT_PROTOCOL"));
-  assert.equal(child.killed, "SIGTERM");
+  assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"]]);
 });
 
 test("process切断はpendingをunknownにしてtransport内で再送しない", async () => {
   const child = new FakeChild();
-  const transport = new CodexProcessTransport(child);
+  const { transport } = transportFor(child);
   const pending = transport.request("turn/start", { threadId: "one" });
   child.emit("exit", 1, null);
   await assert.rejects(pending, expectCode("E_CODEX_TRANSPORT_UNKNOWN"));
@@ -141,17 +177,22 @@ test("process切断はpendingをunknownにしてtransport内で再送しない",
   assert.throws(() => transport.request("turn/start", { threadId: "one" }), expectCode("E_CODEX_TRANSPORT_CLOSED"));
 });
 
-test("terminal closeを待ち、grace超過ではSIGKILL後のcloseだけを成功にする", async () => {
+test("固有process groupへSIGTERMからSIGKILLを送り、leader closeとgroup消滅後だけ成功する", async () => {
   const child = new FakeChild();
-  const originalKill = child.kill.bind(child);
-  child.kill = (signal) => {
-    const result = originalKill(signal);
-    if (signal === "SIGKILL") queueMicrotask(() => child.emit("close", null, "SIGKILL"));
-    return result;
+  const harness = processGroupHarness();
+  harness.options.signalProcessGroup = (target, signal) => {
+    harness.state.signals.push([target, signal]);
+    if (signal === "SIGKILL") {
+      harness.state.alive = false;
+      queueMicrotask(() => child.emit("close", null, "SIGKILL"));
+    }
+    return true;
   };
-  const transport = new CodexProcessTransport(child);
+  const { transport } = transportFor(child, harness);
   const terminal = await transport.closeAndWait({ terminateGraceMs: 0, killGraceMs: 20 });
-  assert.deepEqual(child.signals, ["SIGTERM", "SIGKILL"]);
+  assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"], [-child.pid, "SIGKILL"]]);
+  assert.ok(harness.state.probes.length > 0);
+  assert.ok(harness.state.probes.every((target) => target === -child.pid));
   assert.deepEqual(terminal, {
     schema: "observer.codex_process_terminal.v1",
     status: "closed",
@@ -160,27 +201,127 @@ test("terminal closeを待ち、grace超過ではSIGKILL後のcloseだけを成�
   });
 });
 
-test("SIGKILL後もcloseを確認できなければ終了不明をfail loudにする", async () => {
+test("leader close後もgroup aliveなら未完了で、group消滅後だけterminal receiptを返す", async () => {
   const child = new FakeChild();
-  const transport = new CodexProcessTransport(child);
+  const { harness, transport } = transportFor(child);
+  let settled = false;
+  const closing = transport.closeAndWait({ terminateGraceMs: 100, killGraceMs: 100 }).then((value) => {
+    settled = true;
+    return value;
+  });
+  child.emit("close", 0, null);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(settled, false);
+  harness.state.alive = false;
+  assert.equal((await closing).status, "closed");
+});
+
+test("group消滅後もleader closeが無ければ成功にしない", async () => {
+  const child = new FakeChild();
+  const harness = processGroupHarness({ alive: false });
+  const { transport } = transportFor(child, harness);
   await assert.rejects(
     transport.closeAndWait({ terminateGraceMs: 0, killGraceMs: 0 }),
     expectCode("E_CODEX_PROCESS_TERMINATION_UNKNOWN"),
   );
-  assert.deepEqual(child.signals, ["SIGTERM", "SIGKILL"]);
+});
+
+test("SIGKILL後もgroupが残る場合は終了不明をfail loudにする", async () => {
+  const child = new FakeChild();
+  const { harness, transport } = transportFor(child);
+  child.emit("close", null, "SIGTERM");
+  await assert.rejects(
+    transport.closeAndWait({ terminateGraceMs: 0, killGraceMs: 0 }),
+    expectCode("E_CODEX_PROCESS_TERMINATION_UNKNOWN"),
+  );
+  assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"], [-child.pid, "SIGKILL"]]);
+});
+
+test("process group ID欠損とsignal・probe異常をleader-only fallbackへ丸めない", async (t) => {
+  assert.throws(
+    () => new CodexProcessTransport(new FakeChild({ pid: null })),
+    expectCode("E_CODEX_PROCESS_GROUP_INVALID"),
+  );
+
+  await t.test("SIGTERM failure", async () => {
+    const child = new FakeChild();
+    const harness = processGroupHarness({ signalFailure: { signal: "SIGTERM", error: new Error("denied") } });
+    const { transport } = transportFor(child, harness);
+    await assert.rejects(
+      transport.closeAndWait({ terminateGraceMs: 20, killGraceMs: 20 }),
+      expectCode("E_CODEX_PROCESS_TERMINATION_UNKNOWN"),
+    );
+    assert.deepEqual(child.signals, []);
+  });
+
+  await t.test("SIGKILL failure", async () => {
+    const child = new FakeChild();
+    const harness = processGroupHarness({ signalFailure: { signal: "SIGKILL", error: new Error("denied") } });
+    const { transport } = transportFor(child, harness);
+    child.emit("close", null, "SIGTERM");
+    await assert.rejects(
+      transport.closeAndWait({ terminateGraceMs: 0, killGraceMs: 20 }),
+      expectCode("E_CODEX_PROCESS_TERMINATION_UNKNOWN"),
+    );
+    assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"], [-child.pid, "SIGKILL"]]);
+  });
+
+  await t.test("probe failure", async () => {
+    const child = new FakeChild();
+    const harness = processGroupHarness({ probeFailure: new Error("probe denied") });
+    const { transport } = transportFor(child, harness);
+    child.emit("close", 0, null);
+    await assert.rejects(
+      transport.closeAndWait({ terminateGraceMs: 20, killGraceMs: 20 }),
+      expectCode("E_CODEX_PROCESS_TERMINATION_UNKNOWN"),
+    );
+  });
 });
 
 test("不正JSONLとoversize stderrはpendingをfail closedにする", async () => {
   const invalidChild = new FakeChild();
-  const invalidTransport = new CodexProcessTransport(invalidChild);
+  const { transport: invalidTransport } = transportFor(invalidChild);
   const invalidPending = invalidTransport.request("thread/read", {});
   invalidChild.stdout.write("{not-json}\n");
   await assert.rejects(invalidPending, expectCode("E_CODEX_TRANSPORT_PROTOCOL"));
 
   const stderrChild = new FakeChild();
-  const stderrTransport = new CodexProcessTransport(stderrChild);
+  const { harness, transport: stderrTransport } = transportFor(stderrChild);
   const stderrPending = stderrTransport.request("thread/read", {});
   stderrChild.stderr.write(Buffer.alloc(1024 * 1024 + 1));
   await assert.rejects(stderrPending, expectCode("E_CODEX_TRANSPORT_PROTOCOL"));
-  assert.equal(stderrChild.killed, "SIGTERM");
+  assert.deepEqual(harness.state.signals, [[-stderrChild.pid, "SIGTERM"]]);
+});
+
+test("実OS fixtureでleader終了後の子processをgroupごと回収する", {
+  skip: process.platform === "win32" ? "POSIX process group fixture" : false,
+}, async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "observer-codex-process-group-"));
+  const pidFile = join(root, "survivor.pid");
+  const fixture = fileURLToPath(new URL("./fixtures/codex-process-group-leader.mjs", import.meta.url));
+  const leader = spawn(process.execPath, [fixture, pidFile], {
+    detached: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  const leaderClosed = new Promise((resolve) => leader.once("close", resolve));
+  t.after(async () => {
+    try { process.kill(-leader.pid, "SIGKILL"); } catch {}
+    await rm(root, { recursive: true, force: true });
+  });
+  const transport = new CodexProcessTransport(leader);
+  let survivorPid = null;
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    try {
+      survivorPid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
+      break;
+    } catch {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+  }
+  assert.ok(Number.isSafeInteger(survivorPid) && survivorPid > 0, "survivor PIDを取得する");
+  await leaderClosed;
+  const terminal = await transport.closeAndWait({ terminateGraceMs: 25, killGraceMs: 2_000 });
+  assert.equal(terminal.status, "closed");
+  assert.throws(() => process.kill(-leader.pid, 0), (error) => error?.code === "ESRCH");
+  assert.throws(() => process.kill(survivorPid, 0), (error) => error?.code === "ESRCH");
 });
