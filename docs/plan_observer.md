@@ -59,10 +59,12 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - 成果物: Claudeの完了turn証拠、正式Stop event／payload、project／session identity、60秒超wait、同じturnへのcontinuation、明示停止の再現記録。
   - 完了条件: Claude Observerと親Claudeへの配送を、Codex wireの流用や推測なしで実装できる。
   - 部分実測: Claude Code 2.1.207でheadless `result/end_turn`、同じsession IDのresume、`SessionStart:resume`を確認した。2.1.210ではbackground jobが75秒まで`working`を維持し、90秒timer中の実行中stop、子process消滅、project fingerprint不変を確認した（[ADR 0011](adr/0011-claude-process-boundary-characterization.md)）。daemon／adapter crash後の結果回収は未検証。完了turnはfinal assistantやprocess exitでなく、Throughline所有のStop receiptへ束縛する。`/rewind`はforkなので同一session rollbackを新設しない。
-  - 上記は基礎characterizationである。後続の隔離liveではjob `sessionId`／Stop `session_id`相関と
+  - 上記は旧background job候補の基礎characterizationである。後続の隔離liveではjob `sessionId`／Stop `session_id`相関と
     Stop hook発火までconfirmedとなったが、canonical resultは拒否され、既存background jobへの
     公開非対話requestとterminal exact result readはunsupportedと確定した
     （[ADR 0114](adr/0114-claude-live-recharacterization-blocked.md)）。
+    ただしClaude Observer全体をblockedとはせず、永続PTY上のAiterm `claude_agent`を新しい公開transport
+    候補とする（[ADR 0115](adr/0115-persistent-observer-context-and-claude-transport.md)）。
 
 - [x] **P0-7 Observerのprovider配置と役割を固定する。**
   - 成果物: Codex親→Codex Observer、Claude親→Claude Observerという同provider契約と、継続的反証ではない伴走者契約。
@@ -86,7 +88,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     provider bindingの構造探索も実sourceとblast radiusを返した。DBは`.codegraph/.gitignore`により
     端末local、生成されたignore metadataだけを追跡候補にする。
 
-**Gate:** P0-6のdaemon／adapter crash後の結果回収が未完。host-neutral coreは先行できるが、Claude live adapterのproduction採用はblockedのまま維持する。
+**Gate:** Aiterm `claude_agent`の非H契約・結果回収・timeout recoveryは`dd43c40`で完了した。
+Claude live adapterのproduction採用は、実Claude初回／follow-up smokeの19c3 live Hまで保留する。
 
 ---
 
@@ -626,9 +629,16 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       不変はconfirmed、canonical resultは`E_CLAUDE_CHARACTERIZATION_RESULT_INVALID`、公開reply／
       terminal exact resultはunsupportedである
       （[ADR 0114](adr/0114-claude-live-recharacterization-blocked.md)）。
-      P5-1b3全体とP5-1b4は必要な公開delivery／result contractが現れるまでblockedとする。
-  - [ ] **P5-1b4 Claude caller core 非H:** P5-1b3で実証した公開面だけをissue／recover／cleanup、
-    initial generation、Supervisor loopへ接続する。
+      旧background job経路は必要な公開delivery／result contractが現れるまでblockedとする。
+  - [x] **P5-1b3e Aiterm Claude対話transport 非H:** Aitermの永続PTYへ対話型`claude_agent`を追加し、
+    promptなし起動、初回／follow-up、Stop完了、exact result、timeout後回収、interrupt／closeを
+    Aiterm側の独立plan・gate・commitで閉じる。`claude -p`反復は代替にしない
+    （Aiterm `dd43c40`、focused 1/1、related 109/109、full 249/249、独立反証後green、
+    [ADR 0115](adr/0115-persistent-observer-context-and-claude-transport.md)）。
+  - [ ] **P5-1b3f Aiterm Claude対話transport live H:** 実Claude初回／follow-up各1 turn、Stop、
+    exact result、session closeを一度だけ確認する。model requestを伴うため明示承認後に実施する。
+  - [ ] **P5-1b4 Claude caller core 非H:** P5-1b3eで固定したAiterm公開面だけをissue／recover／cleanup、
+    initial generation、同じ永続Claude sessionを所有するSupervisor loopへ接続する。
   - [ ] **P5-1b5 dual-host live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
     65秒超wait、実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。
 
@@ -677,4 +687,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 11. 利用者の明示指示を受けた親だけが同provider Observerを起動し、一targetで二重起動しない。
 12. Claude／Codex ObserverはcanonicalなObserver rootを実行`cwd`とし、監視対象ごとの擬似projectやtemporary repoを作らない。
 13. 一つの親session epochには一つの論理Observerだけが伴走し、同時にactiveな物理host generationを一つへ制限する。
-    context rollover後もcursorとbounded stateを維持し、raw会話履歴を記憶装置にしない。
+    active generation内は同じprovider sessionへcompleted turnを継続投入してObserver自身の理解を維持する。
+    context rollover後もcursorとbounded stateを引き継ぎ、Throughline L2をObserver cognitionの代替にしない。
+14. SupervisorはAIではなくtransport／exact-once／recovery制御だけを担い、completed turnごとのfresh evaluatorを
+    Observerとして起動しない。利用者は永続Observer sessionを通常の対話sessionとして閲覧できる。
