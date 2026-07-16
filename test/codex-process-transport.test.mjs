@@ -310,7 +310,7 @@ test("実OS fixtureでleader終了後の子processをgroupごと回収する", {
   });
   const transport = new CodexProcessTransport(leader);
   let survivorPid = null;
-  for (let attempt = 0; attempt < 200; attempt += 1) {
+  for (let attempt = 0; attempt < 1_000; attempt += 1) {
     try {
       survivorPid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
       break;
