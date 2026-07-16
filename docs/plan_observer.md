@@ -830,13 +830,16 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           実OS fixtureではleader終了後もSIGTERMを無視する子を同じgroupに残し、bounded SIGKILL後に
           group／子PIDとも不在を確認した。受入証拠は
           [ADR 0141](adr/0141-codex-process-group-cleanup-acceptance.md)。
-        - [ ] **P5-1b5b-r16 post-spawn／pre-ready recovery訂正:** 独立監査候補を親が実コードで
+        - [x] **P5-1b5b-r16 post-spawn／pre-ready recovery訂正:** 独立監査候補を親が実コードで
           再確認し、handle耐久化後のready失敗でprovider transport／sessionだけを閉じ、watchを
           `launching`へ残す欠陥を採用した。validated spawned receiptの同じwatch identity／handleだけで
           launch failure cleanupを要求し、Codex bootstrap failed／interrupted／timeoutとClaude ready前失敗を
           provider terminal→watch `faulted`まで閉じる。別watch／別provider、handle推測、暗黙restartへ
           fallbackしない。intentional live faultを使わずfocused fixture、独立gate、独立commitで閉じる
-          （[ADR 0142](adr/0142-post-spawn-pre-ready-recovery-correction.md)）。
+          （[ADR 0142](adr/0142-post-spawn-pre-ready-recovery-correction.md)）。実装はcommit `4bde91c`へ
+          独立固定し、focused 19/19、parent-launch／watch-store／両Supervisor related 33/33、
+          `npm run check`がgreen。受入証拠は
+          [ADR 0143](adr/0143-post-spawn-pre-ready-recovery-acceptance.md)。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
