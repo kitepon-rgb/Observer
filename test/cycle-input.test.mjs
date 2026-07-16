@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { buildCycleInput, inspectCycleInputValue, validateCycleInputReceipt } from "../src/cycle-input.mjs";
 import { buildEvidenceSnapshot } from "../src/evidence-snapshot.mjs";
+import { buildObserverAiResponseContract } from "../src/observer-ai-contract.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
 
 const evidence = buildEvidenceSnapshot({
@@ -35,6 +36,14 @@ test("evidence snapshotをcanonical cycle requestへ変換しdigestとUTF-8 byte
   assert.equal(request.schema, "observer.cycle_request.v1");
   assert.equal(request.instruction, "analyze_evidence_snapshot");
   assert.equal(request.output_schema, "observer.ai_output.v1");
+  assert.deepEqual(request.response_contract, buildObserverAiResponseContract());
+  assert.deepEqual(request.response_contract.default, {
+    schema: "observer.ai_output.v1",
+    outcome: "no_advisory",
+  });
+  assert.equal(request.response_contract.format, "single_json_object");
+  assert.deepEqual(request.response_contract.variants.advisory.severity_allowed, ["info", "warning", "review_required"]);
+  assert.equal(request.response_contract.prohibited.includes("code_fence"), true);
   assert.deepEqual(request.evidence, evidence);
 });
 
@@ -43,6 +52,9 @@ test("非canonical JSON、未知field、receipt mismatchをfail closedにする"
   assert.throws(() => inspectCycleInputValue(`${input.value}\n`), expectCode("E_CYCLE_INPUT_VALUE_INVALID"));
   const request = JSON.parse(input.value);
   assert.throws(() => inspectCycleInputValue(JSON.stringify({ ...request, extra: true })), expectCode("E_CYCLE_INPUT_VALUE_INVALID"));
+  const weakened = structuredClone(request);
+  weakened.response_contract.prohibited = weakened.response_contract.prohibited.filter((value) => value !== "code_fence");
+  assert.throws(() => inspectCycleInputValue(JSON.stringify(weakened)), expectCode("E_CYCLE_INPUT_VALUE_INVALID"));
   assert.throws(() => validateCycleInputReceipt({
     value: input.value,
     inputDigest: `sha256:${"f".repeat(64)}`,

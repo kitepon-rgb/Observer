@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   OBSERVER_AI_OUTPUT_MAX_BYTES,
   buildObserverAiPrompt,
+  buildObserverAiResponseContract,
   observerAiOutputDigest,
   parseObserverAiOutput,
   resolveObserverProvider,
@@ -49,6 +50,7 @@ test("Observer providerは現在親と同じfamilyだけを返す", () => {
 
 test("runtime promptはroot契約、固定二結果、child startだけを一つのprotocolへ束縛する", () => {
   const prompt = buildObserverAiPrompt(CHILD_START);
+  const responseContract = buildObserverAiResponseContract();
   assert.match(prompt, /AGENTS\.md/);
   assert.match(prompt, /observer\.ai_output\.v1/);
   assert.match(prompt, /no_advisory/);
@@ -62,6 +64,9 @@ test("runtime promptはroot契約、固定二結果、child startだけを一つ
   assert.match(prompt, /Markdown、code fence/);
   assert.equal(prompt.endsWith(JSON.stringify(CHILD_START)), true);
   assert.equal((prompt.match(/"schema":"observer\.child_start\.v1"/g) ?? []).length, 1);
+  assert.deepEqual(responseContract.default, { schema: "observer.ai_output.v1", outcome: "no_advisory" });
+  assert.deepEqual(responseContract.variants.advisory.severity_allowed, ["info", "warning", "review_required"]);
+  assert.match(prompt, new RegExp(responseContract.variants.advisory.category_allowed[0]));
   assert.throws(() => buildObserverAiPrompt({ ...CHILD_START, provider: "other" }), expectCode("E_OBSERVER_PROVIDER_INVALID"));
   assert.throws(() => buildObserverAiPrompt({ ...CHILD_START, extra: true }), expectCode("E_OBSERVER_AI_CHILD_START_INVALID"));
 });

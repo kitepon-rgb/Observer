@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { validateEvidenceSnapshot } from "./evidence-snapshot.mjs";
+import { buildObserverAiResponseContract } from "./observer-ai-contract.mjs";
 import { fail } from "./observer-error.mjs";
 
 export const CYCLE_REQUEST_SCHEMA = "observer.cycle_request.v1";
@@ -17,6 +18,7 @@ export function buildCycleInput(evidence) {
     schema: CYCLE_REQUEST_SCHEMA,
     instruction: CYCLE_REQUEST_INSTRUCTION,
     output_schema: CYCLE_REQUEST_OUTPUT_SCHEMA,
+    response_contract: buildObserverAiResponseContract(),
     evidence: structuredClone(evidence),
   });
   return receiptFor(value);
@@ -43,9 +45,10 @@ export function inspectCycleInputValue(value) {
   } catch {
     fail("E_CYCLE_INPUT_VALUE_INVALID", "cycle input valueはJSON object一件である必要があります");
   }
-  if (!plain(request) || Object.keys(request).sort().join(",") !== "evidence,instruction,output_schema,schema" ||
+  if (!plain(request) || Object.keys(request).sort().join(",") !== "evidence,instruction,output_schema,response_contract,schema" ||
       request.schema !== CYCLE_REQUEST_SCHEMA || request.instruction !== CYCLE_REQUEST_INSTRUCTION ||
-      request.output_schema !== CYCLE_REQUEST_OUTPUT_SCHEMA) {
+      request.output_schema !== CYCLE_REQUEST_OUTPUT_SCHEMA ||
+      canonicalize(request.response_contract) !== canonicalize(buildObserverAiResponseContract())) {
     fail("E_CYCLE_INPUT_VALUE_INVALID", "cycle request schemaが不正です");
   }
   validateEvidenceSnapshot(request.evidence);

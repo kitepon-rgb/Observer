@@ -777,6 +777,14 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           detached child修理はcommit `396cf05`、focused 9/9、related 43/43でgreen。再pack候補の実正常停止は
           caller `cancelled`／exit 130、managed session残留0、親session公開close `closed`を確認して閉じた
           （[ADR 0135](adr/0135-aiterm-child-signal-isolation.md)）。
+        - [ ] **P5-1b5b-r10 cycleごとのexact output contract:** r9修理後のfresh Claude candidateで
+          managed request／Stop／exact result回収までは成立したが、実Claude出力がJSON object一件でなく
+          `E_OBSERVER_AI_OUTPUT_INVALID`となった。strict parserをMarkdown／前後説明許容へ緩めず、各
+          `observer.cycle_request.v1`へhost-neutralなresponse contractを同梱する。default no_advisory、
+          exact二outcome、proposal field、許可enum、single JSON object、Markdown／code fence／前後説明／
+          unknown field禁止を毎cycleのmodel-visible bytesとinput digestへ含める。focused 12/12、
+          related 52/52はgreen。独立commit後、実Claude再Hで閉じる
+          （[ADR 0136](adr/0136-cycle-response-contract-per-turn.md)）。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。

@@ -41,7 +41,8 @@ export function resolveObserverProvider(parentProvider) {
 
 export function buildObserverAiPrompt(childStart) {
   validateChildStart(childStart);
-  const noAdvisory = JSON.stringify({ schema: OBSERVER_AI_OUTPUT_SCHEMA, outcome: "no_advisory" });
+  const responseContract = buildObserverAiResponseContract();
+  const noAdvisory = JSON.stringify(responseContract.default);
   const advisory = JSON.stringify({
     schema: OBSERVER_AI_OUTPUT_SCHEMA,
     outcome: "advisory",
@@ -67,11 +68,30 @@ export function buildObserverAiPrompt(childStart) {
     "advisoryのevidence_refsはcycle request内でclaimを直接支えるrefだけにしてください。",
     `bootstrapと各観測cycleの最終出力はJSON object一件だけです。正常進行は ${noAdvisory}`,
     `助言候補は最大一件で ${advisory}`,
-    `severityの許可値: ${SEVERITIES.join(" | ")}`,
-    `categoryの許可値: ${CATEGORIES.join(" | ")}`,
+    `severityの許可値: ${responseContract.variants.advisory.severity_allowed.join(" | ")}`,
+    `categoryの許可値: ${responseContract.variants.advisory.category_allowed.join(" | ")}`,
     "Markdown、code fence、前後の説明、複数候補、通常会話、実装結果を出力してはいけません。",
     JSON.stringify(childStart),
   ].join("\n");
+}
+
+export function buildObserverAiResponseContract() {
+  return {
+    format: "single_json_object",
+    default: { schema: OBSERVER_AI_OUTPUT_SCHEMA, outcome: "no_advisory" },
+    variants: {
+      no_advisory: {
+        exact_keys: [...NO_ADVISORY_KEYS],
+      },
+      advisory: {
+        exact_keys: [...ADVISORY_KEYS],
+        proposal_exact_keys: [...PROPOSAL_KEYS],
+        severity_allowed: [...SEVERITIES],
+        category_allowed: [...CATEGORIES],
+      },
+    },
+    prohibited: ["markdown", "code_fence", "leading_text", "trailing_text", "unknown_fields"],
+  };
 }
 
 export function parseObserverAiOutput(raw) {
