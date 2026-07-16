@@ -60,7 +60,7 @@ function message(messageId, threadSha256) {
     severity: "warning", category: "verification_gap", dedupe_key: messageId,
     title: "検証待ち", body: "検証証拠を確認してください。", evidence_refs: ["test:evidence"],
     suggested_action: "検証を確認する",
-  });
+  }, { now: NOW });
 }
 
 async function stateRoot() {
