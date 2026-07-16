@@ -249,6 +249,53 @@ test("parent codex runはknown faultを非0へ写像し、unsanitized caller res
   }), { code: "E_CODEX_PARENT_CLI_RESULT_INVALID" });
 });
 
+test("parent claude runはAiterm commandをexact parseし、Claude callerのsanitized resultへdispatchする", async () => {
+  const argv = [
+    "parent", "claude", "run", "/project",
+    "--throughline-command", "/bin/throughline",
+    "--aiterm-command", "/bin/aiterm",
+    "--state-root", "/state",
+  ];
+  assert.deepEqual(parseObserverArguments(argv), {
+    kind: "parent_claude_run", projectRoot: "/project", stateRoot: "/state",
+    throughlineCommand: "/bin/throughline", aitermCommand: "/bin/aiterm",
+    expectedPreviousWatchId: null, timeoutSeconds: 3600, pollIntervalMs: 1000, planRefs: [],
+  });
+  const outcome = await executeObserverCommand(argv, {}, {
+    runClaudeParentWatchProcess: async (input) => {
+      assert.equal(input.parentContext.parent_provider, "claude");
+      assert.equal(input.aitermCommand, "/bin/aiterm");
+      return { schema: "observer.claude_parent_caller_result.v1", status: "stopped", provider: "claude", cycle_id: null };
+    },
+  });
+  assert.equal(outcome.exitCode, 0);
+  assert.equal(outcome.result.provider, "claude");
+});
+
+test("supervisor runはprovider選択によりClaude Aiterm runtimeへdispatchし、Codex既定を維持する", async () => {
+  const common = ["supervisor", "run", "/project", "--watch-id", "w_11111111-1111-4111-8111-111111111111", "--runtime-root", "/observer", "--throughline-command", "/bin/throughline", "--state-root", "/state"];
+  const parsed = parseObserverArguments([...common, "--provider", "claude", "--aiterm-command", "/bin/aiterm"]);
+  assert.equal(parsed.provider, "claude");
+  assert.equal(parsed.aitermCommand, "/bin/aiterm");
+  const target = { schema: "observer.project_target.v1", targetId: `p_${"a".repeat(64)}`, projectRoot: "/project" };
+  const outcome = await executeObserverCommand([...common, "--provider", "claude", "--aiterm-command", "/bin/aiterm"], {}, {
+    readRegisteredProjectTarget: async () => target,
+    runClaudeSupervisorProcess: async (input) => {
+      assert.equal(input.aitermCommand, "/bin/aiterm");
+      return { schema: "observer.supervisor_process_result.v1", status: "stopped", provider: "claude", cycle_id: null };
+    },
+  });
+  assert.equal(outcome.exitCode, 0);
+  assert.equal(outcome.result.provider, "claude");
+});
+
+test("CLIはClaude providerとCodex/Aiterm commandの混在をusage errorとして拒否する", () => {
+  const common = ["supervisor", "run", "/project", "--watch-id", "w_11111111-1111-4111-8111-111111111111", "--runtime-root", "/observer", "--throughline-command", "/bin/throughline"];
+  assert.throws(() => parseObserverArguments([...common, "--provider", "claude", "--aiterm-command", "/bin/aiterm", "--codex-command", "/bin/codex"]), { code: "E_USAGE" });
+  assert.throws(() => parseObserverArguments([...common, "--provider", "codex", "--codex-command", "/bin/codex", "--aiterm-command", "/bin/aiterm"]), { code: "E_USAGE" });
+  assert.throws(() => parseObserverArguments(["parent", "claude", "run", "/project", "--throughline-command", "/bin/throughline", "--aiterm-command", "/bin/aiterm", "--codex-command", "/bin/codex"]), { code: "E_USAGE" });
+});
+
 test("supervisor run CLIはabsolute runtimeとwatch identityをexact parseする", () => {
   const parsed = parseObserverArguments([
     "supervisor", "run", "/project",

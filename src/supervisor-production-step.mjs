@@ -10,6 +10,11 @@ import {
   issueCodexModelOperation,
   recoverCodexModelOperation,
 } from "./codex-model-operation.mjs";
+import {
+  cleanupClaudeModelOperation,
+  issueClaudeModelOperation,
+  recoverClaudeModelOperation,
+} from "./claude-model-operation.mjs";
 import { ObserverError, fail } from "./observer-error.mjs";
 import {
   acquirePrivateLock,
@@ -115,28 +120,15 @@ export async function runSupervisorProductionStep({
           cycleInput = (dependencies.buildCycleInput ?? buildCycleInput)(evidence);
           return cycleInput;
         },
-        issueModelOperation: ({ operation, value }) => (dependencies.issueCodexModelOperation ?? issueCodexModelOperation)({
-          stateRoot,
-          operation,
-          value,
-          runtime: { thread_id: runtime.threadId, cwd: runtime.runtimeRoot },
-        }, {
-          threadRead: (params) => runtime.session.request("thread/read", params),
-          turnStart: (params) => runtime.session.request("turn/start", params),
-        }),
-        recoverModelOperation: ({ operation }) => (dependencies.recoverCodexModelOperation ?? recoverCodexModelOperation)({
-          stateRoot,
-          operation,
-          threadRead: (params) => runtime.session.request("thread/read", params),
-        }),
-        cleanupProviderOperation: ({ operation }) => (dependencies.cleanupCodexModelOperation ?? cleanupCodexModelOperation)({
-          stateRoot,
-          operation,
-          cleanupEvidence: {
-            provider_operation_receipt_digest: operation.provider_operation_receipt_digest,
-            completed_output_digest: operation.completed_output_digest,
-          },
-        }),
+        issueModelOperation: ({ operation, value }) => issueProviderOperation({
+          stateRoot, operation, value, runtime,
+        }, dependencies),
+        recoverModelOperation: ({ operation }) => recoverProviderOperation({
+          stateRoot, operation, runtime,
+        }, dependencies),
+        cleanupProviderOperation: ({ operation }) => cleanupProviderOperation({
+          stateRoot, operation, provider: runtime.provider,
+        }, dependencies),
         applyCycle: ({ operation, output }) => {
           if (cycleInput === null) fail("E_SUPERVISOR_CYCLE_INPUT_MISSING", "cycle applicationへcanonical inputを再構成できません");
           return (dependencies.applyCycleOutput ?? applyCycleOutput)({ stateRoot, operation, output, cycleInput, now: currentDate(dependencies) });
@@ -197,17 +189,93 @@ function validateRuntimeIdentity({ binding, generation, target, watchId }) {
 }
 
 function providerAvailable(provider, runtime) {
-  return provider === "codex" && isPlainObject(runtime) && runtime.provider === "codex";
+  return ["claude", "codex"].includes(provider) && isPlainObject(runtime) && runtime.provider === provider;
 }
 
 function validateProviderRuntime(runtime, provider, binding) {
-  if (provider !== "codex" || !isPlainObject(runtime) || Object.keys(runtime).sort().join(",") !== "provider,runtime_root,session" ||
-      runtime.provider !== "codex" || typeof runtime.runtime_root !== "string" || !isAbsolute(runtime.runtime_root) ||
-      !runtime.session || typeof runtime.session.request !== "function" || binding.launch_handle?.kind !== "codex.thread" ||
-      typeof binding.launch_handle.value !== "string") {
-    fail("E_SUPERVISOR_PROVIDER_RUNTIME_INVALID", "Codex provider runtimeが不正です");
+  if (provider === "codex") {
+    if (!isPlainObject(runtime) || Object.keys(runtime).sort().join(",") !== "provider,runtime_root,session" ||
+        runtime.provider !== "codex" || typeof runtime.runtime_root !== "string" || !isAbsolute(runtime.runtime_root) ||
+        !runtime.session || typeof runtime.session.request !== "function" || binding.launch_handle?.kind !== "codex.thread" ||
+        typeof binding.launch_handle.value !== "string") {
+      fail("E_SUPERVISOR_PROVIDER_RUNTIME_INVALID", "Codex provider runtimeが不正です");
+    }
+    return {
+      provider: "codex",
+      session: runtime.session,
+      runtimeRoot: runtime.runtime_root,
+      threadId: binding.launch_handle.value,
+    };
   }
-  return { session: runtime.session, runtimeRoot: runtime.runtime_root, threadId: binding.launch_handle.value };
+  if (provider === "claude") {
+    if (!isPlainObject(runtime) || Object.keys(runtime).sort().join(",") !== "provider,runtime_root,session_id,transport" ||
+        runtime.provider !== "claude" || typeof runtime.runtime_root !== "string" || !isAbsolute(runtime.runtime_root) ||
+        typeof runtime.session_id !== "string" || binding.launch_handle?.kind !== "claude.session" ||
+        binding.launch_handle.value !== runtime.session_id || !runtime.transport ||
+        typeof runtime.transport.callTool !== "function") {
+      fail("E_SUPERVISOR_PROVIDER_RUNTIME_INVALID", "Claude provider runtimeが不正です");
+    }
+    return {
+      provider: "claude",
+      runtimeRoot: runtime.runtime_root,
+      sessionId: runtime.session_id,
+      transport: runtime.transport,
+    };
+  }
+  fail("E_SUPERVISOR_PROVIDER_RUNTIME_INVALID", "provider runtimeが不正です");
+}
+
+function issueProviderOperation({ stateRoot, operation, value, runtime }, dependencies) {
+  if (runtime.provider === "codex") {
+    return (dependencies.issueCodexModelOperation ?? issueCodexModelOperation)({
+      stateRoot,
+      operation,
+      value,
+      runtime: { thread_id: runtime.threadId, cwd: runtime.runtimeRoot },
+    }, {
+      threadRead: (params) => runtime.session.request("thread/read", params),
+      turnStart: (params) => runtime.session.request("turn/start", params),
+    });
+  }
+  return (dependencies.issueClaudeModelOperation ?? issueClaudeModelOperation)({
+    stateRoot,
+    operation,
+    value,
+    runtime: { session_id: runtime.sessionId },
+  }, {
+    callTool: (name, args) => runtime.transport.callTool(name, args),
+  });
+}
+
+function recoverProviderOperation({ stateRoot, operation, runtime }, dependencies) {
+  if (runtime.provider === "codex") {
+    return (dependencies.recoverCodexModelOperation ?? recoverCodexModelOperation)({
+      stateRoot,
+      operation,
+      threadRead: (params) => runtime.session.request("thread/read", params),
+    });
+  }
+  return (dependencies.recoverClaudeModelOperation ?? recoverClaudeModelOperation)({
+    stateRoot,
+    operation,
+    runtime: { session_id: runtime.sessionId },
+  }, {
+    callTool: (name, args) => runtime.transport.callTool(name, args),
+  });
+}
+
+function cleanupProviderOperation({ stateRoot, operation, provider }, dependencies) {
+  const cleanup = provider === "codex"
+    ? dependencies.cleanupCodexModelOperation ?? cleanupCodexModelOperation
+    : dependencies.cleanupClaudeModelOperation ?? cleanupClaudeModelOperation;
+  return cleanup({
+    stateRoot,
+    operation,
+    cleanupEvidence: {
+      provider_operation_receipt_digest: operation.provider_operation_receipt_digest,
+      completed_output_digest: operation.completed_output_digest,
+    },
+  });
 }
 
 function matchesCurrentParent({ proposedState, generation, target, watchId, cycleId }) {

@@ -216,6 +216,47 @@ test("ClaudeまたはCodex runtime欠損はwait／pending cycleより前にprovi
   }
 });
 
+test("Claude一stepは同じclaude.sessionでissue／recover／cleanupをprovider別callbackへdispatchする", async () => {
+  const calls = [];
+  const sessionId = "obs_aaaaaaaaaaaa_11111111111141118111111111111111";
+  const claudeBinding = { ...BINDING, provider: "claude", launch_handle: { kind: "claude.session", value: sessionId } };
+  const claudeGeneration = { ...GENERATION, provider: "claude", parent_epoch_id: generationParentEpochId("claude", THREAD_SHA) };
+  const { dependencies } = baseDependencies({
+    readWatchHostBinding: async () => claudeBinding,
+    readGenerationState: async () => claudeGeneration,
+    readCycleState: async () => ({
+      pending_cycle: {
+        status: "prepared",
+        cycle_id: CYCLE_ID,
+        base_cursor: null,
+        proposed_state: { ...PROPOSED, host: "claude" },
+      },
+    }),
+    issueClaudeModelOperation: async (input, providerDependencies) => { calls.push(["issue", input, providerDependencies]); return { schema: "observer.model_operation_callback.v1", outcome: "accepted", provider_operation_receipt_digest: `sha256:${"e".repeat(64)}` }; },
+    recoverClaudeModelOperation: async (input, providerDependencies) => { calls.push(["recover", input, providerDependencies]); return { schema: "observer.model_operation_callback.v1", outcome: "pending" }; },
+    cleanupClaudeModelOperation: async (input) => { calls.push(["cleanup", input]); return { schema: "observer.model_operation_cleanup.v1", outcome: "cleaned" }; },
+    runSupervisorCycle: async (input) => {
+      const cycleInput = await input.prepareCycleInput({ cycle_id: CYCLE_ID, proposed_state: { ...PROPOSED, host: "claude" }, turns: [] });
+      const operation = {
+        schema: "observer.model_operation_receipt.v1", action: "issue_once", provider: "claude",
+        operation_id: `sha256:${"1".repeat(64)}`, target_id: TARGET_ID, watch_id: WATCH_ID,
+        generation_id: GENERATION_ID, cycle_id: CYCLE_ID, input_digest: cycleInput.input_digest,
+        model_visible_bytes: cycleInput.model_visible_bytes, status: "dispatching", provider_operation_receipt_digest: null,
+      };
+      await input.issueModelOperation({ operation, value: cycleInput.value });
+      await input.recoverModelOperation({ operation: { ...operation, action: "recover_only", status: "accepted", provider_operation_receipt_digest: `sha256:${"e".repeat(64)}` } });
+      await input.cleanupProviderOperation({ operation: { ...operation, action: "cleanup_only", status: "completed", provider_operation_receipt_digest: `sha256:${"e".repeat(64)}`, completed_output_digest: `sha256:${"2".repeat(64)}` } });
+      return { status: "committed", cycle_id: CYCLE_ID };
+    },
+  });
+  const result = await runSupervisorProductionStep(request({ providerRuntime: { provider: "claude", runtime_root: "/observer", session_id: sessionId, transport: { callTool: async () => {} } } }), dependencies);
+  assert.deepEqual(result, { schema: "observer.supervisor_production_result.v1", status: "committed", provider: "claude", cycle_id: CYCLE_ID });
+  assert.deepEqual(calls.map(([name]) => name), ["issue", "recover", "cleanup"]);
+  assert.deepEqual(calls.slice(0, 2).map(([, input]) => input.runtime), [{ session_id: sessionId }, { session_id: sessionId }]);
+  assert.equal(typeof calls[0][2].callTool, "function");
+  assert.equal(typeof calls[1][2].callTool, "function");
+});
+
 test("proposed parent mismatchはauthorizationをrecordしてevidence／provider request前にrebind requiredを返す", async () => {
   let issued = 0;
   let evidence = 0;

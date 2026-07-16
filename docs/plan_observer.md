@@ -655,9 +655,11 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       明示launch拒否とtransport unknownをjournalで分離し、unknown時だけrecover-onlyを許す。旧`claude.job`
       background routeはblocked履歴互換だけに限定した。focused 27/27、related 35/35、`npm run check` green。
       受入証拠は[ADR 0118](adr/0118-aiterm-claude-session-launch-acceptance.md)。
-    - [ ] P5-1b4c（NEXT）: Claude provider runtimeをproduction step、Supervisor process、親caller、CLIへ接続し、
-      通常completed cycle間で同じsession handleを再利用する。
-    - [ ] P5-1b4d: rollback／parent rebindのstop／relaunch／recoveryをAiterm公開toolだけへ接続し、
+    - [x] P5-1b4c: Claude provider runtimeをproduction step、Supervisor process、親caller、CLIへ接続し、
+      通常completed cycle間で同じsession handleを再利用する。通常終了は`pty_close`成功後にMCP processを閉じ、
+      未対応rollover／parent rebindはfail loudを維持した。focused 27/27、related 91/91、`npm run check` green。
+      受入証拠は[ADR 0119](adr/0119-claude-production-caller-acceptance.md)。
+    - [ ] P5-1b4d（NEXT）: rollback／parent rebindのstop／relaunch／recoveryをAiterm公開toolだけへ接続し、
       focused／related gate、親反証、独立commitで19dを閉じる。
   - [ ] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact result、session closeと、
     Claude／Codexの実completed証拠、production model request、session相関、hook trust、65秒超wait、

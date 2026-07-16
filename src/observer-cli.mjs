@@ -2,12 +2,14 @@ import { fileURLToPath } from "node:url";
 import { isAbsolute } from "node:path";
 
 import { runCodexParentWatchProcess } from "./codex-parent-caller.mjs";
+import { runClaudeParentWatchProcess } from "./claude-parent-caller.mjs";
 import { ObserverError, fail } from "./observer-error.mjs";
 import { runObserverLiveCampaignPreflight } from "./live-campaign-preflight.mjs";
 import { defaultStateRoot } from "./private-state.mjs";
 import { runObserverProductDiagnostics } from "./product-diagnostics.mjs";
 import { readRegisteredProjectTarget, registerProjectTarget } from "./project-target.mjs";
 import { runCodexSupervisorProcess } from "./supervisor-codex-process.mjs";
+import { runClaudeSupervisorProcess } from "./supervisor-claude-process.mjs";
 import {
   readObserverWatchStatus,
   startObserverWatch,
@@ -22,6 +24,9 @@ const PROCESS_STATUSES = new Set([
 const CODEX_PARENT_CALLER_STATUSES = new Set([
   "cancelled", "faulted", "provider_unavailable", "stopping", "stopped",
 ]);
+const CLAUDE_PARENT_CALLER_STATUSES = new Set([
+  "cancelled", "faulted", "provider_unavailable", "stopping", "stopped",
+]);
 const OBSERVER_PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 export function observerUsage() {
@@ -34,7 +39,8 @@ export function observerUsage() {
     "       observer watch stop <absolute-project-root> [--state-root <absolute-path>]",
     "       observer target register <absolute-project-root> [--state-root <absolute-path>]",
     "       observer parent codex run <absolute-project-root> --throughline-command <absolute-path> --codex-command <absolute-path> [--state-root <absolute-path>] [--expected-previous-watch-id <id>] [--timeout-seconds <1..3600>] [--poll-interval-ms <100..60000>] [--plan-ref <file:relative-path>]...",
-    "       observer supervisor run <absolute-project-root> --watch-id <id> --runtime-root <absolute-path> --throughline-command <absolute-path> --codex-command <absolute-path> [--state-root <absolute-path>] [--timeout-seconds <1..3600>] [--poll-interval-ms <100..60000>] [--plan-ref <file:relative-path>]...",
+    "       observer parent claude run <absolute-project-root> --throughline-command <absolute-path> --aiterm-command <absolute-path> [--state-root <absolute-path>] [--expected-previous-watch-id <id>] [--timeout-seconds <1..3600>] [--poll-interval-ms <100..60000>] [--plan-ref <file:relative-path>]...",
+    "       observer supervisor run <absolute-project-root> --watch-id <id> --runtime-root <absolute-path> --throughline-command <absolute-path> [--provider codex --codex-command <absolute-path> | --provider claude --aiterm-command <absolute-path>] [--state-root <absolute-path>] [--timeout-seconds <1..3600>] [--poll-interval-ms <100..60000>] [--plan-ref <file:relative-path>]...",
   ].join("\n");
 }
 
@@ -45,6 +51,7 @@ export function parseObserverArguments(argv) {
   if (argv[0] === "watch") return parseWatch(argv);
   if (argv[0] === "target" && argv[1] === "register") return parseTargetRegister(argv);
   if (argv[0] === "parent" && argv[1] === "codex" && argv[2] === "run") return parseParentCodexRun(argv);
+  if (argv[0] === "parent" && argv[1] === "claude" && argv[2] === "run") return parseParentClaudeRun(argv);
   if (argv[0] === "supervisor" && argv[1] === "run") return parseSupervisorRun(argv);
   fail("E_USAGE", observerUsage());
 }
@@ -120,11 +127,39 @@ export async function executeObserverCommand(argv, { signal, parentContext } = {
     return { result, exitCode: exitCodeForProcessResult(result.status) };
   }
 
+  if (command.kind === "parent_claude_run") {
+    const result = await (dependencies.runClaudeParentWatchProcess ?? runClaudeParentWatchProcess)({
+      stateRoot: command.stateRoot,
+      projectRoot: command.projectRoot,
+      runtimeRoot: OBSERVER_PACKAGE_ROOT,
+      throughlineCommand: command.throughlineCommand,
+      aitermCommand: command.aitermCommand,
+      parentContext: {
+        schema: "observer.parent_watch_context.v1",
+        parent_provider: "claude",
+        runtime_root: OBSERVER_PACKAGE_ROOT,
+        expected_previous_watch_id: command.expectedPreviousWatchId,
+        authorization: {
+          schema: "observer.parent_authorization.v1",
+          intent: "start_observer",
+          parent_provider: "claude",
+        },
+      },
+      planRefs: command.planRefs,
+      testReceipts: [],
+      timeoutSeconds: command.timeoutSeconds,
+      pollIntervalMs: command.pollIntervalMs,
+      signal,
+    }, dependencies.claudeParentCallerDependencies);
+    validateClaudeParentCallerResult(result);
+    return { result, exitCode: exitCodeForProcessResult(result.status) };
+  }
+
   const target = await (dependencies.readRegisteredProjectTarget ?? readRegisteredProjectTarget)({
     stateRoot: command.stateRoot,
     projectRoot: command.projectRoot,
   });
-  const result = await (dependencies.runCodexSupervisorProcess ?? runCodexSupervisorProcess)({
+  const common = {
     stateRoot: command.stateRoot,
     target: {
       schema: target.schema,
@@ -134,13 +169,21 @@ export async function executeObserverCommand(argv, { signal, parentContext } = {
     watchId: command.watchId,
     runtimeRoot: command.runtimeRoot,
     throughlineCommand: command.throughlineCommand,
-    codexCommand: command.codexCommand,
     planRefs: command.planRefs,
     testReceipts: [],
     timeoutSeconds: command.timeoutSeconds,
     pollIntervalMs: command.pollIntervalMs,
     signal,
-  });
+  };
+  const result = command.provider === "claude"
+    ? await (dependencies.runClaudeSupervisorProcess ?? runClaudeSupervisorProcess)({
+      ...common,
+      aitermCommand: command.aitermCommand,
+    })
+    : await (dependencies.runCodexSupervisorProcess ?? runCodexSupervisorProcess)({
+      ...common,
+      codexCommand: command.codexCommand,
+    });
   validateProcessResult(result);
   return { result, exitCode: exitCodeForProcessResult(result.status) };
 }
@@ -227,6 +270,8 @@ function parseSupervisorRun(argv) {
     ["--runtime-root", "runtimeRoot"],
     ["--throughline-command", "throughlineCommand"],
     ["--codex-command", "codexCommand"],
+    ["--aiterm-command", "aitermCommand"],
+    ["--provider", "provider"],
     ["--state-root", "stateRoot"],
     ["--timeout-seconds", "timeoutSeconds"],
     ["--poll-interval-ms", "pollIntervalMs"],
@@ -248,28 +293,35 @@ function parseSupervisorRun(argv) {
     values[key] = value;
     index += 1;
   }
-  for (const key of ["watchId", "runtimeRoot", "throughlineCommand", "codexCommand"]) {
+  for (const key of ["watchId", "runtimeRoot", "throughlineCommand"]) {
     if (!Object.hasOwn(values, key)) fail("E_USAGE", observerUsage());
   }
+  const provider = values.provider ?? "codex";
+  if (!new Set(["claude", "codex"]).has(provider) ||
+      (provider === "codex" && (!Object.hasOwn(values, "codexCommand") || Object.hasOwn(values, "aitermCommand"))) ||
+      (provider === "claude" && (!Object.hasOwn(values, "aitermCommand") || Object.hasOwn(values, "codexCommand")))) {
+    fail("E_USAGE", observerUsage());
+  }
   if (!WATCH.test(values.watchId)) fail("E_USAGE", observerUsage());
-  for (const key of ["runtimeRoot", "throughlineCommand", "codexCommand"]) {
+  for (const key of ["runtimeRoot", "throughlineCommand", provider === "codex" ? "codexCommand" : "aitermCommand"]) {
     validateAbsolute(values[key], "E_USAGE", observerUsage());
   }
   if (values.stateRoot !== undefined) validateAbsolute(values.stateRoot, "E_USAGE", observerUsage());
   const timeoutSeconds = parseBoundedInteger(values.timeoutSeconds, 1, 3600, 3600);
   const pollIntervalMs = parseBoundedInteger(values.pollIntervalMs, 100, 60_000, 1_000);
-  return {
+  const parsed = {
     kind: "supervisor_run",
     projectRoot,
     stateRoot: values.stateRoot ?? defaultStateRoot(),
     watchId: values.watchId,
     runtimeRoot: values.runtimeRoot,
     throughlineCommand: values.throughlineCommand,
-    codexCommand: values.codexCommand,
     timeoutSeconds,
     pollIntervalMs,
     planRefs,
   };
+  if (provider === "claude") return { ...parsed, provider, aitermCommand: values.aitermCommand };
+  return { ...parsed, codexCommand: values.codexCommand };
 }
 
 function parseParentCodexRun(argv) {
@@ -322,6 +374,56 @@ function parseParentCodexRun(argv) {
   };
 }
 
+function parseParentClaudeRun(argv) {
+  if (argv.length < 4) fail("E_USAGE", observerUsage());
+  const projectRoot = argv[3];
+  validateAbsolute(projectRoot, "E_PROJECT_PATH_NOT_ABSOLUTE", "project rootは絶対パスで指定してください");
+  const single = new Map([
+    ["--throughline-command", "throughlineCommand"],
+    ["--aiterm-command", "aitermCommand"],
+    ["--state-root", "stateRoot"],
+    ["--expected-previous-watch-id", "expectedPreviousWatchId"],
+    ["--timeout-seconds", "timeoutSeconds"],
+    ["--poll-interval-ms", "pollIntervalMs"],
+  ]);
+  const values = {};
+  const planRefs = [];
+  for (let index = 4; index < argv.length; index += 1) {
+    const flag = argv[index];
+    if (index + 1 >= argv.length) fail("E_USAGE", observerUsage());
+    const value = argv[index + 1];
+    if (flag === "--plan-ref") {
+      if (planRefs.length >= 4 || planRefs.includes(value) || !isPlanRef(value)) fail("E_USAGE", observerUsage());
+      planRefs.push(value);
+      index += 1;
+      continue;
+    }
+    const key = single.get(flag);
+    if (key === undefined || Object.hasOwn(values, key)) fail("E_USAGE", observerUsage());
+    values[key] = value;
+    index += 1;
+  }
+  for (const key of ["throughlineCommand", "aitermCommand"]) {
+    if (!Object.hasOwn(values, key)) fail("E_USAGE", observerUsage());
+    validateAbsolute(values[key], "E_USAGE", observerUsage());
+  }
+  if (values.stateRoot !== undefined) validateAbsolute(values.stateRoot, "E_USAGE", observerUsage());
+  if (values.expectedPreviousWatchId !== undefined && !WATCH.test(values.expectedPreviousWatchId)) {
+    fail("E_USAGE", observerUsage());
+  }
+  return {
+    kind: "parent_claude_run",
+    projectRoot,
+    stateRoot: values.stateRoot ?? defaultStateRoot(),
+    throughlineCommand: values.throughlineCommand,
+    aitermCommand: values.aitermCommand,
+    expectedPreviousWatchId: values.expectedPreviousWatchId ?? null,
+    timeoutSeconds: parseBoundedInteger(values.timeoutSeconds, 1, 3600, 3600),
+    pollIntervalMs: parseBoundedInteger(values.pollIntervalMs, 100, 60_000, 1_000),
+    planRefs,
+  };
+}
+
 function parseBoundedInteger(value, minimum, maximum, fallback) {
   if (value === undefined) return fallback;
   if (!/^(?:0|[1-9]\d*)$/.test(value)) fail("E_USAGE", observerUsage());
@@ -356,6 +458,15 @@ function validateCodexParentCallerResult(value) {
       value.provider !== "codex" ||
       (value.cycle_id !== null && (typeof value.cycle_id !== "string" || !/^c_[a-f0-9]{64}$/.test(value.cycle_id)))) {
     fail("E_CODEX_PARENT_CLI_RESULT_INVALID", "Codex parent caller resultが不正です");
+  }
+}
+
+function validateClaudeParentCallerResult(value) {
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== "cycle_id,provider,schema,status" ||
+      value.schema !== "observer.claude_parent_caller_result.v1" || !CLAUDE_PARENT_CALLER_STATUSES.has(value.status) ||
+      value.provider !== "claude" ||
+      (value.cycle_id !== null && (typeof value.cycle_id !== "string" || !/^c_[a-f0-9]{64}$/.test(value.cycle_id)))) {
+    fail("E_CLAUDE_PARENT_CLI_RESULT_INVALID", "Claude parent caller resultが不正です");
   }
 }
 
