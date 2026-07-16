@@ -756,6 +756,14 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           （[ADR 0133](adr/0133-installed-package-runtime-root-canonicalization.md)）。
           focused 15/15、related 35/35、`npm run check`、対象docs lint、package verify、installed module
           smoke `providers=2 root_count=1 canonical=true`がgreen。
+        - [x] **P5-1b5b-r7 Throughline completed timestamp adapter:** r6修理後の実callerはprovider launch前に
+          `E_EVIDENCE_SNAPSHOT_INVALID`となった。Throughline `observer_read.v1`は`completed_at`をepoch
+          milliseconds整数で公開し、Observer evidence schemaはcanonical `.sssZ`を要求するため、evidence
+          collector境界で整数msをexact ISOへ一度だけ変換する。文字列、負数、範囲外値、非canonical結果は
+          fail closedにし、Throughline wireやevidence schema自体を変更しない。失敗attemptはlive成功へ
+          含めない（[ADR 0134](adr/0134-throughline-completed-at-adapter.md)）。
+          focused 9/9、関連42/42、`npm run check`、対象docs lint、package verify、実feedを使う
+          installed smoke `feed_turns=1 snapshot_turns=1 canonical=true`がgreen。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。

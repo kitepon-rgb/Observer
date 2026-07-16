@@ -33,7 +33,7 @@ function sha256(value) {
   return createHash("sha256").update(value, "utf8").digest("hex");
 }
 
-function completedTurn(sourceSha = SOURCE_SHA, completedAt = "2099-07-15T23:59:00.000Z") {
+function completedTurn(sourceSha = SOURCE_SHA, completedAt = Date.parse("2099-07-15T23:59:00.000Z")) {
   const user = "Observer core E2Eを完成して";
   const assistant = "transaction接続を実装しました";
   return {
@@ -209,7 +209,7 @@ function twoCycleThroughlineClient() {
           throughCursor: THROUGH_CURSOR_2,
           host: "codex",
           thread_sha256: PARENT_THREAD_SHA,
-          turns: [completedTurn(SOURCE_SHA_2, "2099-07-15T23:59:30.000Z")],
+          turns: [completedTurn(SOURCE_SHA_2, Date.parse("2099-07-15T23:59:30.000Z"))],
           historyTruncated: false,
           page: { complete: true, nextToken: null },
         },

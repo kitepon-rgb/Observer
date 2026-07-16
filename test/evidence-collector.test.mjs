@@ -25,6 +25,27 @@ function digest(label) {
   return `sha256:${createHash("sha256").update(label).digest("hex")}`;
 }
 
+function rawDigest(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function completedTurn(completedAt = 1784187190853) {
+  const user = "user body";
+  const assistant = "assistant body";
+  return {
+    host: CONTEXT.parent_host,
+    thread_sha256: CONTEXT.parent_thread_sha256,
+    origin_sha256: "e".repeat(64),
+    user_sha256: rawDigest(user),
+    assistant_sha256: rawDigest(assistant),
+    completed_at: completedAt,
+    source_sha256: "f".repeat(64),
+    user,
+    assistant,
+    truncated: false,
+  };
+}
+
 function request(overrides = {}) {
   return {
     context: CONTEXT,
@@ -80,6 +101,25 @@ test("approved plan、fixed-argv git、既存receiptだけをbuilder inputへ投
   assert.deepEqual(input.tests, request().test_receipts);
   const snapshot = await collectEvidenceSnapshot(request(), dependencies());
   assert.equal(snapshot.schema, "observer.evidence_snapshot.v1");
+});
+
+test("Throughline epoch millisecondsをcanonical evidence timestampへ一度だけ変換する", async () => {
+  const turn = completedTurn();
+  const input = await collectEvidenceInput(request({ turns: [turn] }), dependencies());
+  assert.equal(input.turns[0].completed_at, new Date(turn.completed_at).toISOString());
+  const snapshot = await collectEvidenceSnapshot(request({ turns: [turn] }), dependencies());
+  assert.equal(snapshot.turns.entries[0].completed_at, new Date(turn.completed_at).toISOString());
+  assert.equal(snapshot.turns.entries[0].user, turn.user);
+  assert.equal(snapshot.turns.entries[0].assistant, turn.assistant);
+});
+
+test("Throughline completed_atの文字列、負数、Date範囲外をfail closedにする", async () => {
+  for (const completedAt of ["2026-07-16T00:00:00.000Z", -1, Number.MAX_SAFE_INTEGER]) {
+    await assert.rejects(
+      () => collectEvidenceInput(request({ turns: [completedTurn(completedAt)] }), dependencies()),
+      code("E_EVIDENCE_COLLECTOR_INVALID"),
+    );
+  }
 });
 
 test("root外へcanonical realpathでescapeするplanはunavailableとして残す", async () => {

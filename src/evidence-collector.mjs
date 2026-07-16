@@ -25,6 +25,7 @@ const TEST_RECEIPT_KEYS = Object.freeze([
   "unavailable_code",
 ]);
 const PLAN_REF_PREFIX = "file:";
+const CANONICAL_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 const GIT_SOURCES = Object.freeze([
   { ref: "git:head", args: ["rev-parse", "HEAD"] },
   { ref: "git:status", args: ["status", "--porcelain=v1", "--branch"] },
@@ -56,11 +57,28 @@ export async function collectEvidenceInput(request, dependencies = undefined) {
 
   return {
     context: structuredClone(request.context),
-    turns: structuredClone(request.turns),
+    turns: request.turns.map(normalizeCompletedTurn),
     plan,
     git,
     tests: request.test_receipts.map((receipt) => structuredClone(receipt)),
   };
+}
+
+function normalizeCompletedTurn(value) {
+  requirePlainObject(value, "turn");
+  if (!Number.isSafeInteger(value.completed_at) || value.completed_at < 0) {
+    invalid("turn.completed_atは非負のepoch milliseconds整数である必要があります");
+  }
+  let completedAt;
+  try {
+    completedAt = new Date(value.completed_at).toISOString();
+  } catch {
+    invalid("turn.completed_atをcanonical timestampへ変換できません");
+  }
+  if (!CANONICAL_TIMESTAMP.test(completedAt) || Date.parse(completedAt) !== value.completed_at) {
+    invalid("turn.completed_atをcanonical timestampへ変換できません");
+  }
+  return { ...structuredClone(value), completed_at: completedAt };
 }
 
 export async function collectEvidenceSnapshot(request, dependencies = undefined) {
