@@ -84,7 +84,7 @@ export class CodexProcessTransport {
     probeProcessGroup = defaultProbeProcessGroup,
   } = {}) {
     validateChild(child);
-    if (!Number.isSafeInteger(child.pid) || child.pid <= 0) fail("E_CODEX_PROCESS_GROUP_INVALID", "Codex app-server process group IDが不正です");
+    if (!Number.isSafeInteger(child.pid) || child.pid <= 0) throw terminationUnknown();
     if (onNotification !== null && typeof onNotification !== "function") fail("E_CODEX_NOTIFICATION_HANDLER_INVALID", "Codex notification handlerが不正です");
     if (typeof signalProcessGroup !== "function" || typeof probeProcessGroup !== "function") fail("E_CODEX_PROCESS_GROUP_INVALID", "Codex app-server process group操作が不正です");
     this.#child = child;

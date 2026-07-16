@@ -240,7 +240,7 @@ test("SIGKILL後もgroupが残る場合は終了不明をfail loudにする", as
 test("process group ID欠損とsignal・probe異常をleader-only fallbackへ丸めない", async (t) => {
   assert.throws(
     () => new CodexProcessTransport(new FakeChild({ pid: null })),
-    expectCode("E_CODEX_PROCESS_GROUP_INVALID"),
+    expectCode("E_CODEX_PROCESS_TERMINATION_UNKNOWN"),
   );
 
   await t.test("SIGTERM failure", async () => {
