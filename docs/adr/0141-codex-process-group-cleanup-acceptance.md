@@ -28,8 +28,7 @@ commit `c936cfdb7c3c81b782e660fe216a29275013ea1a`をP5-1b5b-r15のsource／test�
 
 - focused: `node --test test/codex-process-transport.test.mjs` —
   16/16 pass、fail 0、skip 0。
-- related:
-  `node --test test/codex-parent-caller.test.mjs test/supervisor-codex-process.test.mjs` —
+- related: Codex parent caller／Supervisor process tests —
   13/13 pass、fail 0、skip 0。
 - static: `npm run check` — syntaxと`git diff --check`がgreen。
 - 実OS subprocess fixtureは、leader終了後もSIGTERMを無視する子processを同じ固有groupへ残し、
