@@ -701,7 +701,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
     Claude／Codexの実completed証拠、production model request、session相関、hook trust、65秒超wait、
     通常停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。timeout、crash、
     通信断などのintentional fault trancheは通常campaignへ混ぜず、実行ごとに別の明示承認を要する。
-    - [ ] **P5-1b5a preflight／runbook production route補正:** P5-1b4完了後も残った旧
+    - [x] **P5-1b5a preflight／runbook production route補正:** P5-1b4完了後も残った旧
       `claude --version`／Observer MCP probe／background job前提を除去し、実production callerと同じ
       Throughline 0.6.3 `observer-read`実疎通、Aiterm 0.14.0 stdio initialize、
       `claude_agent`／`claude_turn`／`pty_close` exact schema、Codex app-server、
@@ -711,6 +711,8 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
       `observer parent codex run ...`、同じ
       persistent Claude sessionの初回／follow-up、terminal回収、dotagentsの検証済み`--restore`による
       config rollbackへ固定する（[ADR 0125](adr/0125-live-preflight-production-route-correction.md)）。
+      focused 20/20、product 4/4、related 46/46、isolated package gate、actual read-only
+      `status=h_required`を[ADR 0126](adr/0126-live-preflight-production-route-acceptance.md)で受け入れた。
     - [ ] **P5-1b5b 通常系dual-host live H:** 承認済み通常campaignだけを各host一回実行し、preflight
       receiptの全証拠、両host terminal、project fingerprint不変、hook config rollbackを確認する。
       intentional faultは未実施と明記する。通常campaignのH操作は2026-07-16にオーナーが

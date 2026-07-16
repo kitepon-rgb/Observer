@@ -47,10 +47,12 @@ model request、host config read／write、hook trust、credential、intentional
 
 ## 3. campaign-local candidate
 
-global packageは同じversionでも公開surfaceが古い場合があるため使い回さない。Observer、Throughline、
-Aitermの受入済みrepo HEADをそれぞれpackし、`$HOME/Library/Application Support/Observer/`配下の
-0700 campaign directoryにある専用npm prefixへ`--ignore-scripts`でinstallする。prefix外のglobal
-packageを更新しない。
+global packageは同じversionでも公開surfaceが古い場合があるため使い回さない。
+Observer、Throughline、Aitermの受入済みrepo HEADをそれぞれpackし、
+`$HOME/.local/share/observer-campaigns/<campaign-id>`の0700専用npm prefixへ
+`--ignore-scripts`でinstallする。hook commandの固定境界に合わせ、campaign rootは
+空白、quote、control characterを含まないabsolute pathにする。prefix外のglobal packageを
+更新しない。
 
 - Observer packageはdotagentsの`verify-observer-package`でprefixと
   expected version 0.0.0を検証する。
