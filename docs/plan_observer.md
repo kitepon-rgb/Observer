@@ -28,6 +28,9 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   [ADR 0016](adr/0016-control-wave-boundary.md)の受入表でarchiveし、Codex host adapter以降を
   `observer-codex-host-runtime-20260715`へ継続する。これはObserver全体またはPhase 2の完了宣言ではない。
 - Control finalizationのdigest証拠には可変な本planを使わず、immutable ADRを使う。
+- queue 19eの訂正Control `observer-p5-1b5-dual-host-live-20260716`は、process-group cleanup、
+  pre-ready recovery、修理後HEADの回帰、独立重監査を
+  [ADR 0144](adr/0144-observer-phase-o2-finalization.md)で受け入れてfinalizeする。
 
 ---
 
@@ -696,7 +699,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
       - [x] related 50/50、`npm run check` green、Phase full 393/393 green。独立重監査でP1実装欠陥2件を
         採用・補正し、証拠再束縛指摘も補正後gateで閉じた。受入証拠は
         [ADR 0124](adr/0124-aiterm-claude-generation-lifecycle-acceptance.md)。
-  - [ ] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact
+  - [x] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact
     result、session closeと、
     Claude／Codexの実completed証拠、production model request、session相関、hook trust、65秒超wait、
     通常停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。timeout、crash、
@@ -713,7 +716,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
       config rollbackへ固定する（[ADR 0125](adr/0125-live-preflight-production-route-correction.md)）。
       focused 20/20、product 4/4、related 46/46、isolated package gate、actual read-only
       `status=h_required`を[ADR 0126](adr/0126-live-preflight-production-route-acceptance.md)で受け入れた。
-    - [ ] **P5-1b5b 通常系dual-host live H:** 承認済み通常campaignだけを各host一回実行し、preflight
+    - [x] **P5-1b5b 通常系dual-host live H:** 承認済み通常campaignだけを各host一回実行し、preflight
       receiptの全証拠、両host terminal、project fingerprint不変、hook config rollbackを確認する。
       intentional faultは未実施と明記する。通常campaignのH操作は2026-07-16にオーナーが
       「queue 19e dual-host live Hを承認する」と明示承認した。
@@ -829,7 +832,10 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           `npm run check`がgreen。
           実OS fixtureではleader終了後もSIGTERMを無視する子を同じgroupに残し、bounded SIGKILL後に
           group／子PIDとも不在を確認した。受入証拠は
-          [ADR 0141](adr/0141-codex-process-group-cleanup-acceptance.md)。
+          [ADR 0141](adr/0141-codex-process-group-cleanup-acceptance.md)。独立重監査で検出したPGID欠損時の
+          error code不一致はcommit `8056405`で`E_CODEX_PROCESS_TERMINATION_UNKNOWN`へ統一した。
+          full suite並列時のfixture起動待ちraceは、成功assertionを変えず5秒のbounded待ちへ拡張する
+          commit `2b94392`で閉じた。
         - [x] **P5-1b5b-r16 post-spawn／pre-ready recovery訂正:** 独立監査候補を親が実コードで
           再確認し、handle耐久化後のready失敗でprovider transport／sessionだけを閉じ、watchを
           `launching`へ残す欠陥を採用した。validated spawned receiptの同じwatch identity／handleだけで
@@ -865,9 +871,15 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
     - `codex-sidecar review --project . --preset review --dry-run ...`: `status=dry-run`、App Server未呼出。
     - `codex-sidecar factory-diagnostics --project . --preset review`: 0.3.7三package一致、`overall=ready`。
 
-- [ ] **P5-3 最終監査とknowledge returnを完了する。**
+- [x] **P5-3 最終監査とknowledge returnを完了する。**
   - 成果物: Find → Dedup → 反証 → Critic → 親裁定、RAG / caveat / docsへの還流記録。
   - 完了条件: P0/P1問題が残らず、全受け入れ条件を親が裁定し、本プランをarchiveできる。
+  - 修理後最終HEAD `2b94392`でfocused 16/16、related 68/68、full 412/412、fail 0、skip 0。
+  - 新規独立重監査はPGID欠損時のerror code不一致をP1一件として採用した。commit `8056405`と
+    `2b94392`後の同一refuterによる限定再確認でP0/P1残存0、fixtureのgroup／子PID不在assertion維持を確認した。
+  - knowledge returnとimmutable acceptance matrixは
+    [ADR 0144](adr/0144-observer-phase-o2-finalization.md)。intentional fault、追加model request、network、
+    credential、push、publish、deploy、loginは実施していない。
 
 ---
 
