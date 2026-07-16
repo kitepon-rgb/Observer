@@ -4,7 +4,7 @@
 
 ## Status
 
-Accepted。実装gateはgreen。queue 19eの実Claude再検証を受入れへ残す。
+Accepted。実装gateとqueue 19eの実Claude strict parse再検証はgreen。
 
 ## Context
 
@@ -36,4 +36,6 @@ queue 19eの実managed Claudeで初回prompt、Stop、exact result回収は成�
 
 - focused cycle input＋AI contract＋Claude operation: 12 passed、0 failed、0 skipped。
 - related cycle＋Supervisor＋E2E＋semantic evaluator: 52 passed、0 failed、0 skipped。
-- 実Claude strict parseはqueue 19e live Hで行い、fixture greenへ代入しない。
+- 修理commit: `ebd8ae6`。
+- 再pack候補の実Claude: strict parse、初回cycle commit、pending／model operation残留なし。
+- fixture greenをlive成功へ代入していない。
