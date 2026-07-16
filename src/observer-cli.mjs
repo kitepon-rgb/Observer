@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url";
-import { isAbsolute } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 
 import { runCodexParentWatchProcess } from "./codex-parent-caller.mjs";
 import { runClaudeParentWatchProcess } from "./claude-parent-caller.mjs";
@@ -27,7 +27,7 @@ const CODEX_PARENT_CALLER_STATUSES = new Set([
 const CLAUDE_PARENT_CALLER_STATUSES = new Set([
   "cancelled", "faulted", "provider_unavailable", "stopping", "stopped",
 ]);
-const OBSERVER_PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
+const OBSERVER_PACKAGE_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 
 export function observerUsage() {
   return [

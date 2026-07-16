@@ -747,6 +747,15 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           commit `a46b915`で独立確定し、focused 14/14、subprocess 2/2、related 78/78を通した。
           失敗attemptはlive成功へ含めず、candidate再梱包後に通常campaignを再開する
           （[ADR 0132](adr/0132-queue19e-socket-and-stop-flush-correction.md)）。
+        - [x] **P5-1b5b-r6 installed package runtime root canonical化:** 修理済みcandidateでClaude parent
+          receiptを1件確定後、実`observer parent claude run`がprovider launch前に
+          `E_THROUGHLINE_RUNTIME_ROOT_INVALID`となった。CLIだけが`import.meta.url`から末尾`/`付きの
+          package rootを作り、preflightの末尾なしrootと分岐していた。runtime rootを実packageのcanonical
+          directoryへ一意化し、Claude／Codex親callerの両dispatch testとisolated package gateで固定する。
+          失敗attemptはObserver live成功へ含めない
+          （[ADR 0133](adr/0133-installed-package-runtime-root-canonicalization.md)）。
+          focused 15/15、related 35/35、`npm run check`、対象docs lint、package verify、installed module
+          smoke `providers=2 root_count=1 canonical=true`がgreen。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, sep } from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -185,7 +185,10 @@ test("parent codex run CLIはabsolute入力だけをparseし、runtime root引�
 test("parent codex runはinstalled package rootとexact context、signalをcallerへ渡しsanitized resultを既存exit契約へ写像する", async () => {
   const controller = new AbortController();
   controller.abort();
-  const expectedRuntimeRoot = fileURLToPath(new URL("../", new URL("../src/observer-cli.mjs", import.meta.url)));
+  const expectedRuntimeRoot = dirname(dirname(fileURLToPath(new URL("../src/observer-cli.mjs", import.meta.url))));
+  assert.equal(isAbsolute(expectedRuntimeRoot), true);
+  assert.equal(expectedRuntimeRoot.endsWith(sep), false);
+  assert.equal(await realpath(expectedRuntimeRoot), expectedRuntimeRoot);
   const outcome = await executeObserverCommand([
     "parent", "codex", "run", "/project",
     "--throughline-command", "/bin/throughline",
@@ -269,7 +272,10 @@ test("parent claude runはAiterm commandをexact parseし、Claude callerのsani
   });
   const outcome = await executeObserverCommand(argv, {}, {
     runClaudeParentWatchProcess: async (input) => {
+      const expectedRuntimeRoot = dirname(dirname(fileURLToPath(new URL("../src/observer-cli.mjs", import.meta.url))));
       assert.equal(input.parentContext.parent_provider, "claude");
+      assert.equal(input.runtimeRoot, expectedRuntimeRoot);
+      assert.equal(input.parentContext.runtime_root, expectedRuntimeRoot);
       assert.equal(input.aitermCommand, "/bin/aiterm");
       return { schema: "observer.claude_parent_caller_result.v1", status: "stopped", provider: "claude", cycle_id: null };
     },
