@@ -88,8 +88,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     provider bindingの構造探索も実sourceとblast radiusを返した。DBは`.codegraph/.gitignore`により
     端末local、生成されたignore metadataだけを追跡候補にする。
 
-**Gate:** Aiterm `claude_agent`の非H契約・結果回収・timeout recoveryは`dd43c40`で完了した。
-Claude live adapterのproduction採用は、実Claude初回／follow-up smokeの19c3 live Hまで保留する。
+**Gate:** Aiterm `claude_agent`の非H契約・operation相関付き結果回収・timeout recoveryは
+`dd43c40`／`3842ff2`、related 122/122、full 262/262、独立反証P0/P1/P2残存なしで完了した。
+次の非H TODOはP5-1b4である。実Claude初回／follow-upはcaller実装後のP5-1b5 dual-host live Hまで
+成功扱いしない。
 
 ---
 
@@ -316,7 +318,7 @@ Claude live adapterのproduction採用は、実Claude初回／follow-up smokeの
                     独立commitへ固定する。corrective変更後の最終関連gateは70/70、static gateはgreen。
                   - [x] repo正典に残っていた旧AI-owned wait／Stop continuation／Observer MCP公開の記述を、
                     ADR 0060の外部Supervisor単一所有とproduction AI exact-empty tool surfaceへ補正する。
-              - [ ] Claude background jobへの公開非対話reply ACKと隔離`--settings` Stop hookを実証して接続する。
+              - [ ] 旧Claude background job経路のblockedを維持し、Aiterm公開対話transportをClaude callerへ接続する。
                 - [x] P5-1b3の非H準備、live H、production callerを分離し、親Mailbox hookを
                   result captureへ流用しない契約を[ADR 0109](adr/0109-claude-public-surface-characterization-contract.md)で固定した。
                 - [x] characterization専用の隔離Stop capture、sanitized receipt、
@@ -333,6 +335,8 @@ Claude live adapterのproduction採用は、実Claude初回／follow-up smokeの
                   `E_CLAUDE_CHARACTERIZATION_RESULT_INVALID`、公開reply／terminal exact resultは
                   unsupportedであり、接続はblockedのままとする
                   （[ADR 0114](adr/0114-claude-live-recharacterization-blocked.md)）。
+                - [x] Aitermの永続PTY `claude_agent`へ置き換え、operation相関付きexact resultと
+                  timeout後無送信回収を非H gateで閉じた。次はP5-1b4でproduction callerへ接続する。
             - [x] Mailbox publishをdeterministic message IDの同内容replayだけ冪等成功にし、異内容をconflictにする
               （[ADR 0048](adr/0048-mailbox-operation-publish-replay-contract.md)）。
               - 既存`publishMessage`のduplicate拒否は維持し、model operation専用`publishOperationMessage`と
@@ -608,7 +612,7 @@ Claude live adapterのproduction採用は、実Claude初回／follow-up smokeの
     `659924c`／`0690ee0`、dotagents `21bc352`、focused 12/12、related 25/25、isolated
     install／verify／rollback、`npm run check`／`make lint` greenを
     [ADR 0108](adr/0108-codex-parent-entry-and-distribution-acceptance.md)で受け入れた。
-  - [ ] **P5-1b3 Claude public surface characterization:** 公開非対話reply ACK、exact result read、
+  - [x] **P5-1b3 Claude public surface characterization／代替transport確定:** 公開非対話reply ACK、exact result read、
     job／session／Stop相関の実在または不在を、[ADR 0109](adr/0109-claude-public-surface-characterization-contract.md)の
     順序で確定する。private protocolやheadless resumeへfallbackしない。
     - [x] **P5-1b3a 非H harness:** characterization専用の隔離Stop capture、sanitized receipt、
@@ -619,7 +623,7 @@ Claude live adapterのproduction採用は、実Claude初回／follow-up smokeの
       一つのbackground jobだけを起動した。`job_session_correlation=blocked`、
       `stop_capture=blocked`、reply／terminal exact resultは`unsupported`、cleanupとfingerprint不変は
       confirmedである（[ADR 0111](adr/0111-claude-live-characterization-blocked.md)）。
-      P5-1b3全体とP5-1b4は必要な公開契約が揃うまでblockedのまま維持する。
+      旧background job経路は必要な公開契約が揃わない限りblockedのまま維持する。
     - [x] **P5-1b3c 非H diagnostic receipt:** Stop未発火とstdin／payload／result不正をraw-freeに
       分離し、direct shebang CLI、verify、cleanupをfocused／related gateで閉じる
       （実装 `f239a07`、focused 9/9、related 29/29、`npm run check` green、
@@ -631,16 +635,17 @@ Claude live adapterのproduction採用は、実Claude初回／follow-up smokeの
       （[ADR 0114](adr/0114-claude-live-recharacterization-blocked.md)）。
       旧background job経路は必要な公開delivery／result contractが現れるまでblockedとする。
   - [x] **P5-1b3e Aiterm Claude対話transport 非H:** Aitermの永続PTYへ対話型`claude_agent`を追加し、
-    promptなし起動、初回／follow-up、Stop完了、exact result、timeout後回収、interrupt／closeを
+    promptなし起動、初回／follow-up、Stop完了、operation相関付きexact result、timeout後回収、interrupt／closeを
     Aiterm側の独立plan・gate・commitで閉じる。`claude -p`反復は代替にしない
-    （Aiterm `dd43c40`、focused 1/1、related 109/109、full 249/249、独立反証後green、
+    （Aiterm `dd43c40`／`3842ff2`、focused 1/1、related 122/122、full 262/262、独立反証後green、
     [ADR 0115](adr/0115-persistent-observer-context-and-claude-transport.md)）。
-  - [ ] **P5-1b3f Aiterm Claude対話transport live H:** 実Claude初回／follow-up各1 turn、Stop、
-    exact result、session closeを一度だけ確認する。model requestを伴うため明示承認後に実施する。
-  - [ ] **P5-1b4 Claude caller core 非H:** P5-1b3eで固定したAiterm公開面だけをissue／recover／cleanup、
+  - [x] **P5-1b3f live順序整理:** Aiterm単体live smokeをP5-1b4より前に反復せず、P5-1b5の一回の
+    dual-host live Hへ統合する。これはlive成功ではなくqueue統合の完了である。
+  - [ ] **P5-1b4 Claude caller core 非H（NEXT）:** P5-1b3eで固定したAiterm公開面だけをissue／recover／cleanup、
     initial generation、同じ永続Claude sessionを所有するSupervisor loopへ接続する。
-  - [ ] **P5-1b5 dual-host live H:** Claude／Codexの実completed証拠、production model request、session相関、hook trust、
-    65秒超wait、実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。
+  - [ ] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact result、session closeと、
+    Claude／Codexの実completed証拠、production model request、session相関、hook trust、65秒超wait、
+    実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
