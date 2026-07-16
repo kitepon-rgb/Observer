@@ -6,6 +6,7 @@ import test from "node:test";
 
 import {
   activateAitermClaudeObserver,
+  closeAitermClaudeSession,
   readAitermClaudeLaunchStatus,
   recoverAitermClaudeSpawn,
   spawnAitermClaudeObserver,
@@ -53,11 +54,15 @@ test("Aiterm Claude spawnはrecord-first journal後に構造化claude_agent rece
       },
     },
   }, { now: () => T1 });
-  assert.deepEqual(calls, [["claude_agent", {
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][0], "claude_agent");
+  assert.deepEqual(calls[0][1], {
     cwd: "/observer",
     session_name: request.host.session_name,
     agent_done: true,
-  }]]);
+    launch_operation_id: calls[0][1].launch_operation_id,
+  });
+  assert.match(calls[0][1].launch_operation_id, /^sha256:[0-9a-f]{64}$/);
   assert.deepEqual(result.receipt, {
     schema: "observer.host_receipt.v1",
     provider: "claude",
@@ -69,13 +74,14 @@ test("Aiterm Claude spawnはrecord-first journal後に構造化claude_agent rece
   assert.equal((await readAitermClaudeLaunchStatus({ stateRoot, request })).status, "spawned");
 });
 
-test("launch未知時はclaude_agentを再送せずrecover probeだけでjournalを回復する", async () => {
+test("launch未知時は同じ相関済みclaude_agentだけをreplayしてjournalを回復する", async () => {
   const { stateRoot, request } = await launchFixture();
   const initialCalls = [];
+  let initialInput;
   await assert.rejects(spawnAitermClaudeObserver({
     stateRoot,
     request,
-    transport: { callTool: async (name) => { initialCalls.push(name); throw new Error("transport disconnected"); } },
+    transport: { callTool: async (name, input) => { initialCalls.push(name); initialInput = input; throw new Error("transport disconnected"); } },
   }, { now: () => T1 }));
   assert.deepEqual(initialCalls, ["claude_agent"]);
   const retryCalls = [];
@@ -93,20 +99,37 @@ test("launch未知時はclaude_agentを再送せずrecover probeだけでjournal
       callTool: async (name, input) => {
         recoveryCalls.push([name, input]);
         return {
-          schema: "aiterm.claude-operation-result.v1",
-          action: "recover",
-          status: "unknown",
+          schema: "aiterm.agent-launch-result.v1",
+          provider: "claude",
           session_id: request.host.session_name,
-          operation_id: input.operation_id,
-          raw_output: null,
-          reason: "operation_not_found",
+          managed_completion: true,
         };
       },
     },
   }, { now: () => T2 });
   assert.equal(recovered.outcome, "spawned");
-  assert.deepEqual(recoveryCalls.map(([name]) => name), ["claude_turn"]);
+  assert.deepEqual(recoveryCalls, [["claude_agent", initialInput]]);
   assert.equal((await readAitermClaudeLaunchStatus({ stateRoot, request })).status, "spawned");
+});
+
+test("launch replayのidentity不一致receiptをspawnedへ降格しない", async () => {
+  const { stateRoot, request } = await launchFixture();
+  await assert.rejects(spawnAitermClaudeObserver({
+    stateRoot,
+    request,
+    transport: { callTool: async () => { throw new Error("transport disconnected"); } },
+  }, { now: () => T1 }));
+  await assert.rejects(recoverAitermClaudeSpawn({
+    stateRoot,
+    request,
+    transport: { callTool: async () => ({
+      schema: "aiterm.agent-launch-result.v1",
+      provider: "claude",
+      session_id: "different_session",
+      managed_completion: true,
+    }) },
+  }, { now: () => T2 }), expectCode("E_AITERM_CLAUDE_LAUNCH_RESULT_MISMATCH"));
+  assert.equal((await readAitermClaudeLaunchStatus({ stateRoot, request })).status, "launching");
 });
 
 test("Aitermの明示launch拒否はunknownへ丸めずrecoverによる別session採用を禁止する", async () => {
@@ -134,6 +157,39 @@ test("Aitermの明示launch拒否はunknownへ丸めずrecoverによる別sessio
     transport: { callTool: async () => { calls += 1; } },
   }), expectCode("E_AITERM_CLAUDE_LAUNCH_REJECTED"));
   assert.equal(calls, 0);
+});
+
+test("terminal済みsessionのreceiptは再利用せず、次generationの別sessionだけをlaunchできる", async () => {
+  const { stateRoot, request } = await launchFixture();
+  await spawnAitermClaudeObserver({
+    stateRoot,
+    request,
+    transport: { callTool: async () => ({ schema: "aiterm.agent-launch-result.v1", provider: "claude", session_id: request.host.session_name, managed_completion: true }) },
+  }, { now: () => T1 });
+  const calls = [];
+  const closed = await closeAitermClaudeSession({
+    stateRoot,
+    targetId: request.target_id,
+    watchId: request.watch_id,
+    sessionId: request.host.session_name,
+    transport: { callTool: async (name, input) => {
+      calls.push([name, input]);
+      return { schema: "aiterm.pty-close-result.v1", session_id: request.host.session_name, outcome: "closed" };
+    } },
+  });
+  assert.deepEqual(closed, { schema: "aiterm.pty-close-result.v1", session_id: request.host.session_name, outcome: "closed" });
+  assert.deepEqual(calls, [["pty_close", { session_id: request.host.session_name }]]);
+  await assert.rejects(spawnAitermClaudeObserver({ stateRoot, request, transport: { callTool: async () => null } }), expectCode("E_AITERM_CLAUDE_SESSION_TERMINAL"));
+  const nextRequest = buildAitermClaudeGenerationLaunchRequest({
+    target: TARGET, watchId: request.watch_id, runtimeRoot: "/observer", sessionInstanceId: `sha256:${"b".repeat(64)}`,
+  });
+  assert.notEqual(nextRequest.host.session_name, request.host.session_name);
+  const next = await spawnAitermClaudeObserver({
+    stateRoot,
+    request: nextRequest,
+    transport: { callTool: async () => ({ schema: "aiterm.agent-launch-result.v1", provider: "claude", session_id: nextRequest.host.session_name, managed_completion: true }) },
+  }, { now: () => T1 });
+  assert.equal(next.receipt.handle.value, nextRequest.host.session_name);
 });
 
 test("session handle耐久化後にactiveへ進め、active再開ではexact bindingを要求してgenerationを初期化する", async () => {

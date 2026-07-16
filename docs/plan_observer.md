@@ -90,8 +90,8 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
 
 **Gate:** Aiterm `claude_agent`の非H契約・operation相関付き結果回収・timeout recoveryは
 `dd43c40`／`3842ff2`、related 122/122、full 262/262、独立反証P0/P1/P2残存なしで完了した。
-次の非H TODOはP5-1b4である。実Claude初回／follow-upはcaller実装後のP5-1b5 dual-host live Hまで
-成功扱いしない。
+P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであり、実Claude初回／follow-upは
+同H gateまで成功扱いしない。
 
 ---
 
@@ -643,7 +643,7 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
     [ADR 0115](adr/0115-persistent-observer-context-and-claude-transport.md)）。
   - [x] **P5-1b3f live順序整理:** Aiterm単体live smokeをP5-1b4より前に反復せず、P5-1b5の一回の
     dual-host live Hへ統合する。これはlive成功ではなくqueue統合の完了である。
-  - [ ] **P5-1b4 Claude caller core 非H（NEXT）:** P5-1b3eで固定したAiterm公開面だけをissue／recover／cleanup、
+  - [x] **P5-1b4 Claude caller core 非H:** P5-1b3eで固定したAiterm公開面だけをissue／recover／cleanup、
     initial generation、同じ永続Claude sessionを所有するSupervisor loopへ接続する
     （[ADR 0116](adr/0116-aiterm-claude-production-caller-contract.md)）。
     - [x] P5-1b4a: Aiterm stdio MCPをversion／tool schemaまで検証するtransportと、`claude_turn`の
@@ -659,8 +659,43 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
       通常completed cycle間で同じsession handleを再利用する。通常終了は`pty_close`成功後にMCP processを閉じ、
       未対応rollover／parent rebindはfail loudを維持した。focused 27/27、related 91/91、`npm run check` green。
       受入証拠は[ADR 0119](adr/0119-claude-production-caller-acceptance.md)。
-    - [ ] P5-1b4d（NEXT）: rollback／parent rebindのstop／relaunch／recoveryをAiterm公開toolだけへ接続し、
-      focused／related gate、親反証、独立commitで19dを閉じる。
+    - [x] P5-1b4d: rollback／parent rebindのstop／relaunch／recoveryをAiterm公開toolだけへ接続し、
+      focused／related gate、親反証、独立commitで19dを閉じる
+      （設計訂正は[ADR 0120](adr/0120-aiterm-claude-generation-session-lifecycle.md)）。
+      - [x] Aiterm側の欠落契約を所有repoへ割り込み登録し、`pty_close`のidempotent
+        `closed | already_closed` structured receiptと0.14.0 versionを独立gate／独立commitで閉じた
+        （Aiterm `056e0a4`、focused 4/4、related 174/174、Aiterm ADR 0012）。
+      - [x] Aiterm launch response loss時に、session存在証拠ではない`claude_turn(operation_not_found)`を
+        spawn証拠へ誤用しているP1を修正する。Aiterm側の相関済み`claude_agent` exact replayだけへ置換し、
+        同じsession名でもlaunch相関ID／引数identityが違うsessionを採用しない
+        （Aiterm `affc2df`、Aiterm focused 6/6・related 96/96・full 269/269、Observer focused 11/11、
+        訂正設計は[ADR 0122](adr/0122-aiterm-claude-exact-launch-recovery-correction.md)）。
+      - [x] ObserverのAiterm検証を0.14.0／`pty_close` output schema／`launch_operation_id` input schemaへ上げ、
+        text解析を禁止する。
+      - [x] 同一generation内だけ同じsession IDを再利用し、planned rolloverとsame-provider parent rebindでは
+        parent epoch＋generation sequenceから決定した別session instanceを使う。watch固定session／launch receiptを
+        新generationへ再利用しない。
+      - [x] 旧session close receipt→terminal durable記録→新session spawn／recovery→watch handle CAS→ready→
+        generation activationを既存host-neutral transactionへ接続する。response loss後は同じclose／launch operationだけを
+        回収し、prompt再送、旧background Claude、Codexへのfallbackを行わない。
+        - parent受入で、planned rolloverだけがstructured close command receiptをjournalへ保存し、parent rebind
+          adapterは同receiptを破棄している非対称を検出した。修正前0/2、補正後2/2。旧v1 journalの
+          `stop_command_receipt_digest`欠落は`null`読取→次transitionで書戻し、異なるretry receiptは
+          fail loudとする（[ADR 0121](adr/0121-parent-rebind-close-receipt-durability.md)）。
+      - [x] Supervisor runtimeのactive `claude.session`所有権をactivation後だけ新handleへ移し、通常cycle、
+        parent rebind、process cleanupが常に現在generationのsessionを参照することをfixtureで固定する。
+      - [x] 独立反証で検出したinitial caller recovery／parent rebind再authorizationのP1を補正する
+        （[ADR 0123](adr/0123-claude-caller-recovery-correction.md)）。
+        - [x] 明示`expected_previous_watch_id=current watch`を伴う同じwatchの`starting | launching | active`だけを
+          Aiterm Claude初期callerが同一requestへ再束縛し、`launching` journalではexact `claude_agent` replayを呼ぶ。
+          通常の二重start、別provider／project／terminal watchは再利用しない。
+        - [x] parent rebind journal作成後は、generationが`stopping`以降でも同じcycle／proposed parentから
+          同一authorizationを回収し、authorizationを新規発行しない。
+        - [x] caller response-lossとrebind multi-step再開のfocused fixtureを先に17/20 redで固定し、
+          補正後20/20 greenへ戻した。
+      - [x] related 50/50、`npm run check` green、Phase full 393/393 green。独立重監査でP1実装欠陥2件を
+        採用・補正し、証拠再束縛指摘も補正後gateで閉じた。受入証拠は
+        [ADR 0124](adr/0124-aiterm-claude-generation-lifecycle-acceptance.md)。
   - [ ] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact result、session closeと、
     Claude／Codexの実completed証拠、production model request、session相関、hook trust、65秒超wait、
     実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。

@@ -1,5 +1,6 @@
 import * as claudeRuntime from "./claude-host-runtime.mjs";
 import * as codexRuntime from "./codex-host-runtime.mjs";
+import * as aitermClaudeRuntime from "./aiterm-claude-host-runtime.mjs";
 import * as rebind from "./generation-parent-rebind.mjs";
 import { buildGenerationLaunchRequest } from "./parent-launch.mjs";
 import { fail } from "./observer-error.mjs";
@@ -25,6 +26,7 @@ export async function advanceGenerationParentRebindProviderBinding({
   const providers = {
     claude: dependencies.claudeRuntime ?? claudeRuntime,
     codex: dependencies.codexRuntime ?? codexRuntime,
+    aitermClaude: dependencies.aitermClaudeRuntime ?? aitermClaudeRuntime,
   };
   const providerDependencies = dependencies.providerDependencies ?? {};
   const status = await core.readGenerationParentRebindRecoveryContext({
@@ -85,21 +87,32 @@ async function advanceStop({ status, core, providers, providerDependencies, stat
   const prepared = await core.prepareGenerationParentRebindStop({ stateRoot, targetId, watchId });
   requirePrepared(prepared, status);
   let terminalReceipt = null;
+  let stopCommandReceipt = null;
   if (status.from_provider === "claude") {
-    const observed = await providers.claude.observeClaudeObserver({
-      request: oldRequest,
-      receipt: spawnedReceipt(oldRequest, prepared.stop_request.handle),
-      verification: oldRuntime.verification,
-    }, providerDependencies.claude);
-    if (observed.observation === null) return result(status, "pending", "terminal_not_observed");
-    if (["done", "stopped", "failed"].includes(observed.observation.state)) {
-      terminalReceipt = stoppedReceipt(oldRequest, prepared.stop_request.handle);
-    } else if (prepared.action === "issue_once") {
-      await providers.claude.stopClaudeObserver({
-        request: prepared.stop_request, observation: observed.observation, verification: oldRuntime.verification,
+    if (oldRuntime.mode === "aiterm") {
+      const closed = await providers.aitermClaude.stopAitermClaudeObserver({
+        stateRoot,
+        request: prepared.stop_request,
+        transport: oldRuntime.session,
+      }, providerDependencies.aitermClaude);
+      terminalReceipt = closed.terminal_receipt;
+      stopCommandReceipt = closed.stop_command_receipt;
+    } else {
+      const observed = await providers.claude.observeClaudeObserver({
+        request: oldRequest,
+        receipt: spawnedReceipt(oldRequest, prepared.stop_request.handle),
+        verification: oldRuntime.verification,
       }, providerDependencies.claude);
-      return result(status, "progressed", "stop_issued");
-    } else return result(status, "pending", "terminal_not_observed");
+      if (observed.observation === null) return result(status, "pending", "terminal_not_observed");
+      if (["done", "stopped", "failed"].includes(observed.observation.state)) {
+        terminalReceipt = stoppedReceipt(oldRequest, prepared.stop_request.handle);
+      } else if (prepared.action === "issue_once") {
+        await providers.claude.stopClaudeObserver({
+          request: prepared.stop_request, observation: observed.observation, verification: oldRuntime.verification,
+        }, providerDependencies.claude);
+        return result(status, "progressed", "stop_issued");
+      } else return result(status, "pending", "terminal_not_observed");
+    }
   } else {
     const stopped = await providers.codex.stopCodexObserver({
       stateRoot, request: prepared.stop_request, launchRequest: oldRequest, session: oldRuntime.session,
@@ -110,7 +123,7 @@ async function advanceStop({ status, core, providers, providerDependencies, stat
     }
     terminalReceipt = stopped.terminal_receipt;
   }
-  await core.confirmGenerationParentRebindTerminal({ stateRoot, targetId, watchId, terminalReceipt });
+  await core.confirmGenerationParentRebindTerminal({ stateRoot, targetId, watchId, terminalReceipt, stopCommandReceipt });
   return result(status, "progressed", "terminal_recorded", "terminal_observed");
 }
 
@@ -118,7 +131,15 @@ async function authorizeStart({ status, core, providers, providerDependencies, s
   const authorized = await core.authorizeReboundGenerationStart({ stateRoot, target, watchId, authorization, launchRequest });
   if (authorized.outcome !== "issue_once") return result(status, "unknown", "authorization_not_issued");
   if (status.to_provider === "claude") {
-    await providers.claude.spawnClaudeObserver({ request: launchRequest, verification: newRuntime.verification }, providerDependencies.claude);
+    if (newRuntime.mode === "aiterm") {
+      await providers.aitermClaude.spawnAitermClaudeObserver({
+        stateRoot,
+        request: launchRequest,
+        transport: newRuntime.session,
+      }, providerDependencies.aitermClaude);
+    } else {
+      await providers.claude.spawnClaudeObserver({ request: launchRequest, verification: newRuntime.verification }, providerDependencies.claude);
+    }
   } else {
     await providers.codex.spawnCodexGenerationObserverThread({
       stateRoot, request: launchRequest, session: newRuntime.session, generationId: authorized.generation_id,
@@ -138,11 +159,25 @@ async function recoverSpawn({ status, core, providers, providerDependencies, sta
 async function recoverReady({ status, core, providers, providerDependencies, stateRoot, targetId, watchId, launchRequest, newRuntime }) {
   let readyReceipt;
   if (status.to_provider === "claude") {
-    const spawn = await providers.claude.recoverClaudeSpawn({ request: launchRequest, verification: newRuntime.verification }, providerDependencies.claude);
-    if (spawn.receipt === null) return result(status, "unknown", "provider_spawn_unavailable");
-    const observed = await providers.claude.observeClaudeObserver({ request: launchRequest, receipt: spawn.receipt, verification: newRuntime.verification }, providerDependencies.claude);
-    if (observed.ready_receipt === null) return result(status, "pending", "provider_ready_pending");
-    readyReceipt = observed.ready_receipt;
+    if (newRuntime.mode === "aiterm") {
+      const spawn = await providers.aitermClaude.recoverAitermClaudeSpawn({
+        stateRoot,
+        request: launchRequest,
+        transport: newRuntime.session,
+      }, providerDependencies.aitermClaude);
+      if (spawn.receipt === null) return result(status, "unknown", spawn.reason ?? "provider_spawn_unavailable");
+      readyReceipt = (await providers.aitermClaude.activateAitermClaudeGeneration({
+        stateRoot,
+        request: launchRequest,
+        receipt: spawn.receipt,
+      }, providerDependencies.aitermClaude)).ready_receipt;
+    } else {
+      const spawn = await providers.claude.recoverClaudeSpawn({ request: launchRequest, verification: newRuntime.verification }, providerDependencies.claude);
+      if (spawn.receipt === null) return result(status, "unknown", "provider_spawn_unavailable");
+      const observed = await providers.claude.observeClaudeObserver({ request: launchRequest, receipt: spawn.receipt, verification: newRuntime.verification }, providerDependencies.claude);
+      if (observed.ready_receipt === null) return result(status, "pending", "provider_ready_pending");
+      readyReceipt = observed.ready_receipt;
+    }
   } else {
     const recovered = await providers.codex.recoverCodexGenerationReady({
       stateRoot, request: launchRequest, session: newRuntime.session, generationId: status.to_generation_id,
@@ -164,7 +199,13 @@ async function recoverReady({ status, core, providers, providerDependencies, sta
 
 async function recoverSpawnReceipt({ status, providers, providerDependencies, stateRoot, launchRequest, newRuntime }) {
   if (status.to_provider === "claude") {
-    const recovered = await providers.claude.recoverClaudeSpawn({ request: launchRequest, verification: newRuntime.verification }, providerDependencies.claude);
+    const recovered = newRuntime.mode === "aiterm"
+      ? await providers.aitermClaude.recoverAitermClaudeSpawn({
+          stateRoot,
+          request: launchRequest,
+          transport: newRuntime.session,
+        }, providerDependencies.aitermClaude)
+      : await providers.claude.recoverClaudeSpawn({ request: launchRequest, verification: newRuntime.verification }, providerDependencies.claude);
     return recovered.receipt === null
       ? { receipt: null, outcome: "unknown", reason: "provider_spawn_unavailable" }
       : { receipt: recovered.receipt, outcome: "progressed", reason: null };
@@ -177,12 +218,13 @@ async function recoverSpawnReceipt({ status, providers, providerDependencies, st
 
 function runtimeFor(provider, verification, session) {
   if (provider === "claude") {
-    if (verification === null || session !== null) fail("E_PARENT_REBIND_PROVIDER_RUNTIME_INVALID", "Claudeにはverificationだけが必要です");
-    return { verification, session: null };
+    if (verification !== null && session === null) return { mode: "background", verification, session: null };
+    if (verification === null && session !== null) return { mode: "aiterm", verification: null, session };
+    fail("E_PARENT_REBIND_PROVIDER_RUNTIME_INVALID", "Claudeにはbackground verificationまたはAiterm sessionの一方だけが必要です");
   }
   if (provider === "codex") {
     if (verification !== null || session === null) fail("E_PARENT_REBIND_PROVIDER_RUNTIME_INVALID", "Codexにはsessionだけが必要です");
-    return { verification: null, session };
+    return { mode: "codex", verification: null, session };
   }
   fail("E_PARENT_REBIND_PROVIDER_UNSUPPORTED", "providerが不正です");
 }

@@ -8,7 +8,7 @@ import { ObserverError, fail } from "./observer-error.mjs";
 
 export const AITERM_PROCESS_VERIFICATION_SCHEMA = "observer.aiterm_process_verification.v1";
 export const AITERM_PROCESS_TERMINAL_SCHEMA = "observer.aiterm_process_terminal.v1";
-export const SUPPORTED_AITERM_VERSION = "0.13.0";
+export const SUPPORTED_AITERM_VERSION = "0.14.0";
 
 const MCP_PROTOCOL_VERSION = "2025-11-25";
 const MAX_LINE_BYTES = 1024 * 1024;
@@ -354,12 +354,17 @@ function validateRequiredTools(value) {
       claudeAgent.outputSchema?.properties?.session_id?.pattern !== "^[A-Za-z0-9_-]{1,64}$" ||
       claudeAgent.outputSchema?.properties?.managed_completion?.type !== "boolean" ||
       claudeAgent.inputSchema?.properties?.agent_done?.type !== "boolean" ||
+      claudeAgent.inputSchema?.properties?.launch_operation_id?.pattern !== "^sha256:[0-9a-f]{64}$" ||
       claudeTurn.outputSchema?.properties?.schema?.const !== "aiterm.claude-operation-result.v1" ||
       claudeTurn.inputSchema?.properties?.operation_id?.pattern !== "^sha256:[0-9a-f]{64}$" ||
       claudeTurn.inputSchema?.properties?.session_id?.type !== "string" ||
       !Array.isArray(claudeTurn.inputSchema?.properties?.action?.enum) ||
       claudeTurn.inputSchema.properties.action.enum.join(",") !== "issue,recover" ||
-      close.inputSchema?.properties?.session_id?.type !== "string") {
+      close.inputSchema?.properties?.session_id?.type !== "string" ||
+      close.outputSchema?.properties?.schema?.const !== "aiterm.pty-close-result.v1" ||
+      close.outputSchema?.properties?.session_id?.pattern !== "^[A-Za-z0-9_-]{1,64}$" ||
+      !Array.isArray(close.outputSchema?.properties?.outcome?.enum) ||
+      close.outputSchema.properties.outcome.enum.join(",") !== "closed,already_closed") {
     fail("E_AITERM_TOOL_SCHEMA_MISMATCH", "Aiterm Claude公開tool schemaが固定契約と一致しません");
   }
 }

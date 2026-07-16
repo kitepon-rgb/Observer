@@ -7,6 +7,7 @@ import { validateParentHostReceipt } from "../src/parent-launch.mjs";
 const TARGET = `p_${"a".repeat(64)}`;
 const WATCH = "w_11111111-1111-4111-8111-111111111111";
 const REQUEST = { provider: "codex", target_id: TARGET, watch_id: WATCH };
+const CLAUDE_REQUEST = { provider: "claude", target_id: TARGET, watch_id: WATCH, required_handle_kind: "claude.session", host: { session_name: "claude_next_generation" } };
 const HANDLE = { kind: "codex.thread", value: "019f671e-87a6-7fb3-a6e7-8c800908206d" };
 const receipt = (outcome) => ({
   schema: "observer.host_receipt.v1", provider: "codex", target_id: TARGET, watch_id: WATCH, outcome, handle: HANDLE,
@@ -93,4 +94,27 @@ test("provider journal欠損のspawn recoveryはunknownでfail closedしmutating
   const result = await advanceGenerationHostProviderRollover({ stateRoot: "/state", targetId: TARGET, watchId: WATCH, launchRequest: REQUEST }, options);
   assert.equal(result.outcome, "unknown");
   assert.deepEqual(calls, ["context"]);
+});
+
+test("Claude Aiterm terminalはpty_closeの構造化receiptを保持して次generationへ渡さない", async () => {
+  const calls = [];
+  const stopRequest = { provider: "claude", target_id: TARGET, watch_id: WATCH, handle: { kind: "claude.session", value: "claude_old_generation" } };
+  const terminalReceipt = { schema: "observer.host_receipt.v1", provider: "claude", target_id: TARGET, watch_id: WATCH, outcome: "stopped", handle: stopRequest.handle };
+  const lifecycle = {
+    readGenerationHostRecoveryContext: async () => ({ schema: "observer.generation_host_recovery_context.v1", provider: "claude", target_id: TARGET, watch_id: WATCH, status: "stop_authorized", to_generation_id: "sha256:next", action: "observe_terminal" }),
+    prepareGenerationHostStop: async () => ({ action: "issue_once", stop_request: stopRequest, from_generation_id: "sha256:old" }),
+    confirmGenerationHostTerminal: async (input) => { calls.push(["confirm", input]); },
+  };
+  const result = await advanceGenerationHostProviderRollover({ stateRoot: "/state", targetId: TARGET, watchId: WATCH, launchRequest: CLAUDE_REQUEST }, {
+    lifecycle,
+    aitermClaudeRuntime: { stopAitermClaudeObserver: async (input) => {
+      calls.push(["close", input]);
+      return { terminal_receipt: terminalReceipt, stop_command_receipt: { schema: "aiterm.pty-close-result.v1", session_id: "claude_old_generation", outcome: "closed" } };
+    } },
+    session: { label: "aiterm" },
+  });
+  assert.equal(result.phase, "terminal_observed");
+  assert.equal(calls[0][0], "close");
+  assert.deepEqual(calls[1][1].terminalReceipt, terminalReceipt);
+  assert.deepEqual(calls[1][1].stopCommandReceipt, { schema: "aiterm.pty-close-result.v1", session_id: "claude_old_generation", outcome: "closed" });
 });

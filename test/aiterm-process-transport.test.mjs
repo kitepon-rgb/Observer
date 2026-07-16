@@ -12,9 +12,9 @@ const IDENTITY = { candidate: AITERM, realpath: AITERM, uid: 501, gid: 20, mode:
 const expectCode = (code) => (error) => error instanceof ObserverError && error.code === code;
 
 const tools = () => ({ tools: [
-  { name: "claude_agent", inputSchema: { properties: { agent_done: { type: "boolean" } } }, outputSchema: { properties: { schema: { const: "aiterm.agent-launch-result.v1" }, provider: { const: "claude" }, session_id: { pattern: "^[A-Za-z0-9_-]{1,64}$" }, managed_completion: { type: "boolean" } } } },
+  { name: "claude_agent", inputSchema: { properties: { agent_done: { type: "boolean" }, launch_operation_id: { pattern: "^sha256:[0-9a-f]{64}$" } } }, outputSchema: { properties: { schema: { const: "aiterm.agent-launch-result.v1" }, provider: { const: "claude" }, session_id: { pattern: "^[A-Za-z0-9_-]{1,64}$" }, managed_completion: { type: "boolean" } } } },
   { name: "claude_turn", inputSchema: { properties: { action: { enum: ["issue", "recover"] }, session_id: { type: "string" }, operation_id: { pattern: "^sha256:[0-9a-f]{64}$" } } }, outputSchema: { properties: { schema: { const: "aiterm.claude-operation-result.v1" } } } },
-  { name: "pty_close", inputSchema: { properties: { session_id: { type: "string" } } }, outputSchema: { properties: {} } },
+  { name: "pty_close", inputSchema: { properties: { session_id: { type: "string" } } }, outputSchema: { properties: { schema: { const: "aiterm.pty-close-result.v1" }, session_id: { pattern: "^[A-Za-z0-9_-]{1,64}$" }, outcome: { enum: ["closed", "already_closed"] } } } },
 ] });
 
 class FakeChild extends EventEmitter {
@@ -31,7 +31,7 @@ class FakeChild extends EventEmitter {
 
 function autoChild() {
   return new FakeChild((message, child) => {
-    if (message.method === "initialize") child.respond({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25", serverInfo: { name: "aiterm", version: "0.13.0" }, capabilities: {} } });
+    if (message.method === "initialize") child.respond({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25", serverInfo: { name: "aiterm", version: "0.14.0" }, capabilities: {} } });
     if (message.method === "tools/list") child.respond({ jsonrpc: "2.0", id: message.id, result: tools() });
   });
 }
@@ -45,13 +45,13 @@ test("Aiterm executable identityとversionをObserver rootで再検証する", a
     inspectExecutable: async (input) => { calls.push(["inspect", input]); return IDENTITY; },
     recheckIdentity: async (identity) => { calls.push(["recheck", identity.realpath]); },
   });
-  assert.deepEqual(verified, { schema: AITERM_PROCESS_VERIFICATION_SCHEMA, runtime_root: ROOT, aiterm: { ...IDENTITY, required_version: "0.13.0" } });
+  assert.deepEqual(verified, { schema: AITERM_PROCESS_VERIFICATION_SCHEMA, runtime_root: ROOT, aiterm: { ...IDENTITY, required_version: "0.14.0" } });
   assert.deepEqual(calls.map((value) => value[0]), ["inspect", "recheck"]);
 });
 
 test("Aiterm stdioはinitialize 2025-11-25、必須3 tools、structured launch receiptを固定する", async () => {
   const child = autoChild(); let invocation; let rechecks = 0;
-  const transport = await startAitermMcpTransport({ verification: { schema: AITERM_PROCESS_VERIFICATION_SCHEMA, runtime_root: ROOT, aiterm: { ...IDENTITY, required_version: "0.13.0" } } }, {
+  const transport = await startAitermMcpTransport({ verification: { schema: AITERM_PROCESS_VERIFICATION_SCHEMA, runtime_root: ROOT, aiterm: { ...IDENTITY, required_version: "0.14.0" } } }, {
     recheckIdentity: async () => { rechecks += 1; }, env: { HOME: "/home", PATH: "/bin", SECRET: "drop" },
     spawn: (command, args, options) => { invocation = { command, args, options }; return child; },
   });
@@ -60,16 +60,33 @@ test("Aiterm stdioはinitialize 2025-11-25、必須3 tools、structured launch r
   assert.equal(invocation.options.cwd, ROOT); assert.equal(invocation.options.shell, false);
   const structured = { schema: "aiterm.agent-launch-result.v1", provider: "claude", session_id: "claude_1", managed_completion: true };
   child.handler = (message, current) => {
-    if (message.method === "tools/call") current.respond({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "session_id: claude_1" }], structuredContent: structured } });
+    if (message.method === "tools/call") {
+      const close = message.params.name === "pty_close";
+      current.respond({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: "structured receipt" }], structuredContent: close ? { schema: "aiterm.pty-close-result.v1", session_id: "claude_1", outcome: "closed" } : structured } });
+    }
   };
   assert.deepEqual(await transport.callTool("claude_agent", { session_name: "claude_1", agent_done: true }), structured);
-  assert.equal(rechecks, 3, "spawn前・initialize後・公開operation前にidentityを再検証する");
+  assert.deepEqual(await transport.callTool("pty_close", { session_id: "claude_1" }), { schema: "aiterm.pty-close-result.v1", session_id: "claude_1", outcome: "closed" });
+  assert.equal(rechecks, 4, "spawn前・initialize後・各公開operation前にidentityを再検証する");
   assert.deepEqual(child.lines.map((line) => JSON.parse(line)).slice(0, 3), [
     { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "observer", version: "1" } } },
     { jsonrpc: "2.0", method: "notifications/initialized", params: {} },
     { jsonrpc: "2.0", id: 2, method: "tools/list", params: {} },
   ]);
   transport.close();
+});
+
+test("Aiterm handshakeはlaunch_operation_id schema欠落を拒否する", async () => {
+  const child = new FakeChild((message, current) => {
+    if (message.method === "initialize") current.respond({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25", serverInfo: { name: "aiterm", version: "0.14.0" }, capabilities: {} } });
+    if (message.method === "tools/list") {
+      const advertised = structuredClone(tools());
+      delete advertised.tools[0].inputSchema.properties.launch_operation_id;
+      current.respond({ jsonrpc: "2.0", id: message.id, result: advertised });
+    }
+  });
+  const transport = new AitermMcpTransport(child);
+  await assert.rejects(transport.initialize(), expectCode("E_AITERM_TOOL_SCHEMA_MISMATCH"));
 });
 
 test("Aiterm tool errorはsanitizedで、unknown/duplicate ID・malformed/oversize・exitをfail closedにする", async () => {

@@ -1,7 +1,7 @@
 import { isAbsolute } from "node:path";
 
 import { resolveObserverProvider } from "./observer-ai-contract.mjs";
-import { fail } from "./observer-error.mjs";
+import { fail, ObserverError } from "./observer-error.mjs";
 import { canonicalDirectory } from "./private-state.mjs";
 import { registerProjectTarget } from "./project-target.mjs";
 import {
@@ -78,13 +78,30 @@ async function prepareParentLaunchWithRoute({
   const canonicalRuntimeRoot = await (dependencies.canonicalDirectory ?? canonicalDirectory)(runtimeRoot);
   const registered = await (dependencies.registerProjectTarget ?? registerProjectTarget)({ stateRoot, projectRoot });
   const target = publicTarget(registered);
-  const starting = await (dependencies.reserveActiveWatch ?? reserveActiveWatch)({
-    stateRoot,
-    target,
-    provider,
-    expectedPreviousWatchId,
-  });
+  let starting;
+  try {
+    starting = await (dependencies.reserveActiveWatch ?? reserveActiveWatch)({
+      stateRoot,
+      target,
+      provider,
+      expectedPreviousWatchId,
+    });
+  } catch (error) {
+    const existing = error instanceof ObserverError && error.code === "E_WATCH_ALREADY_ACTIVE"
+      ? error.details
+      : null;
+    if (claudeRoute !== "aiterm" || !resumableAitermClaudeWatch(existing, target, provider, expectedPreviousWatchId)) throw error;
+    starting = existing;
+  }
   return launchRequest({ target, starting, provider, runtimeRoot: canonicalRuntimeRoot, claudeRoute });
+}
+
+function resumableAitermClaudeWatch(value, target, provider, expectedWatchId) {
+  return value !== null && typeof value === "object" && !Array.isArray(value) &&
+    value.schema === "observer.watch_status.v1" && value.provider === "claude" && provider === "claude" &&
+    value.target_id === target.targetId && value.project_root === target.projectRoot &&
+    ["starting", "launching", "active"].includes(value.status) &&
+    typeof value.watch_id === "string" && WATCH_ID_RE.test(value.watch_id) && value.watch_id === expectedWatchId;
 }
 
 export function buildGenerationLaunchRequest({ target, watchId, provider, runtimeRoot } = {}) {
@@ -98,7 +115,12 @@ export function buildGenerationLaunchRequest({ target, watchId, provider, runtim
   return launchRequest({ target, starting: { watch_id: watchId }, provider, runtimeRoot, claudeRoute: "background" });
 }
 
-export function buildAitermClaudeGenerationLaunchRequest({ target, watchId, runtimeRoot } = {}) {
+export function buildAitermClaudeGenerationLaunchRequest({
+  target,
+  watchId,
+  runtimeRoot,
+  sessionInstanceId = null,
+} = {}) {
   requirePlainObject(target, "project target", "E_PARENT_LAUNCH_SCHEMA");
   requireExactKeys(target, ["projectRoot", "schema", "targetId"], "project target", "E_PARENT_LAUNCH_SCHEMA");
   if (target.schema !== "observer.project_target.v1") fail("E_PARENT_LAUNCH_SCHEMA", "project target schemaが不正です");
@@ -106,7 +128,17 @@ export function buildAitermClaudeGenerationLaunchRequest({ target, watchId, runt
   validateWatchId(watchId);
   validateAbsolutePath(target.projectRoot, "project root", "E_PARENT_LAUNCH_SCHEMA");
   validateAbsolutePath(runtimeRoot, "runtime root", "E_PARENT_LAUNCH_SCHEMA");
-  return launchRequest({ target, starting: { watch_id: watchId }, provider: "claude", runtimeRoot, claudeRoute: "aiterm" });
+  if (sessionInstanceId !== null && (typeof sessionInstanceId !== "string" || !/^sha256:[a-f0-9]{64}$/.test(sessionInstanceId))) {
+    fail("E_PARENT_LAUNCH_SCHEMA", "Claude session instance IDが不正です");
+  }
+  return launchRequest({
+    target,
+    starting: { watch_id: watchId },
+    provider: "claude",
+    runtimeRoot,
+    claudeRoute: "aiterm",
+    sessionInstanceId,
+  });
 }
 
 export async function confirmParentLaunch({ stateRoot, request, receipt } = {}, dependencies = {}) {
@@ -207,7 +239,7 @@ export function validateParentHostReceipt(value, expectedOutcome) {
   return value;
 }
 
-function launchRequest({ target, starting, provider, runtimeRoot, claudeRoute }) {
+function launchRequest({ target, starting, provider, runtimeRoot, claudeRoute, sessionInstanceId = null }) {
   const childStart = {
     schema: CHILD_START_SCHEMA,
     mode: "observe",
@@ -231,7 +263,7 @@ function launchRequest({ target, starting, provider, runtimeRoot, claudeRoute })
           kind: "aiterm.claude_agent.v1",
           cwd: runtimeRoot,
           agent_done: true,
-          session_name: claudeSessionNameFor(target.targetId, starting.watch_id),
+          session_name: claudeSessionNameFor(target.targetId, starting.watch_id, sessionInstanceId),
         }
       : {
         kind: "claude.background_agent.v1",
@@ -315,8 +347,9 @@ function validateHostRequest(value, request) {
   }
   if (request.required_handle_kind === "claude.session") {
     requireExactKeys(value, ["agent_done", "cwd", "kind", "session_name"], "Aiterm Claude host request", "E_PARENT_LAUNCH_SCHEMA");
+    const baseName = claudeSessionNameFor(request.target_id, request.watch_id);
     if (value.kind !== "aiterm.claude_agent.v1" || value.cwd !== request.runtime_root || value.agent_done !== true ||
-        value.session_name !== claudeSessionNameFor(request.target_id, request.watch_id)) {
+        !(value.session_name === baseName || new RegExp(`^${baseName}_[a-f0-9]{12}$`).test(value.session_name))) {
       fail("E_PARENT_LAUNCH_SCHEMA", "Aiterm Claude host requestが不正です");
     }
     return;
@@ -333,10 +366,14 @@ export function claudeJobNameFor(targetId, watchId) {
   return `observer-${targetId.slice(2, 14)}-${watchId.slice(2)}`;
 }
 
-export function claudeSessionNameFor(targetId, watchId) {
+export function claudeSessionNameFor(targetId, watchId, sessionInstanceId = null) {
   validateTargetId(targetId);
   validateWatchId(watchId);
-  return `obs_${targetId.slice(2, 14)}_${watchId.slice(2).replaceAll("-", "")}`;
+  if (sessionInstanceId !== null && (typeof sessionInstanceId !== "string" || !/^sha256:[a-f0-9]{64}$/.test(sessionInstanceId))) {
+    fail("E_PARENT_LAUNCH_SCHEMA", "Claude session instance IDが不正です");
+  }
+  const base = `obs_${targetId.slice(2, 14)}_${watchId.slice(2).replaceAll("-", "")}`;
+  return sessionInstanceId === null ? base : `${base}_${sessionInstanceId.slice("sha256:".length, "sha256:".length + 12)}`;
 }
 
 function validateStopRequest(value) {

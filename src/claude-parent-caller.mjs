@@ -2,6 +2,7 @@ import { isAbsolute } from "node:path";
 
 import {
   activateAitermClaudeObserver,
+  recoverAitermClaudeSpawn,
   spawnAitermClaudeObserver,
 } from "./aiterm-claude-host-runtime.mjs";
 import {
@@ -118,11 +119,25 @@ export async function runClaudeParentWatchProcess({
       throw error;
     }
 
-    const spawnResult = await (dependencies.spawnAitermClaudeObserver ?? spawnAitermClaudeObserver)({
-      stateRoot,
-      request,
-      transport: owned.providerRuntime.transport,
-    }, dependencies.claudeHostDependencies);
+    let spawnResult;
+    try {
+      spawnResult = await (dependencies.spawnAitermClaudeObserver ?? spawnAitermClaudeObserver)({
+        stateRoot,
+        request,
+        transport: owned.providerRuntime.transport,
+      }, dependencies.claudeHostDependencies);
+    } catch (launchError) {
+      try {
+        const recovered = await (dependencies.recoverAitermClaudeSpawn ?? recoverAitermClaudeSpawn)({
+          stateRoot,
+          request,
+          transport: owned.providerRuntime.transport,
+        }, dependencies.claudeHostDependencies);
+        spawnResult = { receipt: recovered.receipt };
+      } catch (recoveryError) {
+        throw new AggregateError([launchError, recoveryError], "Claude initial launchとexact recoveryが失敗しました");
+      }
+    }
     validateSpawnResult(spawnResult, request);
 
     owned = (dependencies.attachClaudeSessionShutdown ?? attachClaudeSessionShutdown)(owned);

@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { ObserverError } from "../src/observer-error.mjs";
 import {
+  buildAitermClaudeGenerationLaunchRequest,
   buildGenerationLaunchRequest,
   CHILD_START_SCHEMA,
   completeParentStop,
@@ -65,6 +66,20 @@ function prepareDependencies(provider, calls) {
     },
   };
 }
+
+test("Aiterm Claudeのgeneration session名は初回互換を維持し、次generationだけinstance suffixで分離する", () => {
+  const first = `sha256:${"1".repeat(64)}`;
+  const next = `sha256:${"2".repeat(64)}`;
+  const base = claudeSessionNameFor(TARGET_ID, WATCH_ID);
+  const initial = buildAitermClaudeGenerationLaunchRequest({ target: TARGET, watchId: WATCH_ID, runtimeRoot: "/observer" });
+  const sameGeneration = buildAitermClaudeGenerationLaunchRequest({ target: TARGET, watchId: WATCH_ID, runtimeRoot: "/observer", sessionInstanceId: first });
+  const repeated = buildAitermClaudeGenerationLaunchRequest({ target: TARGET, watchId: WATCH_ID, runtimeRoot: "/observer", sessionInstanceId: first });
+  const following = buildAitermClaudeGenerationLaunchRequest({ target: TARGET, watchId: WATCH_ID, runtimeRoot: "/observer", sessionInstanceId: next });
+  assert.equal(initial.host.session_name, base);
+  assert.equal(sameGeneration.host.session_name, repeated.host.session_name);
+  assert.match(sameGeneration.host.session_name, new RegExp(`^${base}_1{12}$`));
+  assert.notEqual(following.host.session_name, sameGeneration.host.session_name);
+});
 
 test("明示start authorizationが無ければstate操作より先に拒否する", async () => {
   let touched = false;
@@ -154,6 +169,30 @@ test("Aiterm production routeは旧claude.job互換を残したまま決定的cl
     }, prepareDependencies("codex", [])),
     expectCode("E_PARENT_PROVIDER_MISMATCH"),
   );
+});
+
+test("Aiterm production routeは同じpending watchを同一launch requestへ再束縛する", async () => {
+  const existing = { ...STATUS, provider: "claude", status: "launching" };
+  const dependencies = {
+    canonicalDirectory: async () => "/observer",
+    registerProjectTarget: async () => ({ ...TARGET, created: false, statePath: "/state/target.json" }),
+    reserveActiveWatch: async () => { throw new ObserverError("E_WATCH_ALREADY_ACTIVE", "active", existing); },
+  };
+  await assert.rejects(prepareAitermClaudeParentLaunch({
+    stateRoot: "/state",
+    projectRoot: "/project",
+    runtimeRoot: "/observer",
+    authorization: auth("claude"),
+  }, dependencies), expectCode("E_WATCH_ALREADY_ACTIVE"));
+  const request = await prepareAitermClaudeParentLaunch({
+    stateRoot: "/state",
+    projectRoot: "/project",
+    runtimeRoot: "/observer",
+    authorization: auth("claude"),
+    expectedPreviousWatchId: WATCH_ID,
+  }, dependencies);
+  assert.equal(request.watch_id, WATCH_ID);
+  assert.equal(request.host.session_name, claudeSessionNameFor(TARGET_ID, WATCH_ID));
 });
 
 test("planned rolloverは新watchを予約せず既存identityから同じlaunch requestを再構成する", () => {

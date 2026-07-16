@@ -5,10 +5,12 @@ import { fail, ObserverError } from "./observer-error.mjs";
 import { initializeGeneration } from "./generation-store.mjs";
 import {
   HOST_RECEIPT_SCHEMA,
+  claudeSessionNameFor,
   confirmParentHostSpawn,
   confirmParentLaunch,
   validateParentHostReceipt,
   validateParentLaunchRequest,
+  validateParentStopRequest,
 } from "./parent-launch.mjs";
 import {
   acquirePrivateLock,
@@ -21,6 +23,8 @@ import {
 import { readWatchHostBinding, readWatchStatus } from "./watch-store.mjs";
 
 export const AITERM_CLAUDE_LAUNCH_JOURNAL_SCHEMA = "observer.aiterm_claude_launch.v1";
+export const AITERM_CLAUDE_SESSION_TERMINAL_SCHEMA = "observer.aiterm_claude_session_terminal.v1";
+export const AITERM_CLAUDE_STOP_RESULT_SCHEMA = "observer.aiterm_claude_stop_result.v1";
 
 const TARGET = /^p_[a-f0-9]{64}$/;
 const WATCH = /^w_[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -41,6 +45,7 @@ export async function spawnAitermClaudeObserver({ stateRoot, request, transport 
   const release = await acquirePrivateLock(paths.lock);
   let journal;
   try {
+    await requireSessionNotTerminal(paths, request);
     const timestamp = currentTimestamp(dependencies.now);
     const prepared = validateJournal({
       schema: AITERM_CLAUDE_LAUNCH_JOURNAL_SCHEMA,
@@ -75,6 +80,7 @@ export async function spawnAitermClaudeObserver({ stateRoot, request, transport 
       cwd: request.runtime_root,
       session_name: request.host.session_name,
       agent_done: true,
+      launch_operation_id: launchOperationId(request),
     });
   } catch (error) {
     if (error instanceof ObserverError && DEFINITE_REJECTION_CODES.has(error.code)) {
@@ -95,19 +101,90 @@ export async function recoverAitermClaudeSpawn({ stateRoot, request, transport }
   validateRequest(request);
   validateTransport(transport);
   const paths = await pathsFor(stateRoot, request);
+  await requireSessionNotTerminal(paths, request);
   const initial = await readLaunchJournal(paths, request);
   if (["spawned", "bound"].includes(initial.status)) return recoveryResult("spawned", null, spawnReceipt(request, initial.session_id));
   if (initial.status === "rejected") launchRejected(initial.failure_code);
   if (initial.status !== "launching") fail("E_AITERM_CLAUDE_LAUNCH_STATE", "Claude launch journal statusが不正です");
-  const operationId = launchProbeOperationId(request);
-  const structured = await transport.callTool("claude_turn", {
-    action: "recover",
-    session_id: initial.session_id,
-    operation_id: operationId,
+  const structured = await transport.callTool("claude_agent", {
+    cwd: request.runtime_root,
+    session_name: initial.session_id,
+    agent_done: true,
+    launch_operation_id: launchOperationId(request),
   });
-  validateProbeResult(structured, request, operationId);
+  validateLaunchResult(structured, request);
   const completed = await markSpawned({ paths, request, dependencies });
   return recoveryResult("spawned", null, spawnReceipt(request, completed.session_id));
+}
+
+export async function activateAitermClaudeGeneration({
+  stateRoot,
+  request,
+  receipt,
+} = {}, dependencies = {}) {
+  validateRequest(request);
+  validateSpawnReceipt(receipt, request);
+  const paths = await pathsFor(stateRoot, request);
+  await requireSessionNotTerminal(paths, request);
+  const readyReceipt = await markBound({ stateRoot, request, dependencies });
+  return {
+    schema: "observer.aiterm_claude_generation_activation.v1",
+    ready_receipt: readyReceipt,
+  };
+}
+
+export async function stopAitermClaudeObserver({
+  stateRoot,
+  request,
+  transport,
+} = {}, dependencies = {}) {
+  validateParentStopRequest(request);
+  validateTransport(transport);
+  if (request.provider !== "claude" || request.handle.kind !== "claude.session") {
+    fail("E_AITERM_CLAUDE_STOP_REQUEST_INVALID", "Aiterm Claude session stop requestが不正です");
+  }
+  const structured = await closeAitermClaudeSession({
+    stateRoot,
+    targetId: request.target_id,
+    watchId: request.watch_id,
+    sessionId: request.handle.value,
+    transport,
+  }, dependencies);
+  return {
+    schema: AITERM_CLAUDE_STOP_RESULT_SCHEMA,
+    terminal_receipt: {
+      schema: HOST_RECEIPT_SCHEMA,
+      provider: "claude",
+      watch_id: request.watch_id,
+      target_id: request.target_id,
+      outcome: "stopped",
+      handle: structuredClone(request.handle),
+    },
+    stop_command_receipt: structuredClone(structured),
+  };
+}
+
+export async function closeAitermClaudeSession({
+  stateRoot,
+  targetId,
+  watchId,
+  sessionId,
+  transport,
+} = {}, dependencies = {}) {
+  if (!TARGET.test(targetId) || !WATCH.test(watchId) || !SESSION.test(sessionId)) {
+    fail("E_AITERM_CLAUDE_CLOSE_INPUT_INVALID", "Aiterm Claude close identityが不正です");
+  }
+  validateTransport(transport);
+  const structured = await transport.callTool("pty_close", { session_id: sessionId });
+  validateCloseResult(structured, sessionId);
+  await recordSessionTerminal({
+    stateRoot,
+    targetId,
+    watchId,
+    sessionId,
+    dependencies,
+  });
+  return structuredClone(structured);
 }
 
 export async function activateAitermClaudeObserver({
@@ -183,6 +260,7 @@ async function markBound({ stateRoot, request, dependencies }) {
   const paths = await pathsFor(stateRoot, request);
   const release = await acquirePrivateLock(paths.lock);
   try {
+    await requireSessionNotTerminal(paths, request);
     const current = validateJournal(await readPrivateJson(paths.file));
     requireIdentity(current, request);
     if (current.status === "bound") return hostReceipt(request, "ready", current.session_id);
@@ -266,13 +344,12 @@ function validateLaunchResult(value, request) {
   }
 }
 
-function validateProbeResult(value, request, operationId) {
-  const keys = "action,operation_id,raw_output,reason,schema,session_id,status";
+function validateCloseResult(value, sessionId) {
+  const keys = "outcome,schema,session_id";
   if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== keys ||
-      value.schema !== "aiterm.claude-operation-result.v1" || value.action !== "recover" ||
-      value.status !== "unknown" || value.session_id !== request.host.session_name ||
-      value.operation_id !== operationId || value.raw_output !== null || value.reason !== "operation_not_found") {
-    fail("E_AITERM_CLAUDE_LAUNCH_RECOVERY_MISMATCH", "Aiterm Claude session recovery probeが一致しません");
+      value.schema !== "aiterm.pty-close-result.v1" || value.session_id !== sessionId ||
+      !["closed", "already_closed"].includes(value.outcome)) {
+    fail("E_AITERM_CLAUDE_CLOSE_RESULT_MISMATCH", "Aiterm Claude close receiptがsessionと一致しません");
   }
 }
 
@@ -356,18 +433,97 @@ function hostReceipt(request, outcome, sessionId) {
 }
 
 async function pathsFor(stateRoot, request) {
+  return pathsForSession(stateRoot, {
+    targetId: request.target_id,
+    watchId: request.watch_id,
+    sessionId: request.host.session_name,
+  });
+}
+
+async function pathsForSession(stateRoot, { targetId, watchId, sessionId }) {
   await assertPrivateDirectory(stateRoot);
   const watches = join(stateRoot, "watches");
-  const target = join(watches, request.target_id);
+  const target = join(watches, targetId);
   await assertPrivateDirectory(watches);
   await assertPrivateDirectory(target);
   const root = join(target, "host-operations");
   await ensurePrivateDirectory(root);
-  const suffix = request.watch_id.slice(2);
+  const suffix = watchId.slice(2);
+  const initial = claudeSessionNameFor(targetId, watchId);
+  const instance = sessionId === initial
+    ? ""
+    : `-${createHash("sha256").update(`observer.aiterm_claude_session_path.v1\0${sessionId}`, "utf8").digest("hex").slice(0, 16)}`;
   return {
-    file: join(root, `aiterm-claude-${suffix}.json`),
-    lock: join(root, `aiterm-claude-${suffix}.lock`),
+    file: join(root, `aiterm-claude-${suffix}${instance}.json`),
+    lock: join(root, `aiterm-claude-${suffix}${instance}.lock`),
+    terminal: join(root, `aiterm-claude-${suffix}${instance}.terminal.json`),
   };
+}
+
+async function recordSessionTerminal({ stateRoot, targetId, watchId, sessionId, dependencies }) {
+  const paths = await pathsForSession(stateRoot, {
+    targetId,
+    watchId,
+    sessionId,
+  });
+  const release = await acquirePrivateLock(paths.lock);
+  try {
+    const launch = validateJournal(await readPrivateJson(paths.file));
+    if (launch.target_id !== targetId || launch.watch_id !== watchId || launch.session_id !== sessionId) {
+      fail("E_AITERM_CLAUDE_LAUNCH_CONFLICT", "close対象sessionとlaunch journalが一致しません");
+    }
+    if (!["spawned", "bound"].includes(launch.status)) {
+      fail("E_AITERM_CLAUDE_LAUNCH_STATE", "spawn確認前のClaude sessionをterminal確定できません");
+    }
+    const terminal = validateTerminal({
+      schema: AITERM_CLAUDE_SESSION_TERMINAL_SCHEMA,
+      provider: "claude",
+      target_id: targetId,
+      watch_id: watchId,
+      session_id: sessionId,
+      closed_at: currentTimestamp(dependencies.now),
+    });
+    try {
+      await atomicCreatePrivateFile(paths.terminal, serialize(terminal));
+      return terminal;
+    } catch (error) {
+      if (error?.code !== "E_ALREADY_EXISTS") throw error;
+      const existing = validateTerminal(await readPrivateJson(paths.terminal));
+      requireTerminalIdentity(existing, targetId, watchId, sessionId);
+      return existing;
+    }
+  } finally {
+    await release();
+  }
+}
+
+async function requireSessionNotTerminal(paths, request) {
+  let terminal;
+  try {
+    terminal = validateTerminal(await readPrivateJson(paths.terminal));
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  requireTerminalIdentity(terminal, request.target_id, request.watch_id, request.host.session_name);
+  fail("E_AITERM_CLAUDE_SESSION_TERMINAL", "terminal済みClaude sessionのlaunch receiptは再利用できません");
+}
+
+function validateTerminal(value) {
+  const keys = "closed_at,provider,schema,session_id,target_id,watch_id";
+  if (!isPlainObject(value) || Object.keys(value).sort().join(",") !== keys ||
+      value.schema !== AITERM_CLAUDE_SESSION_TERMINAL_SCHEMA || value.provider !== "claude" ||
+      !TARGET.test(value.target_id) || !WATCH.test(value.watch_id) || !SESSION.test(value.session_id) ||
+      !timestamp(value.closed_at)) {
+    fail("E_AITERM_CLAUDE_SESSION_TERMINAL_STATE", "Aiterm Claude terminal stateが不正です");
+  }
+  return value;
+}
+
+function requireTerminalIdentity(value, targetId, watchId, sessionId) {
+  if (value.target_id !== targetId || value.watch_id !== watchId || value.session_id !== sessionId) {
+    fail("E_AITERM_CLAUDE_SESSION_TERMINAL_STATE", "Aiterm Claude terminal identityが一致しません");
+  }
 }
 
 function validateRequest(request) {
@@ -417,9 +573,9 @@ function requestDigest(request) {
   ).digest("hex")}`;
 }
 
-function launchProbeOperationId(request) {
+function launchOperationId(request) {
   return `sha256:${createHash("sha256").update(
-    `observer.aiterm_claude_launch_probe.v1\0${request.target_id}\0${request.watch_id}\0${request.host.session_name}`,
+    `observer.aiterm_claude_launch.v1\0${request.target_id}\0${request.watch_id}\0${request.host.session_name}\0${request.runtime_root}`,
     "utf8",
   ).digest("hex")}`;
 }

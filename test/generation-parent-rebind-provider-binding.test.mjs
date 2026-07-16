@@ -143,6 +143,50 @@ test("same-provider Claudeはauthorizationをcoreで照合してspawn一件だ�
   assert.equal(result.phase, "spawn_authorized");
 });
 
+test("same-provider Claude Aiterm rebindは新generation sessionだけをspawnし、旧receiptを渡さない", async () => {
+  const f = fixture({ action: "authorize_start", from: "claude", to: "claude", status: "terminal_observed" });
+  const request = { ...REQUEST, provider: "claude", required_handle_kind: "claude.session", host: { session_name: "claude_next_generation" } };
+  const aitermClaudeRuntime = {
+    spawnAitermClaudeObserver: async (input) => { f.calls.push("aiterm-spawn"); aitermClaudeRuntime.input = input; },
+  };
+  const result = await advanceGenerationParentRebindProviderBinding(input({
+    launchRequest: request, oldVerification: null, oldSession: { id: "old" }, newVerification: null, newSession: { id: "next" },
+  }), { rebind: f.core, codexRuntime: f.codexRuntime, claudeRuntime: f.claudeRuntime, aitermClaudeRuntime });
+  assert.deepEqual(f.calls, ["status", "authorize-start", "aiterm-spawn"]);
+  assert.equal(aitermClaudeRuntime.input.request, request);
+  assert.equal(aitermClaudeRuntime.input.transport.id, "next");
+  assert.equal(JSON.stringify(aitermClaudeRuntime.input).includes("old"), false);
+  assert.equal(result.phase, "spawn_authorized");
+});
+
+test("same-provider Claude Aiterm rebindはstructured close receiptをcore terminalへ渡す", async () => {
+  const f = fixture({ action: "observe_terminal", from: "claude", to: "claude" });
+  const closeReceipt = { schema: "aiterm.pty-close-result.v1", session_id: "claude_old_generation", outcome: "closed" };
+  const terminalReceipt = { ...receipt("claude", "stopped"), handle: { kind: "claude.session", value: "claude_old_generation" } };
+  f.core.prepareGenerationParentRebindStop = async () => {
+    f.calls.push("prepare-stop");
+    return { outcome: "observe_only", from_provider: "claude", stop_request: { handle: terminalReceipt.handle } };
+  };
+  f.core.confirmGenerationParentRebindTerminal = async (input) => {
+    f.calls.push("confirm-terminal");
+    f.core.terminal = input;
+  };
+  const aitermClaudeRuntime = {
+    stopAitermClaudeObserver: async () => {
+      f.calls.push("aiterm-close");
+      return { terminal_receipt: terminalReceipt, stop_command_receipt: closeReceipt };
+    },
+  };
+  const request = { ...REQUEST, provider: "claude", required_handle_kind: "claude.session", host: { session_name: "claude_next_generation" } };
+  const result = await advanceGenerationParentRebindProviderBinding(input({
+    launchRequest: request, oldVerification: null, oldSession: { id: "aiterm" }, newVerification: null, newSession: { id: "aiterm" },
+  }), { rebind: f.core, codexRuntime: f.codexRuntime, claudeRuntime: f.claudeRuntime, aitermClaudeRuntime });
+  assert.deepEqual(f.calls, ["status", "prepare-stop", "aiterm-close", "confirm-terminal"]);
+  assert.equal(f.core.terminal.terminalReceipt, terminalReceipt);
+  assert.equal(f.core.terminal.stopCommandReceipt, closeReceipt);
+  assert.equal(result.phase, "terminal_observed");
+});
+
 test("不足provider sessionを成功扱いせず、provider commandを出さない", async () => {
   const f = fixture({ action: "recover_spawn" });
   await assert.rejects(

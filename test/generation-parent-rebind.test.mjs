@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -91,14 +91,31 @@ test("parent rebind coreはauthorization→旧terminal→new epoch activationを
   assert.equal(raw.includes(NEW_PARENT), false);
   assert.equal(JSON.stringify(await readGenerationParentRebindStatus({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID })).includes(OLD_HANDLE.value), false);
 
+  const legacy = JSON.parse(raw);
+  delete legacy.stop_command_receipt_digest;
+  await writeFile(join(stateRoot, "watches", TARGET.targetId, "parent-rebind.json"), `${JSON.stringify(legacy)}\n`);
+
   const stopping = await prepareGenerationParentRebindStop({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID }, { now: () => T1 });
   assert.equal(stopping.outcome, "issue_once");
   assert.deepEqual(stopping.stop_request.handle, OLD_HANDLE);
+  assert.equal(JSON.parse(await readFile(join(stateRoot, "watches", TARGET.targetId, "parent-rebind.json"), "utf8")).stop_command_receipt_digest, null);
   assert.equal((await prepareGenerationParentRebindStop({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID }, { now: () => T1 })).outcome, "observe_only");
+  const stoppingRetry = await authorizeGenerationParentRebind({
+    stateRoot, target: TARGET, watchId: WATCH_ID, cycleId: CYCLE_ID, proposedParent: proposed(),
+  }, { now: () => T1 });
+  assert.equal(stoppingRetry.outcome, "existing");
+  assert.deepEqual(stoppingRetry.authorization, first.authorization);
 
   const stopped = receipt("claude", "stopped", OLD_HANDLE);
-  await confirmGenerationParentRebindTerminal({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, terminalReceipt: stopped }, { now: () => T1 });
-  await confirmGenerationParentRebindTerminal({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, terminalReceipt: stopped }, { now: () => T1 });
+  const stopCommandReceipt = { schema: "aiterm.pty-close-result.v1", session_id: "claude_old", outcome: "closed" };
+  await confirmGenerationParentRebindTerminal({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, terminalReceipt: stopped, stopCommandReceipt }, { now: () => T1 });
+  await confirmGenerationParentRebindTerminal({ stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, terminalReceipt: stopped, stopCommandReceipt }, { now: () => T1 });
+  const terminalJournal = JSON.parse(await readFile(join(stateRoot, "watches", TARGET.targetId, "parent-rebind.json"), "utf8"));
+  assert.match(terminalJournal.stop_command_receipt_digest, /^sha256:[a-f0-9]{64}$/);
+  await assert.rejects(confirmGenerationParentRebindTerminal({
+    stateRoot, targetId: TARGET.targetId, watchId: WATCH_ID, terminalReceipt: stopped,
+    stopCommandReceipt: { ...stopCommandReceipt, outcome: "already_closed" },
+  }, { now: () => T1 }), expectCode("E_PARENT_REBIND_RECEIPT_CONFLICT"));
   const launchRequest = buildGenerationLaunchRequest({ target: TARGET, watchId: WATCH_ID, provider: "codex", runtimeRoot: "/observer" });
   const authorized = await authorizeReboundGenerationStart({
     stateRoot, target: TARGET, watchId: WATCH_ID, authorization: first.authorization, launchRequest,

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 
 import {
@@ -5,6 +6,12 @@ import {
   startAitermMcpTransport,
   verifyAitermRuntime,
 } from "./aiterm-process-transport.mjs";
+import { closeAitermClaudeSession } from "./aiterm-claude-host-runtime.mjs";
+import { readCycleState } from "./cycle-store.mjs";
+import { advanceGenerationHostProviderRollover } from "./generation-host-provider-binding.mjs";
+import { authorizeGenerationParentRebind } from "./generation-parent-rebind.mjs";
+import { advanceGenerationParentRebindProviderBinding } from "./generation-parent-rebind-provider-binding.mjs";
+import { readGenerationState } from "./generation-store.mjs";
 import { fail } from "./observer-error.mjs";
 import {
   buildAitermClaudeGenerationLaunchRequest,
@@ -15,6 +22,7 @@ import {
   createVerifiedThroughlineClient,
   verifyThroughlineRuntime,
 } from "./throughline-process-runtime.mjs";
+import { readWatchHostBinding } from "./watch-store.mjs";
 
 export async function runClaudeSupervisorProcess({
   stateRoot,
@@ -84,6 +92,15 @@ export async function createClaudeSupervisorRuntime({
   )({ runtimeRoot, aitermCommand }, dependencies.verificationDependencies);
   validateAitermVerification(checked, runtimeRoot);
 
+  const ownedRequest = sessionLifecycle === "active"
+    ? await requestForActiveClaudeBinding({
+        stateRoot,
+        target,
+        watchId,
+        request,
+      }, dependencies)
+    : request;
+
   let transport = null;
   try {
     transport = await (dependencies.startAitermMcpTransport ?? startAitermMcpTransport)(
@@ -92,10 +109,14 @@ export async function createClaudeSupervisorRuntime({
     );
     validateTransport(transport);
     const owned = ownedRuntime({
+      stateRoot,
+      target,
+      watchId,
       runtimeRoot: checked.runtime_root,
-      sessionId: request.host.session_name,
+      launchRequest: ownedRequest,
       transport,
       closeSession: sessionLifecycle === "active",
+      dependencies,
     });
     transport = null;
     return owned;
@@ -111,60 +132,204 @@ export async function createClaudeSupervisorRuntime({
   }
 }
 
+async function requestForActiveClaudeBinding({ stateRoot, target, watchId, request }, dependencies) {
+  const binding = await (dependencies.readWatchHostBinding ?? readWatchHostBinding)({
+    stateRoot,
+    targetId: target.targetId,
+    watchId,
+  });
+  if (!isPlainObject(binding) || binding.status !== "active" || binding.provider !== "claude" ||
+      binding.target_id !== target.targetId || binding.watch_id !== watchId ||
+      binding.project_root !== target.projectRoot || binding.launch_handle?.kind !== "claude.session" ||
+      typeof binding.launch_handle.value !== "string") {
+    fail("E_SUPERVISOR_CLAUDE_BINDING_INVALID", "active Claude session bindingが不正です");
+  }
+  const rebound = {
+    ...structuredClone(request),
+    host: {
+      ...structuredClone(request.host),
+      session_name: binding.launch_handle.value,
+    },
+  };
+  validateParentLaunchRequest(rebound);
+  return rebound;
+}
+
 export function attachClaudeSessionShutdown(owned) {
   validateOwnedRuntime(owned);
-  return {
-    ...owned,
-    close: once(() => closeClaudeRuntime({
-      transport: owned.providerRuntime.transport,
-      sessionId: owned.providerRuntime.session_id,
-      baseClose: owned.close,
-    })),
-  };
+  if (typeof owned.enableSessionShutdown !== "function") {
+    fail("E_SUPERVISOR_CLAUDE_RUNTIME_INVALID", "Claude session shutdown所有権を有効化できません");
+  }
+  owned.enableSessionShutdown();
+  return owned;
 }
 
-function ownedRuntime({ runtimeRoot, sessionId, transport, closeSession }) {
+function ownedRuntime({ stateRoot, target, watchId, runtimeRoot, launchRequest, transport, closeSession, dependencies }) {
   const baseClose = once(() => transport.closeAndWait());
-  const close = closeSession
-    ? once(() => closeClaudeRuntime({ transport, sessionId, baseClose }))
-    : baseClose;
-  return {
-    providerRuntime: {
-      provider: "claude",
-      runtime_root: runtimeRoot,
-      session_id: sessionId,
-      transport,
-    },
+  const providerRuntime = {
+    provider: "claude",
+    runtime_root: runtimeRoot,
+    session_id: launchRequest.host.session_name,
+    transport,
+  };
+  const ownedSessions = new Set([launchRequest.host.session_name]);
+  let sessionShutdown = closeSession;
+  const prepareGenerationParentRebind = async ({ cycleId, proposedParent } = {}) => {
+    if (proposedParent?.host !== "claude") {
+      fail("E_SUPERVISOR_CLAUDE_REBIND_PROVIDER_UNAVAILABLE", "Claude runtimeはcross-provider rebindを実行できません");
+    }
+    return (dependencies.authorizeGenerationParentRebind ?? authorizeGenerationParentRebind)({
+      stateRoot,
+      target,
+      watchId,
+      cycleId,
+      proposedParent,
+    }, dependencies.parentRebindDependencies);
+  };
+  const runtime = {
+    providerRuntime,
     providerSignal: transport.terminationSignal,
     advanceGenerationRollover: async () => {
-      fail("E_SUPERVISOR_CLAUDE_ROLLOVER_UNAVAILABLE", "Claude generation rolloverはP5-1b4dまで未実装です");
+      const request = await rolloverLaunchRequest({
+        stateRoot,
+        target,
+        watchId,
+        runtimeRoot,
+        activeRequest: launchRequest,
+      }, dependencies);
+      const result = await (
+        dependencies.advanceGenerationHostProviderRollover ?? advanceGenerationHostProviderRollover
+      )({
+        stateRoot,
+        targetId: target.targetId,
+        watchId,
+        launchRequest: request,
+        session: transport,
+      }, dependencies.rolloverDependencies);
+      applyClaudeSessionTransition({ result, request, providerRuntime, ownedSessions });
+      return result;
     },
-    prepareGenerationParentRebind: async () => {
-      fail("E_SUPERVISOR_CLAUDE_REBIND_UNAVAILABLE", "Claude parent rebindはP5-1b4dまで未実装です");
-    },
+    prepareGenerationParentRebind,
     advanceGenerationParentRebind: async () => {
-      fail("E_SUPERVISOR_CLAUDE_REBIND_UNAVAILABLE", "Claude parent rebindはP5-1b4dまで未実装です");
+      const cycle = await (dependencies.readCycleState ?? readCycleState)({
+        stateRoot,
+        targetId: target.targetId,
+      });
+      const pending = cycle?.pending_cycle;
+      if (!pending || pending.status !== "prepared" || pending.proposed_state?.host !== "claude") {
+        fail("E_SUPERVISOR_CLAUDE_REBIND_CYCLE_INVALID", "Claude parent rebindにprepared Claude cycleが必要です");
+      }
+      const authorized = await prepareGenerationParentRebind({
+        cycleId: pending.cycle_id,
+        proposedParent: pending.proposed_state,
+      });
+      const request = (dependencies.buildAitermClaudeGenerationLaunchRequest ?? buildAitermClaudeGenerationLaunchRequest)({
+        target,
+        watchId,
+        runtimeRoot,
+        sessionInstanceId: claudeSessionInstanceId({
+          watchId,
+          parentEpochId: authorized.authorization.to_parent_epoch_id,
+          sequence: 1,
+        }),
+      });
+      const result = await (
+        dependencies.advanceGenerationParentRebindProviderBinding ?? advanceGenerationParentRebindProviderBinding
+      )({
+        stateRoot,
+        target,
+        watchId,
+        authorization: authorized.authorization,
+        launchRequest: request,
+        oldSession: transport,
+        newSession: transport,
+      }, dependencies.parentRebindBindingDependencies);
+      applyClaudeSessionTransition({ result, request, providerRuntime, ownedSessions });
+      return result;
     },
-    close,
+    close: once(async () => {
+      const sessionFailures = [];
+      if (sessionShutdown) {
+        for (const sessionId of [...ownedSessions].reverse()) {
+          try {
+            await (dependencies.closeAitermClaudeSession ?? closeAitermClaudeSession)({
+              stateRoot,
+              targetId: target.targetId,
+              watchId,
+              sessionId,
+              transport,
+            }, dependencies.closeSessionDependencies);
+          } catch (error) {
+            sessionFailures.push(error);
+          }
+        }
+      }
+      try {
+        await baseClose();
+      } catch (transportFailure) {
+        if (sessionFailures.length > 0) {
+          throw new AggregateError([...sessionFailures, transportFailure], "Claude session closeとMCP cleanupが失敗しました");
+        }
+        throw transportFailure;
+      }
+      if (sessionFailures.length === 1) throw sessionFailures[0];
+      if (sessionFailures.length > 1) throw new AggregateError(sessionFailures, "Claude session cleanupが失敗しました");
+    }),
   };
+  Object.defineProperty(runtime, "enableSessionShutdown", {
+    enumerable: false,
+    value: () => { sessionShutdown = true; },
+  });
+  return runtime;
 }
 
-async function closeClaudeRuntime({ transport, sessionId, baseClose }) {
-  let sessionFailure = null;
-  try {
-    await transport.callTool("pty_close", { session_id: sessionId });
-  } catch (error) {
-    sessionFailure = error;
+async function rolloverLaunchRequest({
+  stateRoot,
+  target,
+  watchId,
+  runtimeRoot,
+  activeRequest,
+}, dependencies) {
+  const generation = await (dependencies.readGenerationState ?? readGenerationState)({
+    stateRoot,
+    targetId: target.targetId,
+  });
+  if (!isPlainObject(generation) || generation.provider !== "claude" ||
+      generation.target_id !== target.targetId || generation.watch_id !== watchId ||
+      !["active", "rollover_requested", "stopping", "terminal_confirmed", "starting"].includes(generation.status)) {
+    fail("E_SUPERVISOR_CLAUDE_GENERATION_INVALID", "Claude rollover generation identityが不正です");
   }
-  try {
-    await baseClose();
-  } catch (transportFailure) {
-    if (sessionFailure !== null) {
-      throw new AggregateError([sessionFailure, transportFailure], "Claude session closeとMCP cleanupが失敗しました");
-    }
-    throw transportFailure;
+  if (!["terminal_confirmed", "starting"].includes(generation.status)) return activeRequest;
+  const sequence = generation.status === "terminal_confirmed" ? generation.sequence + 1 : generation.sequence;
+  return (dependencies.buildAitermClaudeGenerationLaunchRequest ?? buildAitermClaudeGenerationLaunchRequest)({
+    target,
+    watchId,
+    runtimeRoot,
+    sessionInstanceId: claudeSessionInstanceId({
+      watchId,
+      parentEpochId: generation.parent_epoch_id,
+      sequence,
+    }),
+  });
+}
+
+function claudeSessionInstanceId({ watchId, parentEpochId, sequence }) {
+  if (typeof watchId !== "string" || typeof parentEpochId !== "string" ||
+      !/^sha256:[a-f0-9]{64}$/.test(parentEpochId) || !Number.isSafeInteger(sequence) || sequence < 1) {
+    fail("E_SUPERVISOR_CLAUDE_GENERATION_INVALID", "Claude session instance identityが不正です");
   }
-  if (sessionFailure !== null) throw sessionFailure;
+  return `sha256:${createHash("sha256").update(
+    `observer.aiterm_claude_session.v1\0${watchId}\0${parentEpochId}\0${sequence}`,
+    "utf8",
+  ).digest("hex")}`;
+}
+
+function applyClaudeSessionTransition({ result, request, providerRuntime, ownedSessions }) {
+  if (!isPlainObject(result) || !isPlainObject(request?.host) || typeof request.host.session_name !== "string") return;
+  if (["spawn_issued", "spawn_recorded", "provider_ready_recovered"].includes(result.reason) || result.outcome === "activated") {
+    ownedSessions.add(request.host.session_name);
+  }
+  if (result.outcome === "activated") providerRuntime.session_id = request.host.session_name;
 }
 
 function validateAitermVerification(value, runtimeRoot) {

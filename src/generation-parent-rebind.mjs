@@ -52,9 +52,10 @@ const ACTIONS = Object.freeze({
 const JOURNAL_KEYS = Object.freeze([
   "authorization_digest", "created_at", "from_generation_id", "from_parent_epoch_id", "from_provider",
   "launch_request_digest", "next_handle_digest", "previous_handle_digest", "ready_receipt_digest", "schema",
-  "spawn_receipt_digest", "status", "target_id", "terminal_receipt_digest", "to_generation_id",
+  "spawn_receipt_digest", "status", "stop_command_receipt_digest", "target_id", "terminal_receipt_digest", "to_generation_id",
   "to_parent_epoch_id", "to_provider", "updated_at", "watch_id",
 ]);
+const LEGACY_JOURNAL_KEYS = Object.freeze(JOURNAL_KEYS.filter((key) => key !== "stop_command_receipt_digest"));
 const AUTHORIZATION_KEYS = Object.freeze([
   "cycle_id", "from_generation_id", "from_parent_epoch_id", "from_provider", "schema", "target_id",
   "through_cursor_sha256", "to_parent_epoch_id", "to_parent_thread_sha256", "to_provider", "watch_id",
@@ -63,6 +64,17 @@ const AUTHORIZATION_KEYS = Object.freeze([
 export async function authorizeGenerationParentRebind({ stateRoot, target, watchId, cycleId, proposedParent } = {}, dependencies = {}) {
   validateTarget(target); validateWatchId(watchId); validateCycleId(cycleId); validateProposedParent(proposedParent, target);
   return withRebindLock(stateRoot, target.targetId, async (paths) => {
+    const existing = await readJournal(paths.journalPath);
+    if (existing !== null) {
+      requireJournalIdentity(existing, target.targetId, watchId);
+      const authorization = buildAuthorizationFromJournal({ journal: existing, target, cycleId, proposedParent });
+      if (existing.authorization_digest !== digestValue(authorization) ||
+          existing.to_parent_epoch_id !== authorization.to_parent_epoch_id ||
+          existing.to_provider !== authorization.to_provider) {
+        fail("E_PARENT_REBIND_AUTHORIZATION_CONFLICT", "rebind authorizationが記録済みdigestと一致しません");
+      }
+      return { schema: GENERATION_PARENT_REBIND_RESULT_SCHEMA, outcome: "existing", authorization: structuredClone(authorization) };
+    }
     const generation = await (dependencies.readGenerationState ?? readGenerationState)({ stateRoot, targetId: target.targetId });
     const binding = await readBinding({ stateRoot, targetId: target.targetId, watchId }, dependencies);
     requireCurrentIdentity(generation, binding, { target, watchId });
@@ -70,50 +82,36 @@ export async function authorizeGenerationParentRebind({ stateRoot, target, watch
     if (authorization.to_parent_epoch_id === generation.parent_epoch_id) {
       fail("E_PARENT_REBIND_EPOCH_UNCHANGED", "current parent epochはrebind対象ではありません");
     }
-    let journal = await readJournal(paths.journalPath);
-    let action = "existing";
-    if (journal === null) {
-      journal = validateJournal({
-        schema: GENERATION_PARENT_REBIND_SCHEMA,
-        target_id: target.targetId,
-        watch_id: watchId,
-        from_provider: generation.provider,
-        to_provider: proposedParent.host,
-        from_parent_epoch_id: generation.parent_epoch_id,
-        to_parent_epoch_id: authorization.to_parent_epoch_id,
-        from_generation_id: generation.generation_id,
-        to_generation_id: null,
-        status: "rebind_required",
-        authorization_digest: digestValue(authorization),
-        previous_handle_digest: digestValue(binding.launch_handle),
-        terminal_receipt_digest: null,
-        launch_request_digest: null,
-        spawn_receipt_digest: null,
-        next_handle_digest: null,
-        ready_receipt_digest: null,
-        created_at: timestamp(dependencies.now),
-        updated_at: timestamp(dependencies.now),
-      });
-      await atomicCreatePrivateFile(paths.journalPath, serialize(journal));
-      action = "recorded";
-    } else {
-      requireJournalIdentity(journal, target.targetId, watchId);
-      if (journal.authorization_digest !== digestValue(authorization)) {
-        fail("E_PARENT_REBIND_AUTHORIZATION_CONFLICT", "rebind authorizationが記録済みdigestと一致しません");
-      }
-      if (journal.from_generation_id !== generation.generation_id || journal.from_parent_epoch_id !== generation.parent_epoch_id ||
-          journal.from_provider !== generation.provider || journal.to_parent_epoch_id !== authorization.to_parent_epoch_id ||
-          journal.to_provider !== authorization.to_provider) {
-        fail("E_PARENT_REBIND_AUTHORIZATION_CONFLICT", "rebind authorizationがcurrent generationと一致しません");
-      }
-    }
+    const journal = validateJournal({
+      schema: GENERATION_PARENT_REBIND_SCHEMA,
+      target_id: target.targetId,
+      watch_id: watchId,
+      from_provider: generation.provider,
+      to_provider: proposedParent.host,
+      from_parent_epoch_id: generation.parent_epoch_id,
+      to_parent_epoch_id: authorization.to_parent_epoch_id,
+      from_generation_id: generation.generation_id,
+      to_generation_id: null,
+      status: "rebind_required",
+      authorization_digest: digestValue(authorization),
+      previous_handle_digest: digestValue(binding.launch_handle),
+      stop_command_receipt_digest: null,
+      terminal_receipt_digest: null,
+      launch_request_digest: null,
+      spawn_receipt_digest: null,
+      next_handle_digest: null,
+      ready_receipt_digest: null,
+      created_at: timestamp(dependencies.now),
+      updated_at: timestamp(dependencies.now),
+    });
+    await atomicCreatePrivateFile(paths.journalPath, serialize(journal));
     const authorized = await (dependencies.authorizeGenerationRebind ?? authorizeGenerationRebind)({
       stateRoot, targetId: target.targetId, watchId, expectedGenerationId: journal.from_generation_id,
     }, generationDependencies(dependencies));
     if (authorized.status !== "rebind_required" || authorized.generation_id !== journal.from_generation_id) {
       fail("E_PARENT_REBIND_GENERATION_MISMATCH", "generation rebind authorizationを確認できません");
     }
-    return { schema: GENERATION_PARENT_REBIND_RESULT_SCHEMA, outcome: action, authorization: structuredClone(authorization) };
+    return { schema: GENERATION_PARENT_REBIND_RESULT_SCHEMA, outcome: "recorded", authorization: structuredClone(authorization) };
   });
 }
 
@@ -195,7 +193,13 @@ export async function prepareGenerationParentRebindStop({ stateRoot, targetId, w
   });
 }
 
-export async function confirmGenerationParentRebindTerminal({ stateRoot, targetId, watchId, terminalReceipt } = {}, dependencies = {}) {
+export async function confirmGenerationParentRebindTerminal({
+  stateRoot,
+  targetId,
+  watchId,
+  terminalReceipt,
+  stopCommandReceipt = null,
+} = {}, dependencies = {}) {
   validateTargetId(targetId); validateWatchId(watchId); validateParentHostReceipt(terminalReceipt, "stopped");
   return withRebindLock(stateRoot, targetId, async (paths) => {
     let journal = await requireJournal(paths.journalPath);
@@ -203,8 +207,10 @@ export async function confirmGenerationParentRebindTerminal({ stateRoot, targetI
     requireReceiptIdentity(terminalReceipt, journal.from_provider, targetId, watchId);
     requireDigestMatch(journal.previous_handle_digest, digestValue(terminalReceipt.handle), "old host handle");
     const receiptDigest = digestValue(terminalReceipt);
+    const commandDigest = stopCommandReceipt === null ? null : digestBoundedReceipt(stopCommandReceipt);
     if (journal.status === "terminal_observed") {
       requireDigestMatch(journal.terminal_receipt_digest, receiptDigest, "terminal receipt");
+      requireDigestMatch(journal.stop_command_receipt_digest, commandDigest, "stop command receipt");
     } else if (journal.status !== "stop_authorized") {
       fail("E_PARENT_REBIND_TRANSITION_INVALID", "terminal receiptを適用できないjournal statusです");
     }
@@ -215,7 +221,11 @@ export async function confirmGenerationParentRebindTerminal({ stateRoot, targetI
       fail("E_PARENT_REBIND_GENERATION_MISMATCH", "old generation terminalを確認できません");
     }
     if (journal.status === "stop_authorized") {
-      journal = transition(journal, { status: "terminal_observed", terminal_receipt_digest: receiptDigest }, dependencies.now);
+      journal = transition(journal, {
+        status: "terminal_observed",
+        stop_command_receipt_digest: commandDigest,
+        terminal_receipt_digest: receiptDigest,
+      }, dependencies.now);
       await atomicReplacePrivateFile(paths.journalPath, serialize(journal));
     }
     return result(journal, "terminal_observed");
@@ -342,6 +352,20 @@ function buildAuthorization({ generation, target, watchId, cycleId, proposedPare
     through_cursor_sha256: digestParts("observer.cursor.v1", proposedParent.cursor),
   };
   return validateAuthorization(value);
+}
+
+function buildAuthorizationFromJournal({ journal, target, cycleId, proposedParent }) {
+  return buildAuthorization({
+    generation: {
+      provider: journal.from_provider,
+      parent_epoch_id: journal.from_parent_epoch_id,
+      generation_id: journal.from_generation_id,
+    },
+    target,
+    watchId: journal.watch_id,
+    cycleId,
+    proposedParent,
+  });
 }
 
 function validateAuthorization(value) {
@@ -486,20 +510,26 @@ async function requireJournal(path) {
 }
 
 function validateJournal(value) {
-  plain(value, "parent rebind journal", "E_PARENT_REBIND_STATE_INVALID"); exact(value, JOURNAL_KEYS, "parent rebind journal", "E_PARENT_REBIND_STATE_INVALID");
+  plain(value, "parent rebind journal", "E_PARENT_REBIND_STATE_INVALID");
+  const keys = Object.keys(value).sort();
+  const legacyKeys = [...LEGACY_JOURNAL_KEYS].sort();
+  if (keys.length === legacyKeys.length && keys.every((key, index) => key === legacyKeys[index])) {
+    value = { ...value, stop_command_receipt_digest: null };
+  }
+  exact(value, JOURNAL_KEYS, "parent rebind journal", "E_PARENT_REBIND_STATE_INVALID");
   if (value.schema !== GENERATION_PARENT_REBIND_SCHEMA || !TARGET.test(value.target_id) || !WATCH.test(value.watch_id) ||
       !providers(value.from_provider, value.to_provider) || !DIGEST.test(value.from_parent_epoch_id) ||
       !DIGEST.test(value.to_parent_epoch_id) || value.from_parent_epoch_id === value.to_parent_epoch_id ||
       !DIGEST.test(value.from_generation_id) || !STATUSES.has(value.status) || !DIGEST.test(value.authorization_digest) ||
       !DIGEST.test(value.previous_handle_digest)) invalidState();
-  for (const field of ["to_generation_id", "launch_request_digest", "spawn_receipt_digest", "next_handle_digest", "ready_receipt_digest", "terminal_receipt_digest"]) {
+  for (const field of ["to_generation_id", "launch_request_digest", "spawn_receipt_digest", "next_handle_digest", "ready_receipt_digest", "stop_command_receipt_digest", "terminal_receipt_digest"]) {
     if (value[field] !== null && !DIGEST.test(value[field])) invalidState();
   }
   if (value.to_generation_id !== null && value.to_generation_id !== generationId(value.watch_id, value.to_parent_epoch_id, 1)) invalidState();
   canonicalTime(value.created_at); canonicalTime(value.updated_at);
   if (Date.parse(value.updated_at) < Date.parse(value.created_at)) invalidState();
   if (["rebind_required", "stop_authorized"].includes(value.status)) {
-    if (value.terminal_receipt_digest !== null || value.to_generation_id !== null || value.launch_request_digest !== null || value.spawn_receipt_digest !== null || value.next_handle_digest !== null || value.ready_receipt_digest !== null) invalidState();
+    if (value.stop_command_receipt_digest !== null || value.terminal_receipt_digest !== null || value.to_generation_id !== null || value.launch_request_digest !== null || value.spawn_receipt_digest !== null || value.next_handle_digest !== null || value.ready_receipt_digest !== null) invalidState();
   } else if (value.status === "terminal_observed") {
     if (value.terminal_receipt_digest === null || value.to_generation_id !== null || value.launch_request_digest !== null || value.spawn_receipt_digest !== null || value.next_handle_digest !== null || value.ready_receipt_digest !== null) invalidState();
   } else if (value.status === "spawn_authorized") {
@@ -532,6 +562,12 @@ function validateWatchId(value) { if (typeof value !== "string" || !WATCH.test(v
 function validateCycleId(value) { if (typeof value !== "string" || !CYCLE.test(value)) fail("E_PARENT_REBIND_INPUT_INVALID", "cycle IDが不正です"); }
 function providers(left, right) { return [left, right].every((value) => ["claude", "codex"].includes(value)); }
 function generationId(watchId, parentEpochId, sequence) { return digestParts("observer.generation.v1", watchId, parentEpochId, String(sequence)); }
+function digestBoundedReceipt(value) {
+  plain(value, "stop command receipt", "E_PARENT_REBIND_RECEIPT_INVALID");
+  const encoded = canonical(value);
+  if (Buffer.byteLength(encoded, "utf8") > 16 * 1024) fail("E_PARENT_REBIND_RECEIPT_INVALID", "stop command receiptが大きすぎます");
+  return `sha256:${createHash("sha256").update(encoded, "utf8").digest("hex")}`;
+}
 function digestValue(value) { return `sha256:${createHash("sha256").update(canonical(value), "utf8").digest("hex")}`; }
 function digestParts(domain, ...parts) { const hash = createHash("sha256").update(`${domain}\0`, "utf8"); for (const part of parts) hash.update(`${part}\0`, "utf8"); return `sha256:${hash.digest("hex")}`; }
 function canonical(value) { if (value === null || typeof value !== "object") return JSON.stringify(value); if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`; return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`; }
