@@ -2,17 +2,25 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
 import {
-  CLAUDE_HOST_RUNTIME_VERIFICATION_SCHEMA,
-  SUPPORTED_CLAUDE_VERSION,
-  verifyClaudeHostRuntime,
-} from "./claude-host-runtime.mjs";
+  AITERM_PROCESS_TERMINAL_SCHEMA,
+  AITERM_PROCESS_VERIFICATION_SCHEMA,
+  SUPPORTED_AITERM_VERSION,
+  startAitermMcpTransport,
+  verifyAitermRuntime,
+} from "./aiterm-process-transport.mjs";
 import {
   CODEX_PROCESS_VERIFICATION_SCHEMA,
   SUPPORTED_CODEX_VERSION,
   verifyCodexAppServerRuntime,
 } from "./codex-process-transport.mjs";
-import { OBSERVER_MCP_SERVER_VERSION } from "./mcp-server.mjs";
 import { ObserverError, fail } from "./observer-error.mjs";
+import { THROUGHLINE_READ_SCHEMA } from "./throughline-client.mjs";
+import {
+  createVerifiedThroughlineClient,
+  SUPPORTED_THROUGHLINE_VERSION,
+  THROUGHLINE_PROCESS_VERIFICATION_SCHEMA,
+  verifyThroughlineRuntime,
+} from "./throughline-process-runtime.mjs";
 import { buildParentStopHookFragment } from "./parent-stop-hook-config.mjs";
 import {
   OBSERVER_PRODUCT_DIAGNOSTICS_SCHEMA,
@@ -23,10 +31,10 @@ import {
 export const LIVE_CAMPAIGN_PREFLIGHT_SCHEMA = "observer.live_campaign_preflight.v1";
 
 const PACKAGE_ROOT = resolve(fileURLToPath(new URL("..", import.meta.url)));
-const MCP_TOOLS = Object.freeze(["observer_read", "observer_wait"]);
 const CHECK_NAMES = Object.freeze([
   "product",
-  "claude_runtime",
+  "throughline_runtime",
+  "aiterm_runtime",
   "codex_runtime",
   "hook_candidates",
   "canonical_cwd",
@@ -35,10 +43,12 @@ const CHECK_NAMES = Object.freeze([
 ]);
 const REQUIRED_EVIDENCE = Object.freeze([
   "claude.completed_turn_receipt",
-  "claude.job_session_correlation",
+  "claude.session_generation_correlation",
+  "claude.initial_exact_result",
+  "claude.follow_up_exact_result",
   "claude.stop_hook_capture",
   "claude.wait_over_65s",
-  "claude.explicit_stop_terminal",
+  "claude.session_close_terminal",
   "codex.task_complete_receipt",
   "codex.thread_turn_cwd_correlation",
   "codex.stop_hook_capture",
@@ -50,12 +60,11 @@ const REQUIRED_EVIDENCE = Object.freeze([
 const H_ACTIONS = Object.freeze([
   "host_config_apply",
   "hook_trust",
-  "claude_background_launch",
+  "claude_aiterm_session_launch",
   "codex_app_server_launch",
   "model_request",
   "wait_over_65s",
   "explicit_stop",
-  "optional_fault_tranche",
 ]);
 const NOT_PERFORMED = Object.freeze([
   "provider_launch",
@@ -79,13 +88,14 @@ const PROHIBITED_CAPTURE = Object.freeze([
 ]);
 
 export async function runObserverLiveCampaignPreflight(
-  { claudeCommand, codexCommand } = {},
+  { throughlineCommand, aitermCommand, codexCommand } = {},
   dependencies = {},
 ) {
   const checks = CHECK_NAMES.map((name) => ({ name, status: "not_checked" }));
   const runtimeRoot = PACKAGE_ROOT;
   let product;
-  let claude;
+  let throughline;
+  let aiterm;
   let codex;
 
   let blocked = await attempt(checks, 0, async () => {
@@ -96,16 +106,49 @@ export async function runObserverLiveCampaignPreflight(
   if (blocked !== null) return blockedReceipt(checks, blocked);
 
   blocked = await attempt(checks, 1, async () => {
-    const verify = dependencies.verifyClaudeRuntime ?? verifyClaudeHostRuntime;
-    claude = await verify(
-      { runtimeRoot, claudeCommand },
-      dependencies.claudeDependencies,
+    const verify = dependencies.verifyThroughlineRuntime ?? verifyThroughlineRuntime;
+    throughline = await verify(
+      { runtimeRoot, throughlineCommand },
+      dependencies.throughlineDependencies,
     );
-    validateClaude(claude);
+    validateThroughline(throughline);
+    const createClient = dependencies.createThroughlineClient ?? createVerifiedThroughlineClient;
+    const client = createClient(
+      { verification: throughline },
+      dependencies.throughlineClientDependencies,
+    );
+    if (!client || typeof client.read !== "function") {
+      fail("E_LIVE_PREFLIGHT_THROUGHLINE_RUNTIME_INVALID", "Throughline clientが不正です");
+    }
+    const read = await client.read({ projectPath: runtimeRoot });
+    validateThroughlineRead(read);
   });
   if (blocked !== null) return blockedReceipt(checks, blocked);
 
   blocked = await attempt(checks, 2, async () => {
+    const verify = dependencies.verifyAitermRuntime ?? verifyAitermRuntime;
+    aiterm = await verify(
+      { runtimeRoot, aitermCommand },
+      dependencies.aitermDependencies,
+    );
+    validateAiterm(aiterm);
+    const start = dependencies.startAitermTransport ?? startAitermMcpTransport;
+    const transport = await start(
+      { verification: aiterm },
+      dependencies.aitermTransportDependencies,
+    );
+    if (!transport || typeof transport.closeAndWait !== "function") {
+      fail("E_LIVE_PREFLIGHT_AITERM_RUNTIME_INVALID", "Aiterm transport handleが不正です");
+    }
+    const terminal = await transport.closeAndWait();
+    if (!isPlainObject(terminal) || terminal.schema !== AITERM_PROCESS_TERMINAL_SCHEMA ||
+        terminal.status !== "closed") {
+      fail("E_LIVE_PREFLIGHT_AITERM_RUNTIME_INVALID", "Aiterm preflight processを閉じられません");
+    }
+  });
+  if (blocked !== null) return blockedReceipt(checks, blocked);
+
+  blocked = await attempt(checks, 3, async () => {
     const verify = dependencies.verifyCodexRuntime ?? verifyCodexAppServerRuntime;
     codex = await verify(
       { runtimeRoot, codexCommand },
@@ -115,7 +158,7 @@ export async function runObserverLiveCampaignPreflight(
   });
   if (blocked !== null) return blockedReceipt(checks, blocked);
 
-  blocked = await attempt(checks, 3, async () => {
+  blocked = await attempt(checks, 4, async () => {
     const build = dependencies.buildHookFragment ?? buildParentStopHookFragment;
     const executablePath = resolve(runtimeRoot, "bin/observer-parent-stop-hook.mjs");
     validateHookFragment(build({ provider: "claude", executablePath }), "claude");
@@ -123,15 +166,16 @@ export async function runObserverLiveCampaignPreflight(
   });
   if (blocked !== null) return blockedReceipt(checks, blocked);
 
-  blocked = await attempt(checks, 4, async () => {
-    if (claude.runtime_root !== runtimeRoot || codex.runtime_root !== runtimeRoot) {
+  blocked = await attempt(checks, 5, async () => {
+    if (throughline.runtime_root !== runtimeRoot || aiterm.runtime_root !== runtimeRoot ||
+        codex.runtime_root !== runtimeRoot) {
       fail("E_LIVE_PREFLIGHT_CWD_MISMATCH", "host runtimeのcanonical cwdがObserver packageと一致しません");
     }
   });
   if (blocked !== null) return blockedReceipt(checks, blocked);
 
-  checks[5].status = "h_required";
   checks[6].status = "h_required";
+  checks[7].status = "h_required";
   return receipt("h_required", checks, null);
 }
 
@@ -178,12 +222,27 @@ function validateProduct(value) {
   }
 }
 
-function validateClaude(value) {
-  if (!isPlainObject(value) || value.schema !== CLAUDE_HOST_RUNTIME_VERIFICATION_SCHEMA ||
-      typeof value.runtime_root !== "string" || value.claude?.version !== SUPPORTED_CLAUDE_VERSION ||
-      value.observer_mcp?.version !== OBSERVER_MCP_SERVER_VERSION ||
-      !sameArray(value.observer_mcp?.tools, MCP_TOOLS)) {
-    fail("E_LIVE_PREFLIGHT_CLAUDE_RUNTIME_INVALID", "Claude runtime verification resultが不正です");
+function validateAiterm(value) {
+  if (!isPlainObject(value) || value.schema !== AITERM_PROCESS_VERIFICATION_SCHEMA ||
+      typeof value.runtime_root !== "string" ||
+      value.aiterm?.required_version !== SUPPORTED_AITERM_VERSION) {
+    fail("E_LIVE_PREFLIGHT_AITERM_RUNTIME_INVALID", "Aiterm runtime verification resultが不正です");
+  }
+}
+
+function validateThroughline(value) {
+  if (!isPlainObject(value) || value.schema !== THROUGHLINE_PROCESS_VERIFICATION_SCHEMA ||
+      typeof value.runtime_root !== "string" ||
+      value.throughline?.version !== SUPPORTED_THROUGHLINE_VERSION) {
+    fail("E_LIVE_PREFLIGHT_THROUGHLINE_RUNTIME_INVALID", "Throughline runtime verification resultが不正です");
+  }
+}
+
+function validateThroughlineRead(value) {
+  if (!isPlainObject(value) || value.schema !== THROUGHLINE_READ_SCHEMA ||
+      !["snapshot", "delta", "thread_switched", "host_switched", "resync_required",
+        "projection_pending", "ambiguous_parent"].includes(value.status)) {
+    fail("E_LIVE_PREFLIGHT_THROUGHLINE_RUNTIME_INVALID", "Throughline observer-read resultが不正です");
   }
 }
 
@@ -199,11 +258,6 @@ function validateHookFragment(value, provider) {
       value.provider !== provider || value.event !== "Stop" || !isPlainObject(value.entry)) {
     fail("E_LIVE_PREFLIGHT_HOOK_CANDIDATE_INVALID", "parent Stop hook fragmentが不正です");
   }
-}
-
-function sameArray(actual, expected) {
-  return Array.isArray(actual) && actual.length === expected.length &&
-    actual.every((value, index) => value === expected[index]);
 }
 
 function isPlainObject(value) {

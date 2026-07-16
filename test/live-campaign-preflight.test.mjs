@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { SUPPORTED_CLAUDE_VERSION } from "../src/claude-host-runtime.mjs";
+import { SUPPORTED_AITERM_VERSION } from "../src/aiterm-process-transport.mjs";
 import { SUPPORTED_CODEX_VERSION } from "../src/codex-process-transport.mjs";
 import {
   LIVE_CAMPAIGN_PREFLIGHT_SCHEMA,
@@ -24,16 +24,34 @@ function dependencies(calls) {
       calls.push("product");
       return readyProduct(packageRoot);
     },
-    verifyClaudeRuntime: async ({ runtimeRoot }) => {
-      calls.push("claude");
+    verifyThroughlineRuntime: async ({ runtimeRoot }) => {
+      calls.push("throughline");
       return {
-        schema: "observer.claude_host_runtime_verification.v1",
+        schema: "observer.throughline_process_verification.v1",
         runtime_root: runtimeRoot,
-        claude: { realpath: "/secret/claude", version: SUPPORTED_CLAUDE_VERSION },
-        observer_mcp: {
-          realpath: "/secret/observer-mcp",
-          version: OBSERVER_MCP_SERVER_VERSION,
-          tools: ["observer_read", "observer_wait"],
+        throughline: { version: "0.6.3" },
+      };
+    },
+    createThroughlineClient: () => ({
+      read: async () => {
+        calls.push("throughline:read");
+        return { schema: "throughline.observer_read.v1", status: "snapshot" };
+      },
+    }),
+    verifyAitermRuntime: async ({ runtimeRoot }) => {
+      calls.push("aiterm");
+      return {
+        schema: "observer.aiterm_process_verification.v1",
+        runtime_root: runtimeRoot,
+        aiterm: { required_version: SUPPORTED_AITERM_VERSION },
+      };
+    },
+    startAitermTransport: async () => {
+      calls.push("aiterm:start");
+      return {
+        closeAndWait: async () => {
+          calls.push("aiterm:close");
+          return { schema: "observer.aiterm_process_terminal.v1", status: "closed", exit_code: 0, signal: null };
         },
       };
     },
@@ -60,7 +78,8 @@ function dependencies(calls) {
 test("preflightは固定順でread-only prerequisiteだけを確認しh_requiredを返す", async () => {
   const calls = [];
   const result = await runObserverLiveCampaignPreflight({
-    claudeCommand: "/secret/claude",
+    throughlineCommand: "/secret/throughline",
+    aitermCommand: "/secret/aiterm",
     codexCommand: "/secret/codex",
   }, dependencies(calls));
 
@@ -68,10 +87,11 @@ test("preflightは固定順でread-only prerequisiteだけを確認しh_required
   assert.equal(result.status, "h_required");
   assert.equal(result.product_version, "0.0.0");
   assert.equal(result.blocked, null);
-  assert.deepEqual(calls, ["product", "claude", "codex", "hook:claude", "hook:codex"]);
+  assert.deepEqual(calls, ["product", "throughline", "throughline:read", "aiterm", "aiterm:start", "aiterm:close", "codex", "hook:claude", "hook:codex"]);
   assert.deepEqual(result.checks, [
     { name: "product", status: "ready" },
-    { name: "claude_runtime", status: "ready" },
+    { name: "throughline_runtime", status: "ready" },
+    { name: "aiterm_runtime", status: "ready" },
     { name: "codex_runtime", status: "ready" },
     { name: "hook_candidates", status: "ready" },
     { name: "canonical_cwd", status: "ready" },
@@ -80,10 +100,12 @@ test("preflightは固定順でread-only prerequisiteだけを確認しh_required
   ]);
   assert.deepEqual(result.required_evidence, [
     "claude.completed_turn_receipt",
-    "claude.job_session_correlation",
+    "claude.session_generation_correlation",
+    "claude.initial_exact_result",
+    "claude.follow_up_exact_result",
     "claude.stop_hook_capture",
     "claude.wait_over_65s",
-    "claude.explicit_stop_terminal",
+    "claude.session_close_terminal",
     "codex.task_complete_receipt",
     "codex.thread_turn_cwd_correlation",
     "codex.stop_hook_capture",
@@ -116,20 +138,39 @@ test("unsupported platformはproductでblockedとなり後続を実行しない"
   assert.deepEqual(touched, []);
 });
 
-test("known Claude failureはsanitized blockedとなりCodexへ進まない", async () => {
+test("known Aiterm failureはsanitized blockedとなりCodexへ進まない", async () => {
   const calls = [];
   const deps = dependencies(calls);
-  deps.verifyClaudeRuntime = async () => {
-    calls.push("claude");
-    throw new ObserverError("E_CLAUDE_VERSION_UNSUPPORTED", "raw /secret/path");
+  deps.verifyAitermRuntime = async () => {
+    calls.push("aiterm");
+    throw new ObserverError("E_AITERM_VERSION_UNSUPPORTED", "raw /secret/path");
   };
   const result = await runObserverLiveCampaignPreflight({}, deps);
   assert.equal(result.status, "blocked");
   assert.deepEqual(result.blocked, {
-    check: "claude_runtime",
-    code: "E_CLAUDE_VERSION_UNSUPPORTED",
+    check: "aiterm_runtime",
+    code: "E_AITERM_VERSION_UNSUPPORTED",
   });
-  assert.deepEqual(calls, ["product", "claude"]);
+  assert.deepEqual(calls, ["product", "throughline", "throughline:read", "aiterm"]);
+  assert.equal(JSON.stringify(result).includes("secret"), false);
+});
+
+test("Throughline observer-read欠落はversion一致でもblockedとなり後続へ進まない", async () => {
+  const calls = [];
+  const deps = dependencies(calls);
+  deps.createThroughlineClient = () => ({
+    read: async () => {
+      calls.push("throughline:read");
+      throw new ObserverError("E_THROUGHLINE_EXEC", "raw /secret/path");
+    },
+  });
+  const result = await runObserverLiveCampaignPreflight({}, deps);
+  assert.equal(result.status, "blocked");
+  assert.deepEqual(result.blocked, {
+    check: "throughline_runtime",
+    code: "E_THROUGHLINE_EXEC",
+  });
+  assert.deepEqual(calls, ["product", "throughline", "throughline:read"]);
   assert.equal(JSON.stringify(result).includes("secret"), false);
 });
 

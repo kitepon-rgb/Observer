@@ -33,12 +33,14 @@ test("diagnostics CLIは引数とready／unsupported exitを固定する", async
 test("campaign preflight CLIはabsolute host commandとh_required／blocked exitを固定する", async () => {
   const argv = [
     "campaign", "preflight",
-    "--claude-command", "/bin/claude",
+    "--throughline-command", "/bin/throughline",
+    "--aiterm-command", "/bin/aiterm",
     "--codex-command", "/bin/codex",
   ];
   assert.deepEqual(parseObserverArguments(argv), {
     kind: "campaign_preflight",
-    claudeCommand: "/bin/claude",
+    throughlineCommand: "/bin/throughline",
+    aitermCommand: "/bin/aiterm",
     codexCommand: "/bin/codex",
   });
   const calls = [];
@@ -49,7 +51,7 @@ test("campaign preflight CLIはabsolute host commandとh_required／blocked exit
     },
   });
   assert.equal(hRequired.exitCode, 0);
-  assert.deepEqual(calls, [{ claudeCommand: "/bin/claude", codexCommand: "/bin/codex" }]);
+  assert.deepEqual(calls, [{ throughlineCommand: "/bin/throughline", aitermCommand: "/bin/aiterm", codexCommand: "/bin/codex" }]);
   const blocked = await executeObserverCommand(argv, {}, {
     runObserverLiveCampaignPreflight: async () => ({
       schema: "observer.live_campaign_preflight.v1", status: "blocked",
@@ -57,13 +59,15 @@ test("campaign preflight CLIはabsolute host commandとh_required／blocked exit
   });
   assert.equal(blocked.exitCode, 1);
   assert.throws(() => parseObserverArguments([
-    ...argv, "--claude-command", "/other/claude",
+    ...argv, "--aiterm-command", "/other/aiterm",
   ]), { code: "E_USAGE" });
   assert.throws(() => parseObserverArguments([
-    "campaign", "preflight", "--claude-command", "relative", "--codex-command", "/bin/codex",
+    "campaign", "preflight", "--aiterm-command", "relative", "--codex-command", "/bin/codex",
+    "--throughline-command", "/bin/throughline",
   ]), { code: "E_USAGE" });
   assert.throws(() => parseObserverArguments([
-    "campaign", "preflight", "--claude-command", "/bin/claude",
+    "campaign", "preflight", "--aiterm-command", "/bin/aiterm",
+    "--throughline-command", "/bin/throughline",
   ]), { code: "E_USAGE" });
 });
 

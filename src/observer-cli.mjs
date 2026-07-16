@@ -32,7 +32,7 @@ const OBSERVER_PACKAGE_ROOT = fileURLToPath(new URL("../", import.meta.url));
 export function observerUsage() {
   return [
     "usage: observer diagnostics",
-    "usage: observer campaign preflight --claude-command <absolute-path> --codex-command <absolute-path>",
+    "usage: observer campaign preflight --throughline-command <absolute-path> --aiterm-command <absolute-path> --codex-command <absolute-path>",
     "usage: observer watch <absolute-project-root> [--state-root <absolute-path>]",
     "       observer watch start <absolute-project-root> [--state-root <absolute-path>]",
     "       observer watch status <absolute-project-root> [--state-root <absolute-path>]",
@@ -64,7 +64,8 @@ export async function executeObserverCommand(argv, { signal, parentContext } = {
   }
   if (command.kind === "campaign_preflight") {
     const result = await (dependencies.runObserverLiveCampaignPreflight ?? runObserverLiveCampaignPreflight)({
-      claudeCommand: command.claudeCommand,
+      throughlineCommand: command.throughlineCommand,
+      aitermCommand: command.aitermCommand,
       codexCommand: command.codexCommand,
     }, dependencies.preflightDependencies);
     return { result, exitCode: result.status === "blocked" ? 1 : 0 };
@@ -213,7 +214,8 @@ function parseWatch(argv) {
 function parseCampaignPreflight(argv) {
   const values = {};
   const flags = new Map([
-    ["--claude-command", "claudeCommand"],
+    ["--throughline-command", "throughlineCommand"],
+    ["--aiterm-command", "aitermCommand"],
     ["--codex-command", "codexCommand"],
   ]);
   for (let index = 2; index < argv.length; index += 1) {
@@ -224,10 +226,12 @@ function parseCampaignPreflight(argv) {
     values[key] = argv[index + 1];
     index += 1;
   }
-  if (!Object.hasOwn(values, "claudeCommand") || !Object.hasOwn(values, "codexCommand")) {
+  if (!Object.hasOwn(values, "throughlineCommand") || !Object.hasOwn(values, "aitermCommand") ||
+      !Object.hasOwn(values, "codexCommand")) {
     fail("E_USAGE", observerUsage());
   }
-  validateAbsolute(values.claudeCommand, "E_USAGE", observerUsage());
+  validateAbsolute(values.throughlineCommand, "E_USAGE", observerUsage());
+  validateAbsolute(values.aitermCommand, "E_USAGE", observerUsage());
   validateAbsolute(values.codexCommand, "E_USAGE", observerUsage());
   return { kind: "campaign_preflight", ...values };
 }
