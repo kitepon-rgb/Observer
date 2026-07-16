@@ -637,12 +637,24 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [x] **P5-1b3e Aiterm Claude対話transport 非H:** Aitermの永続PTYへ対話型`claude_agent`を追加し、
     promptなし起動、初回／follow-up、Stop完了、operation相関付きexact result、timeout後回収、interrupt／closeを
     Aiterm側の独立plan・gate・commitで閉じる。`claude -p`反復は代替にしない
-    （Aiterm `dd43c40`／`3842ff2`、focused 1/1、related 122/122、full 262/262、独立反証後green、
+    （Aiterm `dd43c40`／`3842ff2`／`ceb75e8`／`28b7438`／`f0fcf10`。相関gate focused 1/1、
+    related 122/122、full 262/262、独立反証後green、構造化caller gate focused 5/5、related 126/126、
+    launcher receipt gate focused 4/4、related 94/94、
     [ADR 0115](adr/0115-persistent-observer-context-and-claude-transport.md)）。
   - [x] **P5-1b3f live順序整理:** Aiterm単体live smokeをP5-1b4より前に反復せず、P5-1b5の一回の
     dual-host live Hへ統合する。これはlive成功ではなくqueue統合の完了である。
   - [ ] **P5-1b4 Claude caller core 非H（NEXT）:** P5-1b3eで固定したAiterm公開面だけをissue／recover／cleanup、
-    initial generation、同じ永続Claude sessionを所有するSupervisor loopへ接続する。
+    initial generation、同じ永続Claude sessionを所有するSupervisor loopへ接続する
+    （[ADR 0116](adr/0116-aiterm-claude-production-caller-contract.md)）。
+    - [ ] P5-1b4a: Aiterm stdio MCPをversion／tool schemaまで検証するtransportと、`claude_turn`の
+      structured statusをgeneric model callbackへ変換するClaude provider operationを実装する。
+    - [ ] P5-1b4b: 新規production routeのprivate host handleを`claude.session`へ分離し、promptless
+      managed `claude_agent` launch、structured receipt、watch activation、initial generationを接続する。
+      旧`claude.job` background routeはblocked履歴互換だけに限定する。
+    - [ ] P5-1b4c: Claude provider runtimeをproduction step、Supervisor process、親caller、CLIへ接続し、
+      通常completed cycle間で同じsession handleを再利用する。
+    - [ ] P5-1b4d: rollback／parent rebindのstop／relaunch／recoveryをAiterm公開toolだけへ接続し、
+      focused／related gate、親反証、独立commitで19dを閉じる。
   - [ ] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact result、session closeと、
     Claude／Codexの実completed証拠、production model request、session相関、hook trust、65秒超wait、
     実host crash／停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。
