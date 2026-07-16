@@ -646,8 +646,10 @@ completed-turn境界の初期未確定事項は解消済み。Claude側の完了
   - [ ] **P5-1b4 Claude caller core 非H（NEXT）:** P5-1b3eで固定したAiterm公開面だけをissue／recover／cleanup、
     initial generation、同じ永続Claude sessionを所有するSupervisor loopへ接続する
     （[ADR 0116](adr/0116-aiterm-claude-production-caller-contract.md)）。
-    - [ ] P5-1b4a: Aiterm stdio MCPをversion／tool schemaまで検証するtransportと、`claude_turn`の
-      structured statusをgeneric model callbackへ変換するClaude provider operationを実装する。
+    - [x] P5-1b4a: Aiterm stdio MCPをversion／tool schemaまで検証するtransportと、`claude_turn`の
+      structured statusをgeneric model callbackへ変換するClaude provider operationを実装した。
+      focused 8/8、related 58/58、`npm run check` green。受入証拠は
+      [ADR 0117](adr/0117-aiterm-transport-and-claude-operation-acceptance.md)。
     - [ ] P5-1b4b: 新規production routeのprivate host handleを`claude.session`へ分離し、promptless
       managed `claude_agent` launch、structured receipt、watch activation、initial generationを接続する。
       旧`claude.job` background routeはblocked履歴互換だけに限定する。
