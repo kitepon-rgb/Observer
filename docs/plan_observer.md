@@ -731,6 +731,10 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
         campaign candidateへ束縛するため、Aiterm controllerのPATH先頭をcampaign prefixへ固定する
         （[ADR 0129](adr/0129-throughline-capture-runtime-binding.md)）。手動transcript投入やglobal更新へ
         fallbackせず、失敗sessionを公開closeしてからliveを再開する。
+        - [ ] **P5-1b5b-r3 Aiterm runtime隔離:** controller processのPATHを補正してもglobal tmux
+          server作成時のstale環境が新sessionへ継承されreceiptは0件だった。campaign専用0700
+          `TMPDIR`でAiterm socket／log／stateを隔離し、candidate PATHを持つfresh serverだけを使う
+          （[ADR 0130](adr/0130-aiterm-campaign-runtime-isolation.md)）。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。

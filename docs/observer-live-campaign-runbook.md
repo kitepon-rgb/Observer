@@ -58,7 +58,8 @@ Observer、Throughline、Aitermの受入済みrepo HEADをそれぞれpackし、
 - Observer packageはdotagentsの`verify-observer-package`でprefixと
   expected version 0.0.0を検証する。
 - Throughlineは同prefixの`observer-read`がcampaign projectのexact JSONを返す。
-- Claude parentを保持するAiterm controller processは`PATH=<campaign-prefix>/bin:$PATH`で起動し、
+- Claude parentを保持するAiterm controller processはcampaign専用の0700 `TMPDIR`と
+  `PATH=<campaign-prefix>/bin:$PATH`で起動し、global tmux serverを再利用しない。
   settings内のbare `throughline process-turn`も同じcandidateへ解決する。read側だけcandidateへ向け、
   capture側をglobal packageへ残してはならない。
 - Aitermはpreflightのstdio initialize／tool schemaを唯一のversion・surface gateとする。
@@ -81,7 +82,7 @@ config本文、raw ID、prompt、host logは保存しない。
    Claude、Codexの
    candidateを別々に手書きしない。preflight、両parent caller、両Stop hookは同じstate rootへ束縛し、
    state root省略や既定値への暗黙fallbackを許さない。
-3. `PATH=<campaign-prefix>/bin:$PATH`を持つAiterm controllerの
+3. campaign専用0700 `TMPDIR`と`PATH=<campaign-prefix>/bin:$PATH`を持つAiterm controllerの
    公開`claude_agent`でClaude parentを
    一回だけ作り、seed completed turnを確定する。続けて
    controllerのforeground sessionで次を起動する。
@@ -129,6 +130,7 @@ launch／terminal、rollback検証が必要である。fixture receiptや片host
 - preflight、parent caller、Stop hookのstate rootが一致しない。
 - Claude parent controllerのPATH先頭がcampaign prefixでなく、captureとreadのThroughline実行物が
   一致しない。
+- Aiterm controllerがglobal tmux socketを再利用し、caller processと異なるstale PATHをsessionへ継承する。
 - spawn結果を既知handleへ相関できない、または同じhandleの回収入口を失った。
 - project fingerprintが変化した。
 - raw host log、prompt、config本文、raw ID、token、cookie、credentialがreceiptへ混入した。
