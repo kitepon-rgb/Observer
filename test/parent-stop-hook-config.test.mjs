@@ -13,9 +13,10 @@ import {
 
 const CLI = new URL("../bin/observer-hook-config.mjs", import.meta.url).pathname;
 const EXECUTABLE = "/Users/kite/Developer/Observer/bin/observer-parent-stop-hook.mjs";
+const STATE_ROOT = "/Users/kite/.local/state/observer-campaign";
 
 function fragment(provider) {
-  return buildParentStopHookFragment({ provider, executablePath: EXECUTABLE });
+  return buildParentStopHookFragment({ provider, executablePath: EXECUTABLE, stateRoot: STATE_ROOT });
 }
 
 function candidate(provider, entries) {
@@ -28,19 +29,28 @@ test("provider別のcanonical fragmentはversioned schemaと固定timeoutを返�
     schema: "observer.parent_stop_hook_fragment.v1",
     provider: "claude",
     event: "Stop",
-    entry: { hooks: [{ type: "command", command: `${EXECUTABLE} --provider claude`, timeout: 5 }] },
+    entry: { hooks: [{ type: "command", command: `${EXECUTABLE} --provider claude --state-root ${STATE_ROOT}`, timeout: 5 }] },
   });
   assert.deepEqual(fragment("codex"), {
     schema: "observer.parent_stop_hook_fragment.v1",
     provider: "codex",
     event: "Stop",
-    entry: { type: "command", command: `${EXECUTABLE} --provider codex`, timeoutSec: 5, async: false, statusMessage: null },
+    entry: { type: "command", command: `${EXECUTABLE} --provider codex --state-root ${STATE_ROOT}`, timeoutSec: 5, async: false, statusMessage: null },
   });
 });
 
 test("macOS v1でquote、空白、相対pathをfail closedする", () => {
   for (const executablePath of ["relative/hook", "/tmp/hook with space", '/tmp/hook"quoted']) {
     assert.throws(() => buildParentStopHookFragment({ provider: "claude", executablePath }), (error) => error?.code === "E_PARENT_STOP_HOOK_EXECUTABLE_INVALID");
+  }
+});
+
+test("state rootはabsoluteかつcommandへ安全に埋め込めるpathだけを受け入れる", () => {
+  for (const stateRoot of ["relative/state", "/tmp/state with space", '/tmp/state"quoted']) {
+    assert.throws(
+      () => buildParentStopHookFragment({ provider: "claude", executablePath: EXECUTABLE, stateRoot }),
+      (error) => error?.code === "E_PARENT_STOP_HOOK_STATE_ROOT_INVALID",
+    );
   }
 });
 
@@ -57,18 +67,18 @@ test("実在しない、または実行できないexecutableをfail closedす�
 
 for (const provider of ["claude", "codex"]) {
   test(`${provider} verifierは対象commandだけを数えcanonical性を判定する`, () => {
-    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, candidate: candidate(provider) }).status, "canonical");
-    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, candidate: candidate(provider, []) }).status, "missing");
-    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, candidate: {} }).status, "missing");
-    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, candidate: { hooks: {} } }).status, "missing");
+    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, stateRoot: STATE_ROOT, candidate: candidate(provider) }).status, "canonical");
+    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, stateRoot: STATE_ROOT, candidate: candidate(provider, []) }).status, "missing");
+    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, stateRoot: STATE_ROOT, candidate: {} }).status, "missing");
+    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, stateRoot: STATE_ROOT, candidate: { hooks: {} } }).status, "missing");
 
     const noncanonical = structuredClone(fragment(provider).entry);
     if (provider === "claude") noncanonical.hooks[0].timeout = 6;
     else noncanonical.async = true;
-    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, candidate: candidate(provider, [noncanonical]) }).status, "noncanonical");
+    assert.equal(verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, stateRoot: STATE_ROOT, candidate: candidate(provider, [noncanonical]) }).status, "noncanonical");
 
     const duplicated = [fragment(provider).entry, fragment(provider).entry];
-    const result = verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, candidate: candidate(provider, duplicated) });
+    const result = verifyParentStopHookConfig({ provider, executablePath: EXECUTABLE, stateRoot: STATE_ROOT, candidate: candidate(provider, duplicated) });
     assert.equal(result.status, "duplicate");
     assert.equal(result.target_count, 2);
 
@@ -78,6 +88,7 @@ for (const provider of ["claude", "codex"]) {
     const withOtherProduct = verifyParentStopHookConfig({
       provider,
       executablePath: EXECUTABLE,
+      stateRoot: STATE_ROOT,
       candidate: candidate(provider, [fragment(provider).entry, otherProduct]),
     });
     assert.equal(withOtherProduct.status, "canonical");
@@ -86,11 +97,11 @@ for (const provider of ["claude", "codex"]) {
 }
 
 test("CLIはflagとbounded stdinでfragmentとverification JSONを返す", () => {
-  const generated = spawnSync(process.execPath, [CLI, "fragment", "--provider", "codex", "--executable", EXECUTABLE], { encoding: "utf8" });
+  const generated = spawnSync(process.execPath, [CLI, "fragment", "--provider", "codex", "--executable", EXECUTABLE, "--state-root", STATE_ROOT], { encoding: "utf8" });
   assert.equal(generated.status, 0, generated.stderr);
   assert.deepEqual(JSON.parse(generated.stdout), fragment("codex"));
 
-  const verified = spawnSync(process.execPath, [CLI, "verify", "--provider", "codex", "--executable", EXECUTABLE], {
+  const verified = spawnSync(process.execPath, [CLI, "verify", "--provider", "codex", "--executable", EXECUTABLE, "--state-root", STATE_ROOT], {
     encoding: "utf8",
     input: JSON.stringify(candidate("codex")),
   });

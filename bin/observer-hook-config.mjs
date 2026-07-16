@@ -8,7 +8,7 @@ import {
 import { ObserverError } from "../src/observer-error.mjs";
 
 const MAX_CANDIDATE_BYTES = 1024 * 1024;
-const USAGE = "usage: observer-hook-config <fragment|verify> --provider <claude|codex> --executable <absolute-path>";
+const USAGE = "usage: observer-hook-config <fragment|verify> --provider <claude|codex> --executable <absolute-path> [--state-root <absolute-path>]";
 
 function usageError(message = USAGE) {
   const error = new Error(message);
@@ -20,13 +20,17 @@ function parseFlags(args) {
   const flags = {};
   for (let index = 0; index < args.length; index += 1) {
     const flag = args[index];
-    if (flag !== "--provider" && flag !== "--executable") throw usageError();
+    if (flag !== "--provider" && flag !== "--executable" && flag !== "--state-root") throw usageError();
     if (flags[flag] !== undefined || index + 1 >= args.length) throw usageError();
     flags[flag] = args[index + 1];
     index += 1;
   }
   if (flags["--provider"] === undefined || flags["--executable"] === undefined) throw usageError();
-  return { provider: flags["--provider"], executablePath: flags["--executable"] };
+  return {
+    provider: flags["--provider"],
+    executablePath: flags["--executable"],
+    ...(flags["--state-root"] === undefined ? {} : { stateRoot: flags["--state-root"] }),
+  };
 }
 
 async function readCandidate() {

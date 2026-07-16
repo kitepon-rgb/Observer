@@ -29,8 +29,18 @@ function assertExecutablePath(executablePath) {
   }
 }
 
-function commandFor(provider, executablePath) {
-  return `${executablePath} --provider ${provider}`;
+function assertStateRoot(stateRoot) {
+  if (stateRoot === undefined) return;
+  if (typeof stateRoot !== "string"
+    || !isAbsolute(stateRoot)
+    || stateRoot.length === 0
+    || INVALID_PATH_CHARACTERS.test(stateRoot)) {
+    fail("E_PARENT_STOP_HOOK_STATE_ROOT_INVALID", "parent Stop hook state rootが不正です");
+  }
+}
+
+function commandFor(provider, executablePath, stateRoot) {
+  return `${executablePath} --provider ${provider}${stateRoot === undefined ? "" : ` --state-root ${stateRoot}`}`;
 }
 
 function isPlainObject(value) {
@@ -80,11 +90,12 @@ function verification(provider, status, targetCount) {
   };
 }
 
-export function buildParentStopHookFragment({ provider, executablePath } = {}) {
+export function buildParentStopHookFragment({ provider, executablePath, stateRoot } = {}) {
   assertProvider(provider);
   assertExecutablePath(executablePath);
+  assertStateRoot(stateRoot);
 
-  const command = commandFor(provider, executablePath);
+  const command = commandFor(provider, executablePath, stateRoot);
   const entry = provider === "claude"
     ? { hooks: [{ type: "command", command, timeout: PARENT_STOP_HOOK_TIMEOUT_SECONDS }] }
     : {
@@ -98,11 +109,12 @@ export function buildParentStopHookFragment({ provider, executablePath } = {}) {
   return { schema: FRAGMENT_SCHEMA, provider, event: "Stop", entry };
 }
 
-export function verifyParentStopHookConfig({ provider, executablePath, candidate } = {}) {
+export function verifyParentStopHookConfig({ provider, executablePath, stateRoot, candidate } = {}) {
   assertProvider(provider);
   assertExecutablePath(executablePath);
+  assertStateRoot(stateRoot);
   const entries = stopEntries(candidate);
-  const canonical = buildParentStopHookFragment({ provider, executablePath }).entry;
+  const canonical = buildParentStopHookFragment({ provider, executablePath, stateRoot }).entry;
 
   if (provider === "claude") {
     const targets = [];

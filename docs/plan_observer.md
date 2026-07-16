@@ -717,6 +717,14 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
       receiptの全証拠、両host terminal、project fingerprint不変、hook config rollbackを確認する。
       intentional faultは未実施と明記する。通常campaignのH操作は2026-07-16にオーナーが
       「queue 19e dual-host live Hを承認する」と明示承認した。
+      - [x] **P5-1b5b-r1 state root束縛修理:** 最初のClaude live attemptでmodel応答後に
+        parent Stop hookが既定state rootを参照して`E_PERMISSION_INVALID`、Throughline completed feedが
+        0件のままになった。hook fragment／verifier、preflight、dotagents adapter、runbookへ同じ
+        explicit state rootを束縛し、旧state rootのtarget entryを一件へ正規化する
+        （[ADR 0127](adr/0127-parent-hook-state-root-binding-correction.md)）。失敗attemptは成功へ含めず、
+        session terminal確認後に修理gateを独立commitで閉じてからliveを再開する。
+        focused 28/28、related 48/48、`npm run check`、対象docs lint、dotagents isolated package gateが
+        greenとなり、[ADR 0128](adr/0128-parent-hook-state-root-binding-acceptance.md)で受け入れた。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。

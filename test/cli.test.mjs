@@ -36,12 +36,14 @@ test("campaign preflight CLIはabsolute host commandとh_required／blocked exit
     "--throughline-command", "/bin/throughline",
     "--aiterm-command", "/bin/aiterm",
     "--codex-command", "/bin/codex",
+    "--state-root", "/tmp/observer-state",
   ];
   assert.deepEqual(parseObserverArguments(argv), {
     kind: "campaign_preflight",
     throughlineCommand: "/bin/throughline",
     aitermCommand: "/bin/aiterm",
     codexCommand: "/bin/codex",
+    stateRoot: "/tmp/observer-state",
   });
   const calls = [];
   const hRequired = await executeObserverCommand(argv, {}, {
@@ -51,7 +53,7 @@ test("campaign preflight CLIはabsolute host commandとh_required／blocked exit
     },
   });
   assert.equal(hRequired.exitCode, 0);
-  assert.deepEqual(calls, [{ throughlineCommand: "/bin/throughline", aitermCommand: "/bin/aiterm", codexCommand: "/bin/codex" }]);
+  assert.deepEqual(calls, [{ throughlineCommand: "/bin/throughline", aitermCommand: "/bin/aiterm", codexCommand: "/bin/codex", stateRoot: "/tmp/observer-state" }]);
   const blocked = await executeObserverCommand(argv, {}, {
     runObserverLiveCampaignPreflight: async () => ({
       schema: "observer.live_campaign_preflight.v1", status: "blocked",
@@ -63,7 +65,7 @@ test("campaign preflight CLIはabsolute host commandとh_required／blocked exit
   ]), { code: "E_USAGE" });
   assert.throws(() => parseObserverArguments([
     "campaign", "preflight", "--aiterm-command", "relative", "--codex-command", "/bin/codex",
-    "--throughline-command", "/bin/throughline",
+    "--throughline-command", "/bin/throughline", "--state-root", "/tmp/observer-state",
   ]), { code: "E_USAGE" });
   assert.throws(() => parseObserverArguments([
     "campaign", "preflight", "--aiterm-command", "/bin/aiterm",

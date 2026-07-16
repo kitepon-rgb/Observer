@@ -17,7 +17,8 @@ jobではなく、Aitermの同じpersistent PTY sessionへ初回／follow-upを�
 observer campaign preflight \
   --throughline-command "/absolute/campaign-prefix/bin/throughline" \
   --aiterm-command "/absolute/campaign-prefix/bin/aiterm-mcp" \
-  --codex-command "$(command -v codex)"
+  --codex-command "$(command -v codex)" \
+  --state-root "/absolute/campaign-state"
 ```
 
 - `status=h_required`: product、Throughline 0.6.3の実`observer-read`、
@@ -66,9 +67,17 @@ Observer、Throughline、Aitermの受入済みrepo HEADをそれぞれpackし、
 config本文、raw ID、prompt、host logは保存しない。
 
 1. Claude用とCodex用の独立campaign projectを作り、各project fingerprintを固定する。
-2. `apply-observer-hook-config --apply --observer-hook <campaign-prefix>/bin/observer-parent-stop-hook`を
-   一回実行し、返されたabsolute archive、0600、本人owner、固定manifestを確認する。Claude、Codexの
-   candidateを別々に手書きしない。
+2. 次を一回実行し、返されたabsolute archive、0600、本人owner、固定manifestを確認する。
+
+   ```sh
+   apply-observer-hook-config --apply \
+     --observer-hook <campaign-prefix>/bin/observer-parent-stop-hook \
+     --state-root <campaign-state>
+   ```
+
+   Claude、Codexの
+   candidateを別々に手書きしない。preflight、両parent caller、両Stop hookは同じstate rootへ束縛し、
+   state root省略や既定値への暗黙fallbackを許さない。
 3. Aiterm公開`claude_agent`でClaude parentを一回だけ作り、seed completed turnを確定する。続けて
    controllerのforeground sessionで次を起動する。
 
@@ -112,6 +121,7 @@ launch／terminal、rollback検証が必要である。fixture receiptや片host
 
 - preflightが`blocked`、または実行直前にversion／package digestが変わった。
 - config backup、mode／owner、hook trust、正規stop入口のどれかを確認できない。
+- preflight、parent caller、Stop hookのstate rootが一致しない。
 - spawn結果を既知handleへ相関できない、または同じhandleの回収入口を失った。
 - project fingerprintが変化した。
 - raw host log、prompt、config本文、raw ID、token、cookie、credentialがreceiptへ混入した。

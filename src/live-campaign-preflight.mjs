@@ -88,7 +88,7 @@ const PROHIBITED_CAPTURE = Object.freeze([
 ]);
 
 export async function runObserverLiveCampaignPreflight(
-  { throughlineCommand, aitermCommand, codexCommand } = {},
+  { throughlineCommand, aitermCommand, codexCommand, stateRoot } = {},
   dependencies = {},
 ) {
   const checks = CHECK_NAMES.map((name) => ({ name, status: "not_checked" }));
@@ -161,8 +161,8 @@ export async function runObserverLiveCampaignPreflight(
   blocked = await attempt(checks, 4, async () => {
     const build = dependencies.buildHookFragment ?? buildParentStopHookFragment;
     const executablePath = resolve(runtimeRoot, "bin/observer-parent-stop-hook.mjs");
-    validateHookFragment(build({ provider: "claude", executablePath }), "claude");
-    validateHookFragment(build({ provider: "codex", executablePath }), "codex");
+    validateHookFragment(build({ provider: "claude", executablePath, stateRoot }), "claude", stateRoot);
+    validateHookFragment(build({ provider: "codex", executablePath, stateRoot }), "codex", stateRoot);
   });
   if (blocked !== null) return blockedReceipt(checks, blocked);
 
@@ -253,10 +253,15 @@ function validateCodex(value) {
   }
 }
 
-function validateHookFragment(value, provider) {
+function validateHookFragment(value, provider, stateRoot) {
   if (!isPlainObject(value) || value.schema !== "observer.parent_stop_hook_fragment.v1" ||
       value.provider !== provider || value.event !== "Stop" || !isPlainObject(value.entry)) {
     fail("E_LIVE_PREFLIGHT_HOOK_CANDIDATE_INVALID", "parent Stop hook fragmentが不正です");
+  }
+  const expected = ` --provider ${provider} --state-root ${stateRoot}`;
+  const command = provider === "claude" ? value.entry.hooks?.[0]?.command : value.entry.command;
+  if (typeof command !== "string" || !command.endsWith(expected)) {
+    fail("E_LIVE_PREFLIGHT_HOOK_CANDIDATE_INVALID", "parent Stop hook state root bindingが不正です");
   }
 }
 

@@ -63,13 +63,14 @@ function dependencies(calls) {
         codex: { realpath: "/secret/codex", version: SUPPORTED_CODEX_VERSION },
       };
     },
-    buildHookFragment: ({ provider }) => {
+    buildHookFragment: ({ provider, stateRoot }) => {
       calls.push(`hook:${provider}`);
+      const command = `/secret/hook --provider ${provider} --state-root ${stateRoot}`;
       return {
         schema: "observer.parent_stop_hook_fragment.v1",
         provider,
         event: "Stop",
-        entry: { command: `/secret/hook --provider ${provider}` },
+        entry: provider === "claude" ? { hooks: [{ command }] } : { command },
       };
     },
   };
@@ -81,6 +82,7 @@ test("preflightは固定順でread-only prerequisiteだけを確認しh_required
     throughlineCommand: "/secret/throughline",
     aitermCommand: "/secret/aiterm",
     codexCommand: "/secret/codex",
+    stateRoot: "/secret/state",
   }, dependencies(calls));
 
   assert.equal(result.schema, LIVE_CAMPAIGN_PREFLIGHT_SCHEMA);
