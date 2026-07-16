@@ -696,7 +696,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
       - [x] related 50/50、`npm run check` green、Phase full 393/393 green。独立重監査でP1実装欠陥2件を
         採用・補正し、証拠再束縛指摘も補正後gateで閉じた。受入証拠は
         [ADR 0124](adr/0124-aiterm-claude-generation-lifecycle-acceptance.md)。
-  - [x] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact
+  - [ ] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact
     result、session closeと、
     Claude／Codexの実completed証拠、production model request、session相関、hook trust、65秒超wait、
     通常停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。timeout、crash、
@@ -713,7 +713,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
       config rollbackへ固定する（[ADR 0125](adr/0125-live-preflight-production-route-correction.md)）。
       focused 20/20、product 4/4、related 46/46、isolated package gate、actual read-only
       `status=h_required`を[ADR 0126](adr/0126-live-preflight-production-route-acceptance.md)で受け入れた。
-    - [x] **P5-1b5b 通常系dual-host live H:** 承認済み通常campaignだけを各host一回実行し、preflight
+    - [ ] **P5-1b5b 通常系dual-host live H:** 承認済み通常campaignだけを各host一回実行し、preflight
       receiptの全証拠、両host terminal、project fingerprint不変、hook config rollbackを確認する。
       intentional faultは未実施と明記する。通常campaignのH操作は2026-07-16にオーナーが
       「queue 19e dual-host live Hを承認する」と明示承認した。
@@ -818,6 +818,13 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           uid 501・gid 20で復元し、candidate dry-runが両provider `changed=yes`となることを確認した。
           両projectは空のまま。intentional fault、push、publish、deploy、loginは未実施。
           不変受入証拠は[ADR 0139](adr/0139-queue19e-dual-host-live-acceptance.md)。
+        - [ ] **P5-1b5b-r15 Codex process-group cleanup訂正:** campaign cleanupで、終了済みCodex
+          app-server二attemptが起動したMCP process群16件がcampaign rootを`cwd`にしたまま残留していた。
+          app-server leaderだけのterminal確認をprocess残留0へ読み替えたADR 0139の該当証拠を失効させる。
+          detached app-serverの終了は、固有process group全体へSIGTERM→SIGKILLを配送し、leader closeと
+          process group消滅の両方をboundedに確認して初めて成功とする。既存孤児は所有PIDへの通常SIGTERMで
+          16/16終了しcampaign rootを削除した。実装、focused／related gate、fresh subprocess実証を独立commitで
+          閉じる（[ADR 0140](adr/0140-codex-process-group-cleanup-correction.md)）。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
