@@ -354,6 +354,11 @@ test("60分内の同一dedupeと同severityは第二cycleをsuppressedにし親�
   const input = supervisorInput(fixture, session, twoCycleThroughlineClient());
   assert.equal((await runSupervisorProductionStep(input, { now: () => NOW })).status, "model_pending");
   assert.equal((await runSupervisorProductionStep(input, { now: () => NOW })).status, "committed");
+  const firstHistory = await readAdvisoryDecisionHistory({
+    stateRoot: fixture.stateRoot,
+    targetId: fixture.target.targetId,
+  });
+  assert.deepEqual(firstHistory.entries.map(({ decision }) => decision), ["accepted"]);
   assert.equal((await runSupervisorProductionStep(input, { now: () => NOW })).status, "model_pending");
   assert.equal((await runSupervisorProductionStep(input, { now: () => NOW })).status, "committed");
 
@@ -361,7 +366,7 @@ test("60分内の同一dedupeと同severityは第二cycleをsuppressedにし親�
     stateRoot: fixture.stateRoot,
     targetId: fixture.target.targetId,
   });
-  assert.deepEqual(history.entries.map(({ decision }) => decision), ["accepted", "suppressed"]);
+  assert.deepEqual(history.entries.map(({ decision }) => decision).sort(), ["accepted", "suppressed"]);
   assert.equal((await readCycleState({
     stateRoot: fixture.stateRoot,
     targetId: fixture.target.targetId,
