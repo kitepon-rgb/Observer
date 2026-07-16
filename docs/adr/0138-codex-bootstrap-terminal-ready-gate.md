@@ -4,7 +4,7 @@
 
 ## Status
 
-Implemented。実Codex candidateでの受入れ待ち。
+Accepted。
 
 ## Context
 
@@ -36,5 +36,13 @@ cycleを受けられる証拠ではない。永続thread上のbootstrap turnはt
 実装gate（2026-07-16）:
 
 - focused `test/codex-host-runtime.test.mjs`: 17/17 PASS。
-- related Codex caller／transport／model operation／generation binding／Supervisor: 111/111 PASS。
+- related Codex caller／transport／model operation／generation binding／Supervisor:
+  111/111 PASS。
 - `npm run check`、本ADRのmarkdownlint、`git diff --check`: PASS。
+
+Live acceptance（2026-07-16）:
+
+- queue 19e candidate r11でbootstrap completed後に初回cycleをcommitした。
+- 親feed 2件、同じgenerationのcompleted cycle 2件、初回cycle後65秒超を確認した。
+- pending reservation／cycle／model operation残留なし、caller cancelと両app-server
+  terminalを確認した。

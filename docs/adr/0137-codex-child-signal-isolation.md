@@ -4,7 +4,7 @@
 
 ## Status
 
-Accepted。実装gateはgreen。queue 19eの実Codex正常停止を受入れへ残す。
+Accepted。実装gateとqueue 19e実Codex正常停止はgreen。
 
 ## Context
 
@@ -35,4 +35,5 @@ terminalを観測してからtransportを閉じる必要があり、childへterm
 
 - focused Codex transport＋runtime: 13 passed、0 failed、0 skipped。
 - related transport＋runtime＋caller＋Supervisor＋CLI: 69 passed、0 failed、0 skipped。
-- 実Codex正常停止はqueue 19e live Hで行い、fixture greenへ代入しない。
+- queue 19e candidate r11のSIGINTでcaller `cancelled`／exit 130、managed
+  app-server terminal、local app-server残留0、親app-server公開close `closed`を確認した。

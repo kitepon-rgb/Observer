@@ -696,7 +696,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
       - [x] related 50/50、`npm run check` green、Phase full 393/393 green。独立重監査でP1実装欠陥2件を
         採用・補正し、証拠再束縛指摘も補正後gateで閉じた。受入証拠は
         [ADR 0124](adr/0124-aiterm-claude-generation-lifecycle-acceptance.md)。
-  - [ ] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact
+  - [x] **P5-1b5 dual-host live H:** Aiterm実Claude初回／follow-up、Stop、exact
     result、session closeと、
     Claude／Codexの実completed証拠、production model request、session相関、hook trust、65秒超wait、
     通常停止を一回の両host campaignで受け入れる。Claude成功をfixtureで代用しない。timeout、crash、
@@ -713,7 +713,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
       config rollbackへ固定する（[ADR 0125](adr/0125-live-preflight-production-route-correction.md)）。
       focused 20/20、product 4/4、related 46/46、isolated package gate、actual read-only
       `status=h_required`を[ADR 0126](adr/0126-live-preflight-production-route-acceptance.md)で受け入れた。
-    - [ ] **P5-1b5b 通常系dual-host live H:** 承認済み通常campaignだけを各host一回実行し、preflight
+    - [x] **P5-1b5b 通常系dual-host live H:** 承認済み通常campaignだけを各host一回実行し、preflight
       receiptの全証拠、両host terminal、project fingerprint不変、hook config rollbackを確認する。
       intentional faultは未実施と明記する。通常campaignのH操作は2026-07-16にオーナーが
       「queue 19e dual-host live Hを承認する」と明示承認した。
@@ -786,14 +786,16 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           related 52/52はgreen。commit `ebd8ae6`の再pack候補でstrict parse、初回cycle commit、pending／
           model operation残留なしを確認して閉じた
           （[ADR 0136](adr/0136-cycle-response-contract-per-turn.md)）。
-        - [ ] **P5-1b5b-r11 Codex app-server child signal隔離:** Claude正常停止で根治した同じprocess group
+        - [x] **P5-1b5b-r11 Codex app-server child signal隔離:** Claude正常停止で根治した同じprocess group
           問題がCodex app-server transportにも残っている。foreground callerのSIGINTがapp-server childへ
           直接届くと、Observerのcancel処理より先にtransport terminalとなり、turn interrupt／terminal回収を
           完遂できない。Codex childもdetached process group、stdio所有、unrefなし、既存
           closeAndWait terminal確認へ固定する。focused 13/13、related 69/69はgreen。独立commit後、
           実Codex正常停止で閉じる
           （[ADR 0137](adr/0137-codex-child-signal-isolation.md)）。
-        - [ ] **P5-1b5b-r12 Codex bootstrap terminal ready gate:** 実Codex parentのseed `task_complete`後、
+          修理済みcandidate r11のSIGINTでcaller `cancelled`／exit 130、managed app-server terminal、
+          local app-server残留0、親app-server公開close `closed`を確認した。
+        - [x] **P5-1b5b-r12 Codex bootstrap terminal ready gate:** 実Codex parentのseed `task_complete`後、
           Observer bootstrap turnがまだ`inProgress`なのにwatch／generationをreadyへ進め、最初のcycleが
           `E_CODEX_CYCLE_TURN_ACTIVE`で停止した。`turn/start` ACKをAI readyにせず、同じdurable
           thread／turnの`thread/read`でbootstrap `completed`を確認してからready receiptとwatch activationへ
@@ -802,7 +804,20 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
           （[ADR 0138](adr/0138-codex-bootstrap-terminal-ready-gate.md)）。
           - [x] 実装gate: `completed`前のreadyを禁止し、failed／interrupted／timeout／別turnをfail closedに
             固定した。focused 17/17、related 111/111、`npm run check`、新規ADR lint、diff checkがgreen。
-          - [ ] 実Codex candidateで初回cycle commit、65秒超継続、follow-up後の第2cycle、正常停止を確認する。
+          - [x] 実Codex candidate r11で初回cycle commit、65秒超継続、follow-up後の第2cycle、正常停止を
+            確認した。親feed 2件、同じgenerationのcompleted cycle 2件、pending reservation／cycle／
+            model operation残留なし、project fingerprint不変。
+        - [x] **P5-1b5b-r13 Throughline concurrent writer gate:** r10で親2turn目とfeed書込みは成功したが、
+          Observer production callerの同時`observer-read`が一時SQLite lockで`E_THROUGHLINE_EXEC`終了した。
+          Throughline commit `95a3233`でcompleted projectionのread-only接続だけに1秒のbounded busy waitを
+          追加し、Spotter auditorと上限超過hard failureを維持した。focused 16/16、related 78/78。
+          candidate再梱包後のr11で同時readを含む2 cycleを通し、commit `0366bb8`でlive受入れを固定した。
+        - [x] **P5-1b5b-r14 campaign closure:** Claude r12とCodex r11はいずれも親feed 2件、同じ
+          generationのcompleted cycle 2件、初回cycle後65秒超、pending stateなし、caller cancel、host
+          terminalを満たした。最初のconfig archiveからClaude／Codex設定をexact digest・mode 0600・
+          uid 501・gid 20で復元し、candidate dry-runが両provider `changed=yes`となることを確認した。
+          両projectは空のまま。intentional fault、push、publish、deploy、loginは未実施。
+          不変受入証拠は[ADR 0139](adr/0139-queue19e-dual-host-live-acceptance.md)。
 
 - [x] **P5-2 性能、導入、rollbackを確定する。**
   - 成果物: latency実測、installer、verify、runbook、cleanup、rollback。
