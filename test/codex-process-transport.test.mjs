@@ -237,6 +237,24 @@ test("SIGKILL後もgroupが残る場合は終了不明をfail loudにする", as
   assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"], [-child.pid, "SIGKILL"]]);
 });
 
+test("process group probeのEPERMは存在確認として待機を継続する", async () => {
+  const child = new FakeChild();
+  const harness = processGroupHarness();
+  let probes = 0;
+  const { transport } = transportFor(child, harness, {
+    probeProcessGroup: () => {
+      probes += 1;
+      if (probes === 1) throw Object.assign(new Error("permission denied"), { code: "EPERM" });
+      return false;
+    },
+  });
+  child.emit("close", 0, null);
+  const terminal = await transport.closeAndWait({ terminateGraceMs: 50, killGraceMs: 50 });
+  assert.equal(terminal.status, "closed");
+  assert.equal(probes, 2);
+  assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"]]);
+});
+
 test("process group ID欠損とsignal・probe異常をleader-only fallbackへ丸めない", async (t) => {
   assert.throws(
     () => new CodexProcessTransport(new FakeChild({ pid: null })),

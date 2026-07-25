@@ -278,7 +278,8 @@ export class CodexProcessTransport {
       const alive = this.#probeProcessGroup(this.#processGroupTarget);
       if (typeof alive !== "boolean") throw new TypeError("process group probe result must be boolean");
       return alive;
-    } catch {
+    } catch (error) {
+      if (error?.code === "EPERM") return true;
       this.#terminationFailure = terminationUnknown();
       throw this.#terminationFailure;
     }
