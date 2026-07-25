@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { buildObserverAiPrompt } from "../src/observer-ai-contract.mjs";
 import {
@@ -22,7 +23,7 @@ import { buildCycleInput } from "../src/cycle-input.mjs";
 import { buildEvidenceSnapshot } from "../src/evidence-snapshot.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
 
-const ROOT = "/Users/kite/Developer/Observer";
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const THREAD_ID = "019f62a1-1111-7111-8111-111111111111";
 const TURN_ID = "019f62a2-2222-7222-8222-222222222222";
 const TARGET_ID = `p_${"a".repeat(64)}`;

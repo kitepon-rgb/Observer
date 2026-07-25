@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   createVerifiedThroughlineClient,
@@ -8,7 +9,7 @@ import {
   verifyThroughlineRuntime,
 } from "../src/throughline-process-runtime.mjs";
 
-const ROOT = "/Users/kite/Developer/Observer";
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const THROUGHLINE = "/opt/throughline/bin/throughline";
 const IDENTITY = {
   candidate: THROUGHLINE,

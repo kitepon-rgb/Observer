@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   createCodexSupervisorRuntime,
   runCodexSupervisorProcess,
 } from "../src/supervisor-codex-process.mjs";
 
-const ROOT = "/Users/kite/Developer/Observer";
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const THROUGHLINE = "/opt/throughline/bin/throughline";
 const CODEX = "/opt/codex/bin/codex";
 const TARGET = {

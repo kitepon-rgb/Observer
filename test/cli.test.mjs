@@ -108,9 +108,15 @@ test("watch CLIはproduct aliasとstart/status/stopをabsolute pathへexact pars
   assert.deepEqual(parseObserverArguments(["watch", "/project", "--state-root", "/state"]), {
     kind: "watch_start", projectRoot: "/project", stateRoot: "/state",
   });
-  assert.deepEqual(parseObserverArguments(["watch", "start", "/project"]), {
-    kind: "watch_start", projectRoot: "/project", stateRoot: defaultStateRoot(),
-  });
+  if (process.platform === "darwin") {
+    assert.deepEqual(parseObserverArguments(["watch", "start", "/project"]), {
+      kind: "watch_start", projectRoot: "/project", stateRoot: defaultStateRoot(),
+    });
+  } else {
+    assert.throws(() => parseObserverArguments(["watch", "start", "/project"]), {
+      code: "E_PLATFORM_UNSUPPORTED",
+    });
+  }
   assert.deepEqual(parseObserverArguments(["watch", "status", "/project", "--state-root", "/state"]), {
     kind: "watch_status", projectRoot: "/project", stateRoot: "/state",
   });
@@ -237,6 +243,7 @@ test("parent codex runはknown faultを非0へ写像し、unsanitized caller res
     "parent", "codex", "run", "/project",
     "--throughline-command", "/bin/throughline",
     "--codex-command", "/bin/codex",
+    "--state-root", "/state",
   ];
   const faulted = await executeObserverCommand(argv, {}, {
     runCodexParentWatchProcess: async () => ({

@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import { PassThrough, Writable } from "node:stream";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { AITERM_PROCESS_VERIFICATION_SCHEMA, AitermMcpTransport, startAitermMcpTransport, verifyAitermRuntime } from "../src/aiterm-process-transport.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
 
-const ROOT = "/Users/kite/Developer/Observer";
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const AITERM = "/opt/aiterm/bin/aiterm-mcp";
 const IDENTITY = { candidate: AITERM, realpath: AITERM, uid: 501, gid: 20, mode: 0o755, dev: "1", ino: "2", size: "3", mtime_ns: "4", digest: "a".repeat(64) };
 const expectCode = (code) => (error) => error instanceof ObserverError && error.code === code;

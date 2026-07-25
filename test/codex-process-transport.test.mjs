@@ -17,7 +17,7 @@ import {
 } from "../src/codex-process-transport.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
 
-const ROOT = "/Users/kite/Developer/Observer";
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const CODEX = "/opt/codex/bin/codex";
 const IDENTITY = {
   candidate: CODEX, realpath: CODEX, uid: 501, gid: 20, mode: 0o755,
@@ -312,11 +312,15 @@ test("実OS fixtureでleader終了後の子processをgroupごと回収する", {
   let survivorPid = null;
   for (let attempt = 0; attempt < 1_000; attempt += 1) {
     try {
-      survivorPid = Number.parseInt(await readFile(pidFile, "utf8"), 10);
-      break;
+      const candidate = Number.parseInt(await readFile(pidFile, "utf8"), 10);
+      if (Number.isSafeInteger(candidate) && candidate > 0) {
+        survivorPid = candidate;
+        break;
+      }
     } catch {
-      await new Promise((resolve) => setTimeout(resolve, 5));
+      // PID fileが作成されるまでboundedに待つ。
     }
+    await new Promise((resolve) => setTimeout(resolve, 5));
   }
   assert.ok(Number.isSafeInteger(survivorPid) && survivorPid > 0, "survivor PIDを取得する");
   await leaderClosed;

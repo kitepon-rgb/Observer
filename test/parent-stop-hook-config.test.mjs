@@ -4,6 +4,7 @@ import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   PARENT_STOP_HOOK_TIMEOUT_SECONDS,
@@ -11,9 +12,9 @@ import {
   verifyParentStopHookConfig,
 } from "../src/parent-stop-hook-config.mjs";
 
-const CLI = new URL("../bin/observer-hook-config.mjs", import.meta.url).pathname;
-const EXECUTABLE = "/Users/kite/Developer/Observer/bin/observer-parent-stop-hook.mjs";
-const STATE_ROOT = "/Users/kite/.local/state/observer-campaign";
+const CLI = fileURLToPath(new URL("../bin/observer-hook-config.mjs", import.meta.url));
+const EXECUTABLE = fileURLToPath(new URL("../bin/observer-parent-stop-hook.mjs", import.meta.url));
+const STATE_ROOT = "/tmp/observer-campaign";
 
 function fragment(provider) {
   return buildParentStopHookFragment({ provider, executablePath: EXECUTABLE, stateRoot: STATE_ROOT });

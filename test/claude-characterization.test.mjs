@@ -17,7 +17,7 @@ import {
 const CAMPAIGN = `sha256:${"a".repeat(64)}`;
 const JOB = "job-secret-1";
 const SESSION = "session-secret-1";
-const CWD = "/Users/kite/Developer/Observer";
+const CWD = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const NAME = "observer-characterization";
 const RESULT = '{"schema":"observer.ai_output.v1","outcome":"no_advisory"}';
 const NOW = new Date("2026-07-16T00:00:00.000Z");

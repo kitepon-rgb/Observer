@@ -3,6 +3,7 @@ import { chmod, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   activateCodexObserver,
@@ -21,7 +22,7 @@ import {
 } from "../src/codex-host-runtime.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
 
-const ROOT = "/Users/kite/Developer/Observer";
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const THREAD_ID = "019f62a1-1111-7111-8111-111111111111";
 const TURN_ID = "019f62a2-2222-7222-8222-222222222222";
 const OTHER_TURN_ID = "019f62a6-6666-7666-8666-666666666666";

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   CLAUDE_HOST_RUNTIME_VERIFICATION_SCHEMA,
@@ -13,7 +14,7 @@ import {
 import { ObserverError } from "../src/observer-error.mjs";
 import { completeParentStop, confirmParentHostSpawn, confirmParentLaunch } from "../src/parent-launch.mjs";
 
-const ROOT = "/Users/kite/Developer/Observer";
+const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const TARGET_ID = `p_${"a".repeat(64)}`;
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
 const NAME = "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111";
