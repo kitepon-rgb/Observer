@@ -10,10 +10,13 @@ import { SUPPORTED_THROUGHLINE_VERSION } from "./throughline-process-runtime.mjs
 
 export const OBSERVER_PRODUCT_DIAGNOSTICS_SCHEMA = "observer.product_diagnostics.v1";
 export const OBSERVER_PRODUCT_MANIFEST_SCHEMA = "observer.product_manifest.v1";
-export const OBSERVER_PRODUCT_VERSION = "0.0.0";
+export const OBSERVER_PRODUCT_VERSION = "0.1.0";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
-const PACKAGE_FILES = Object.freeze(["AGENTS.md", "CLAUDE.md", "bin/", "src/"]);
+const PACKAGE_DISTRIBUTION_NAME = "@quolu/observer";
+const PACKAGE_FILES = Object.freeze([
+  "AGENTS.md", "CLAUDE.md", "LICENSE", "README.md", "bin/", "src/",
+]);
 const PACKAGE_BINS = Object.freeze({
   observer: "bin/observer.mjs",
   "observer-mcp": "bin/observer-mcp.mjs",
@@ -93,8 +96,12 @@ async function verifyPackageManifest(packageRoot, fileSystem) {
   try {
     await requireRegularFile(path, fileSystem, "E_PRODUCT_PACKAGE_INVALID", "Observer package manifestが不正です");
     const manifest = JSON.parse(await fileSystem.readFile(path, "utf8"));
-    if (manifest?.name !== "observer" || manifest.version !== OBSERVER_PRODUCT_VERSION ||
-        manifest.private !== true || manifest.type !== "module" ||
+    if (manifest?.name !== PACKAGE_DISTRIBUTION_NAME ||
+        manifest.version !== OBSERVER_PRODUCT_VERSION ||
+        Object.hasOwn(manifest, "private") || manifest.type !== "module" ||
+        manifest.license !== "MIT" ||
+        manifest.repository?.url !== "git+https://github.com/kitepon-rgb/Observer.git" ||
+        manifest.publishConfig?.access !== "public" ||
         !sameRecord(manifest.bin, PACKAGE_BINS) || manifest.engines?.node !== ">=22.13" ||
         !sameArray(manifest.files, PACKAGE_FILES)) {
       fail("E_PRODUCT_PACKAGE_INVALID", "Observer package manifestが不正です");
@@ -106,7 +113,7 @@ async function verifyPackageManifest(packageRoot, fileSystem) {
 
 async function verifyInstructionFiles(packageRoot, fileSystem) {
   try {
-    for (const name of ["AGENTS.md", "CLAUDE.md"]) {
+    for (const name of ["AGENTS.md", "CLAUDE.md", "LICENSE", "README.md"]) {
       await requireRegularFile(resolve(packageRoot, name), fileSystem,
         "E_PRODUCT_PACKAGE_INVALID", "Observer instruction fileが不正です");
     }

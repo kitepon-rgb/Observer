@@ -6,7 +6,7 @@ import { createThroughlineClient } from "./throughline-client.mjs";
 import { readWatchStatus } from "./watch-store.mjs";
 
 export const OBSERVER_MCP_PROTOCOL_VERSION = "2025-11-25";
-export const OBSERVER_MCP_SERVER_VERSION = "0.0.0";
+export const OBSERVER_MCP_SERVER_VERSION = "0.1.0";
 export const OBSERVER_MCP_MAX_MESSAGE_BYTES = 64 * 1024;
 export const OBSERVER_MCP_DIAGNOSTICS_SCHEMA = "observer.mcp_diagnostics.v1";
 export const OBSERVER_MCP_PROTOCOL_VERSIONS = Object.freeze([

@@ -1,6 +1,6 @@
 # ADR 0145: Observerの公開製品identityとrelease readiness
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-07-25
 - 対象: source remote、npm package、初回version、license、CI、release gate
 - Factory plan: `observer-core-integration` / `oci-0010`・`oci-0020`・`oci-0030`
@@ -42,6 +42,12 @@
    - test、check、pack、隔離prefix install、5 binary、product/MCP diagnostics、rollbackを公開前に実測する。
 6. **remote作成、push、tag、npm publish、global installはH操作とする。**
    本ADRのStatusをAcceptedへ変え、目的・影響・rollbackをControlへ束縛した後だけ実行する。
+
+## Owner approval
+
+2026-07-25にオーナーが、`kitepon-rgb/Observer`、`@quolu/observer`、`0.1.0`、
+MIT、remote作成、push、tag、publish、global install、公開後smokeをH承認した。
+factory wire v5をrollback面として維持し、公開済みversionは履歴改変せずdeprecateで戻す。
 
 ## 非目標
 

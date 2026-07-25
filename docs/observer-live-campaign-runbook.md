@@ -56,7 +56,7 @@ Observer、Throughline、Aitermの受入済みrepo HEADをそれぞれpackし、
 更新しない。
 
 - Observer packageはdotagentsの`verify-observer-package`でprefixと
-  expected version 0.0.0を検証する。
+  expected version 0.1.0を検証する。
 - Throughlineは同prefixの`observer-read`がcampaign projectのexact JSONを返す。
 - Claude parentを保持するAiterm controller processはcampaign専用の短い0700 `TMPDIR`と
   `PATH=<campaign-prefix>/bin:$PATH`で起動し、global tmux serverを再利用しない。

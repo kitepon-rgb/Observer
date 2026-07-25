@@ -38,7 +38,7 @@ function verification() {
     schema: CLAUDE_HOST_RUNTIME_VERIFICATION_SCHEMA,
     runtime_root: ROOT,
     claude: { ...identity("/opt/homebrew/bin/claude", "/opt/homebrew/bin/claude"), version: SUPPORTED_CLAUDE_VERSION },
-    observer_mcp: { ...identity(`${ROOT}/bin/observer-mcp.mjs`), version: "0.0.0", tools: ["observer_read", "observer_wait"] },
+    observer_mcp: { ...identity(`${ROOT}/bin/observer-mcp.mjs`), version: "0.1.0", tools: ["observer_read", "observer_wait"] },
   };
 }
 
@@ -94,7 +94,7 @@ test("runtime verificationはmanifest固定MCP、exact version、exact tool surf
       return identity(candidate);
     },
     recheckIdentity: async () => {},
-    runFile: async (command) => ({ exit_code: 0, stdout: command.endsWith("observer-mcp.mjs") ? "0.0.0\n" : `${SUPPORTED_CLAUDE_VERSION}\n`, stderr: "" }),
+    runFile: async (command) => ({ exit_code: 0, stdout: command.endsWith("observer-mcp.mjs") ? "0.1.0\n" : `${SUPPORTED_CLAUDE_VERSION}\n`, stderr: "" }),
     probeMcp: async () => ["observer_read", "observer_wait"],
   });
   assert.equal(result.schema, CLAUDE_HOST_RUNTIME_VERIFICATION_SCHEMA);
@@ -108,7 +108,7 @@ test("runtime verificationはmanifest固定MCP、exact version、exact tool surf
       realpath: async (path) => path,
       inspectExecutable: async ({ candidate }) => identity(candidate),
       recheckIdentity: async () => {},
-      runFile: async (command) => ({ exit_code: 0, stdout: command.endsWith("observer-mcp.mjs") ? "0.0.0\n" : `${SUPPORTED_CLAUDE_VERSION}\n`, stderr: "" }),
+      runFile: async (command) => ({ exit_code: 0, stdout: command.endsWith("observer-mcp.mjs") ? "0.1.0\n" : `${SUPPORTED_CLAUDE_VERSION}\n`, stderr: "" }),
       probeMcp: async () => ["observer_read", "observer_write"],
     }),
     expectCode("E_OBSERVER_MCP_SURFACE_MISMATCH"),

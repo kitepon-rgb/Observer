@@ -1,11 +1,30 @@
 {
-  "name": "observer",
-  "version": "0.0.0",
-  "private": true,
+  "name": "@quolu/observer",
+  "version": "0.1.0",
+  "description": "Read-only AI parent monitoring with evidence-based advisories for Claude and Codex",
+  "license": "MIT",
+  "author": "quolu",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kitepon-rgb/Observer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kitepon-rgb/Observer/issues"
+  },
+  "homepage": "https://github.com/kitepon-rgb/Observer#readme",
+  "keywords": [
+    "ai",
+    "observability",
+    "codex",
+    "claude",
+    "throughline"
+  ],
   "type": "module",
   "files": [
     "AGENTS.md",
     "CLAUDE.md",
+    "LICENSE",
+    "README.md",
     "bin/",
     "src/"
   ],
@@ -23,7 +42,13 @@
     "test": "node --test test/*.test.mjs",
     "test:performance": "node test/performance-acceptance.mjs",
     "test:throughline-integration": "node --test test/throughline-black-box.integration.mjs",
-    "syntax": "node --check bin/*.mjs && node --check src/*.mjs && node --check test/*.mjs",
-    "check": "npm run syntax && git diff --check"
+    "syntax": "node --check bin/*.mjs && node --check src/*.mjs && node --check scripts/*.mjs && node --check test/*.mjs",
+    "check": "npm run syntax && git diff --check",
+    "test:package": "node scripts/verify-package-install.mjs",
+    "verify:release-commit": "node scripts/verify-release-commit.mjs",
+    "prepublishOnly": "npm run verify:release-commit && npm test && npm run check && npm run test:package"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

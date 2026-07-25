@@ -20,6 +20,12 @@ test("source package diagnosticsはsanitized manifestと5 binaryを固定する"
   assert.equal(result.schema, OBSERVER_PRODUCT_DIAGNOSTICS_SCHEMA);
   assert.equal(result.status, "ready");
   assert.equal(result.manifest.schema, OBSERVER_PRODUCT_MANIFEST_SCHEMA);
+  assert.equal(result.manifest.name, "observer");
+  assert.equal(result.manifest.version, "0.1.0");
+  const distribution = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"));
+  assert.equal(distribution.name, "@quolu/observer");
+  assert.equal(distribution.version, result.manifest.version);
+  assert.equal(Object.hasOwn(distribution, "private"), false);
   assert.deepEqual(result.manifest, observerProductManifest());
   assert.deepEqual(result.manifest.dependencies, [
     { name: "node", version: ">=22.13", scope: "runtime" },
@@ -79,7 +85,9 @@ async function copyPackage() {
   const parent = await mkdtemp(join(tmpdir(), "observer-product-"));
   const root = join(parent, "package");
   await mkdir(root);
-  for (const name of ["package.json", "AGENTS.md", "CLAUDE.md", "bin", "src"]) {
+  for (const name of [
+    "package.json", "AGENTS.md", "CLAUDE.md", "LICENSE", "README.md", "bin", "src", "scripts",
+  ]) {
     await cp(join(ROOT, name), join(root, name), { recursive: true });
   }
   return realpath(root);
