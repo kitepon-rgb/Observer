@@ -15,6 +15,7 @@ import { ObserverError } from "../src/observer-error.mjs";
 import { completeParentStop, confirmParentHostSpawn, confirmParentLaunch } from "../src/parent-launch.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
+const EFFECTIVE_UID = process.getuid();
 const TARGET_ID = `p_${"a".repeat(64)}`;
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
 const NAME = "observer-aaaaaaaaaaaa-11111111-1111-4111-8111-111111111111";
@@ -88,7 +89,7 @@ function expectCode(code) {
 test("runtime verificationはmanifest固定MCP、exact version、exact tool surfaceを束縛する", async () => {
   const inspected = [];
   const result = await verifyClaudeHostRuntime({ runtimeRoot: ROOT, claudeCommand: "/opt/homebrew/bin/claude" }, {
-    effectiveUid: 501,
+    effectiveUid: EFFECTIVE_UID,
     realpath: async (path) => path,
     inspectExecutable: async ({ candidate, kind }) => {
       inspected.push([candidate, kind]);
@@ -105,7 +106,7 @@ test("runtime verificationはmanifest固定MCP、exact version、exact tool surf
   ]);
   await assert.rejects(
     verifyClaudeHostRuntime({ runtimeRoot: ROOT, claudeCommand: "/opt/homebrew/bin/claude" }, {
-      effectiveUid: 501,
+      effectiveUid: EFFECTIVE_UID,
       realpath: async (path) => path,
       inspectExecutable: async ({ candidate }) => identity(candidate),
       recheckIdentity: async () => {},
