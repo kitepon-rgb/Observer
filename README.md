@@ -4,12 +4,15 @@ Observerは、ClaudeまたはCodexで動く親AIの確定ターンをread-only�
 有意に改善できる時だけ、証拠付きの助言を返す伴走プロダクトです。正常進行では
 沈黙し、監視対象のコード・設定・工程を変更しません。
 
+**工場での役割:** Observerはdotagents開発工場が管理する自作コア10製品の一つです。
+macOS上のread-only伴走監視を所有し、dotagentsが製品横断の導入・統合契約を所有します。
+
 ## 対応環境
 
 - 製品runtime: macOS
 - Node.js: 22.13以上
 - 親host: Claude Code / Codex
-- completed-turn feed: Throughline 0.6.3
+- completed-turn feed: Throughline 0.6.3以上（現行工場版は0.8.7）
 
 Linuxではhost-neutral testとpackage検査を実行できますが、製品診断は
 `unsupported_platform`を返します。
