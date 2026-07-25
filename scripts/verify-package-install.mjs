@@ -75,7 +75,9 @@ try {
     await access(join(binRoot, name), process.platform === "win32" ? fsConstants.F_OK : fsConstants.X_OK);
   }
 
-  const product = JSON.parse(run(join(binRoot, "observer"), ["diagnostics"]).stdout);
+  const product = JSON.parse(run(join(binRoot, "observer"), ["diagnostics"], {
+    expectedStatus: process.platform === "darwin" ? 0 : 1,
+  }).stdout);
   assert.equal(product.manifest.name, "observer");
   assert.equal(product.manifest.version, "0.1.0");
   assert.equal(
