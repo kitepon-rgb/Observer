@@ -902,6 +902,19 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
     旧fault再発防止はcommit `6c510b0`、上位版受入れはcommit `85326c3`。focused 49/49、
     full 416/416、`npm run check`、Throughline `0.8.7`／Codex CLI `0.144.6`の実経路がgreen。
 
+- [ ] **P5-5 Observer 0.1.1を公開し、installed runtimeへ切り替える。**
+  - 成果物: 現行live文書、CHANGELOG、0.1.1 package identity、release commit/tag、GitHub push、
+    npm公開、global install、installed packageからのproduction watch。
+  - 完了条件: [ADR 0149](adr/0149-observer-0-1-1-release.md)の順序で、全gate green、
+    publish対象commitが`origin/main`の祖先、npm registryとglobal installが0.1.1、
+    bingoのwatchがinstalled binaryから`active`継続する。
+  - [x] live文書とpackage identityを0.1.1／Throughline `>=0.8.7`へ同期する。
+  - [x] package tarball、full suite、static check、package install smokeをgreenにする。
+  - [ ] commitをmainへpushし、tag `v0.1.1`をpushする。
+  - [ ] `@quolu/observer@0.1.1`をnpmへ公開し、registry metadataを確認する。
+  - [ ] global installを0.1.1へ更新し、installed diagnostics／MCP diagnosticsを確認する。
+  - [ ] installed binaryでbingo監視を再開し、`active`継続後に作業を再開する。
+
 ---
 
 ## v1受け入れ条件

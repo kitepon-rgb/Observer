@@ -12,7 +12,7 @@ macOS上のread-only伴走監視を所有し、dotagentsが製品横断の導入
 - 製品runtime: macOS
 - Node.js: 22.13以上
 - 親host: Claude Code / Codex
-- completed-turn feed: Throughline 0.6.3以上（現行工場版は0.8.7）
+- completed-turn feed: Throughline 0.8.7以上
 
 Linuxではhost-neutral testとpackage検査を実行できますが、製品診断は
 `unsupported_platform`を返します。
