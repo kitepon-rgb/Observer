@@ -86,7 +86,7 @@ test("preflightは固定順でread-only prerequisiteだけを確認しh_required
 
   assert.equal(result.schema, LIVE_CAMPAIGN_PREFLIGHT_SCHEMA);
   assert.equal(result.status, "h_required");
-  assert.equal(result.product_version, "0.1.2");
+  assert.equal(result.product_version, "0.1.3");
   assert.equal(result.blocked, null);
   assert.deepEqual(calls, ["product", "throughline", "throughline:read", "aiterm", "aiterm:start", "aiterm:close", "codex", "hook:claude", "hook:codex"]);
   assert.deepEqual(result.checks, [
@@ -124,7 +124,7 @@ test("unsupported platformはproductでblockedとなり後続を実行しない"
     runProductDiagnostics: async () => ({
       schema: "observer.product_diagnostics.v1",
       status: "unsupported_platform",
-      manifest: { version: "0.1.2" },
+      manifest: { version: "0.1.3" },
     }),
     verifyClaudeRuntime: async () => { touched.push("claude"); },
     verifyCodexRuntime: async () => { touched.push("codex"); },

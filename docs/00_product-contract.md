@@ -122,6 +122,9 @@ thread／turnの`cwd`は常にcanonical Observer rootで、target `project_root`
 
 各cycleのmodel結果はhost lifecycleと別のprovider operation journalで回収する。Codexはcycleごとに同じpersistent
 threadへ新しい`turn/start`を一件だけ発行し、ACKされたthread／session／cycle turn／cwdを保存する。
+terminal watchから新watchを開始した時は、新watchのactive CASを確認した後、pending reservationがなく
+解決可能な旧watchのgeneration stateだけを新watch sequence 1へatomic置換する。pending reservation、
+rollover／rebind／fault途中状態は破棄せず専用エラーで停止する。
 `thread/read(includeTurns=true)`からそのcycle turnに属するexactな`agentMessage` itemだけを再読する。
 Claudeはbackground job IDとsession IDを束縛し、Observer所有`Stop` hookの
 `last_assistant_message`を発火中にstrict parseしてcanonical outputをatomic保存する。`stop_hook_active`は

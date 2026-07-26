@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3
+
+- terminal watchから新watchを開始する時、pendingのない旧generation stateだけを新watchへatomic置換できるようにする。
+- 旧generationにpending予約または途中遷移がある場合は破棄せず、専用エラーで停止する。
+
 ## 0.1.2
 
 - Codex Observer子のapp-serverでユーザー全体のhooks／pluginsを無効化し、親AI向け自動処理によるbootstrap割込みと不要なMCP起動を防ぐ。

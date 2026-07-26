@@ -26,6 +26,7 @@ import {
 
 const TARGET_ID = `p_${"a".repeat(64)}`;
 const WATCH_ID = "w_11111111-1111-4111-8111-111111111111";
+const NEXT_WATCH_ID = "w_22222222-2222-4222-8222-222222222222";
 const THREAD_SHA = "b".repeat(64);
 const CYCLE = `c_${"c".repeat(64)}`;
 const INPUT = `sha256:${"d".repeat(64)}`;
@@ -37,6 +38,12 @@ function receipt(outcome = "ready", handle = "job-private-1") {
   return {
     schema: "observer.host_receipt.v1", provider: "claude", watch_id: WATCH_ID, target_id: TARGET_ID, outcome,
     handle: { kind: "claude.job", value: handle },
+  };
+}
+function nextReceipt() {
+  return {
+    schema: "observer.host_receipt.v1", provider: "claude", watch_id: NEXT_WATCH_ID, target_id: TARGET_ID, outcome: "ready",
+    handle: { kind: "claude.job", value: "job-private-2" },
   };
 }
 function deps(time = T0) {
@@ -77,6 +84,56 @@ test("active watchとready receiptを照合してraw handleなしのgeneration s
   assert.equal(raw.includes("job-private-1"), false);
   assert.equal(raw.includes(THREAD_SHA), false);
   assert.deepEqual(await readGenerationState({ stateRoot, targetId: TARGET_ID }), state);
+});
+
+test("terminal watchから予約された新watchは未予約の旧generationを置換する", async () => {
+  const stateRoot = await box();
+  const previous = await initialize(stateRoot);
+  const next = await initializeGeneration({
+    stateRoot,
+    targetId: TARGET_ID,
+    watchId: NEXT_WATCH_ID,
+    provider: "claude",
+    parentThreadSha256: "c".repeat(64),
+    readyReceipt: nextReceipt(),
+  }, {
+    now: () => T1,
+    readWatchStatus: async () => ({
+      provider: "claude", watch_id: NEXT_WATCH_ID, target_id: TARGET_ID, status: "active",
+    }),
+  });
+  assert.equal(previous.watch_id, WATCH_ID);
+  assert.equal(next.watch_id, NEXT_WATCH_ID);
+  assert.equal(next.status, "active");
+  assert.equal(next.sequence, 1);
+  assert.equal(next.completed_cycles, 0);
+  assert.notEqual(next.generation_id, previous.generation_id);
+  assert.deepEqual(await readGenerationState({ stateRoot, targetId: TARGET_ID }), next);
+});
+
+test("前watchのpending reservationまたは途中遷移は新watchで破棄しない", async () => {
+  const stateRoot = await box();
+  await initialize(stateRoot);
+  await reserveGenerationInput({
+    stateRoot, targetId: TARGET_ID, watchId: WATCH_ID, cycleId: CYCLE,
+    inputDigest: INPUT, modelVisibleBytes: 100,
+  }, deps(T1));
+  const input = {
+    stateRoot,
+    targetId: TARGET_ID,
+    watchId: NEXT_WATCH_ID,
+    provider: "claude",
+    parentThreadSha256: "c".repeat(64),
+    readyReceipt: nextReceipt(),
+  };
+  const nextDeps = {
+    now: () => T1,
+    readWatchStatus: async () => ({
+      provider: "claude", watch_id: NEXT_WATCH_ID, target_id: TARGET_ID, status: "active",
+    }),
+  };
+  await assert.rejects(initializeGeneration(input, nextDeps), expectCode("E_GENERATION_PREVIOUS_WATCH_UNRESOLVED"));
+  assert.equal((await readGenerationState({ stateRoot, targetId: TARGET_ID })).watch_id, WATCH_ID);
 });
 
 test("同一reservationとcompletionは冪等、異なる値は拒否しbudgetはcompletion時だけ加算する", async () => {

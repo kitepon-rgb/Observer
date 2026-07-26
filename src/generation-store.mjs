@@ -26,6 +26,7 @@ const STATUS = new Set([
   "fault_required", "fault_stopping", "fault_terminal_confirmed", "faulted",
 ]);
 const FAULT_STATUS = new Set(["fault_required", "fault_stopping", "fault_terminal_confirmed", "faulted"]);
+const REPLACEABLE_PREVIOUS_WATCH_STATUSES = new Set(["active", "terminal_confirmed", "faulted"]);
 const STATE_KEYS = Object.freeze([
   "activation_receipt_digest", "completed_cycles", "created_at", "generation_id", "host_handle_digest",
   "fault_code", "last_completed_cycle", "model_visible_bytes", "parent_epoch_id", "pending_reservation", "previous_terminal_receipt_digest",
@@ -43,7 +44,10 @@ export async function initializeGeneration({ stateRoot, targetId, watchId, provi
     const parentEpochId = parentEpoch(provider, parentThreadSha256);
     if (existing !== null) {
       if (existing.watch_id === watchId && existing.parent_epoch_id === parentEpochId && existing.sequence === 1 && existing.status === "active" && sameReady(existing, readyReceipt)) return publicState(existing);
-      fail("E_GENERATION_ALREADY_EXISTS", "同じtargetには既存generation stateがあります");
+      if (existing.watch_id === watchId) fail("E_GENERATION_ALREADY_EXISTS", "同じwatchには競合するgeneration stateがあります");
+      if (!REPLACEABLE_PREVIOUS_WATCH_STATUSES.has(existing.status) || existing.pending_reservation !== null) {
+        fail("E_GENERATION_PREVIOUS_WATCH_UNRESOLVED", "前watchのgeneration stateが未解決です");
+      }
     }
     const timestamp = now(dependencies.now);
     const state = validateGenerationState({
@@ -54,7 +58,8 @@ export async function initializeGeneration({ stateRoot, targetId, watchId, provi
       previous_terminal_receipt_digest: null, completed_cycles: 0, model_visible_bytes: 0, pending_reservation: null,
       last_completed_cycle: null, created_at: timestamp, updated_at: timestamp,
     });
-    await atomicCreatePrivateFile(paths.statePath, serialize(state));
+    if (existing === null) await atomicCreatePrivateFile(paths.statePath, serialize(state));
+    else await atomicReplacePrivateFile(paths.statePath, serialize(state));
     return publicState(state);
   });
 }

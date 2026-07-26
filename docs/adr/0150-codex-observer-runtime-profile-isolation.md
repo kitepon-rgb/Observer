@@ -36,3 +36,10 @@ bootstrapの可用性とread-only境界を利用者環境へ依存させる。
 
 - npm公開前は変更commitをrevertする。
 - 公開後は0.1.2をunpublishせず、必要ならdeprecatedにして0.1.1へglobal installを戻す。
+
+## Outcome
+
+0.1.2のcommit／push／tag／npm publish／global install／diagnosticsを完了した。
+installed production bootstrapはhook／plugin eventなしで完了し、本ADRの隔離を実証した。
+その後、target単位の旧generation stateが新watch初期化を拒否する別欠陥を検出したため、
+`active`継続は[ADR 0151](0151-new-watch-generation-replacement.md)へ引き継ぐ。

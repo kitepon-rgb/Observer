@@ -926,7 +926,19 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
   - [x] 0.1.2のfull／package gateを通した。full 416/416、`npm run check`、
     package install smoke、64-file tarballがgreen。
   - [ ] commit／push／tag／npm publish／global installを完了する。
-  - [ ] installed 0.1.2でbingo監視を`active`にし、作業を再開する。
+  - [x] installed 0.1.2でbootstrap完了を確認した。旧generation stateとの衝突で停止したため、
+    `active`継続の受入はP5-7へ引き継いだ。
+
+- [ ] **P5-7 Observer 0.1.3でterminal watchから新watchへのgeneration切替を完結する。**
+  - 成果物: [ADR 0151](adr/0151-new-watch-generation-replacement.md)、新watch generation置換transaction、
+    0.1.3 package identity、release commit/tag、npm公開、global install、production watch。
+  - 完了条件: pendingのない旧generationだけが新watchへatomic置換され、未解決stateは保持される。
+    installed 0.1.3のbingo watchが`active`を維持する。
+  - [x] 新watch active CASと旧generation状態を照合する置換transaction／focused testを実装した。
+  - [x] full／package gateを通した。full 418/418、`npm run check`、package install smoke、
+    64-file tarballがgreen。
+  - [ ] commit／push／tag／npm publish／global installを完了する。
+  - [ ] installed 0.1.3でbingo監視を`active`にし、作業を再開する。
 
 ---
 

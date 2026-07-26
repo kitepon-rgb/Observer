@@ -10,7 +10,7 @@ import { SUPPORTED_THROUGHLINE_VERSION_RANGE } from "./throughline-process-runti
 
 export const OBSERVER_PRODUCT_DIAGNOSTICS_SCHEMA = "observer.product_diagnostics.v1";
 export const OBSERVER_PRODUCT_MANIFEST_SCHEMA = "observer.product_manifest.v1";
-export const OBSERVER_PRODUCT_VERSION = "0.1.2";
+export const OBSERVER_PRODUCT_VERSION = "0.1.3";
 
 const PACKAGE_ROOT = fileURLToPath(new URL("..", import.meta.url));
 const PACKAGE_DISTRIBUTION_NAME = "@quolu/observer";

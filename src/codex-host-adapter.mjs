@@ -16,7 +16,7 @@ const TERMINAL_TURN_STATUSES = new Set(["completed", "interrupted", "failed"]);
 
 export function buildCodexInitializeParams() {
   return {
-    clientInfo: { name: "observer", title: "Observer", version: "0.1.2" },
+    clientInfo: { name: "observer", title: "Observer", version: "0.1.3" },
     capabilities: {
       optOutNotificationMethods: ["item/agentMessage/delta", "turn/diff/updated", "turn/plan/updated"],
     },
