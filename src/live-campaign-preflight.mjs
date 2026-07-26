@@ -10,14 +10,14 @@ import {
 } from "./aiterm-process-transport.mjs";
 import {
   CODEX_PROCESS_VERIFICATION_SCHEMA,
-  SUPPORTED_CODEX_VERSION,
+  isSupportedCodexVersion,
   verifyCodexAppServerRuntime,
 } from "./codex-process-transport.mjs";
 import { ObserverError, fail } from "./observer-error.mjs";
 import { THROUGHLINE_READ_SCHEMA } from "./throughline-client.mjs";
 import {
   createVerifiedThroughlineClient,
-  SUPPORTED_THROUGHLINE_VERSION,
+  isSupportedThroughlineVersion,
   THROUGHLINE_PROCESS_VERIFICATION_SCHEMA,
   verifyThroughlineRuntime,
 } from "./throughline-process-runtime.mjs";
@@ -233,7 +233,7 @@ function validateAiterm(value) {
 function validateThroughline(value) {
   if (!isPlainObject(value) || value.schema !== THROUGHLINE_PROCESS_VERIFICATION_SCHEMA ||
       typeof value.runtime_root !== "string" ||
-      value.throughline?.version !== SUPPORTED_THROUGHLINE_VERSION) {
+      !isSupportedThroughlineVersion(value.throughline?.version)) {
     fail("E_LIVE_PREFLIGHT_THROUGHLINE_RUNTIME_INVALID", "Throughline runtime verification resultが不正です");
   }
 }
@@ -248,7 +248,7 @@ function validateThroughlineRead(value) {
 
 function validateCodex(value) {
   if (!isPlainObject(value) || value.schema !== CODEX_PROCESS_VERIFICATION_SCHEMA ||
-      typeof value.runtime_root !== "string" || value.codex?.version !== SUPPORTED_CODEX_VERSION) {
+      typeof value.runtime_root !== "string" || !isSupportedCodexVersion(value.codex?.version)) {
     fail("E_LIVE_PREFLIGHT_CODEX_RUNTIME_INVALID", "Codex runtime verification resultが不正です");
   }
 }

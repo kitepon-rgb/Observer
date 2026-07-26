@@ -11,8 +11,9 @@ import { fileURLToPath } from "node:url";
 import {
   CODEX_PROCESS_VERIFICATION_SCHEMA,
   CodexProcessTransport,
+  isSupportedCodexVersion,
+  MINIMUM_CODEX_VERSION,
   startCodexAppServerTransport,
-  SUPPORTED_CODEX_VERSION,
   verifyCodexAppServerRuntime,
 } from "../src/codex-process-transport.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
@@ -25,7 +26,7 @@ const IDENTITY = {
 };
 
 function verification() {
-  return { schema: CODEX_PROCESS_VERIFICATION_SCHEMA, runtime_root: ROOT, codex: { ...IDENTITY, version: SUPPORTED_CODEX_VERSION } };
+  return { schema: CODEX_PROCESS_VERIFICATION_SCHEMA, runtime_root: ROOT, codex: { ...IDENTITY, version: "codex-cli 0.144.6" } };
 }
 
 class FakeChild extends EventEmitter {
@@ -86,19 +87,53 @@ function expectCode(code) {
   return (error) => error instanceof ObserverError && error.code === code;
 }
 
-test("Codex executable identityとversionをObserver rootで二重確認する", async () => {
+test("Codex executable identityと上位互換versionをObserver rootで二重確認する", async () => {
   const calls = [];
   const result = await verifyCodexAppServerRuntime({ runtimeRoot: ROOT, codexCommand: CODEX }, {
     effectiveUid: 501,
     realpath: async (value) => value,
     inspectExecutable: async (input) => { calls.push(["inspect", input]); return IDENTITY; },
     recheckIdentity: async (identity) => { calls.push(["recheck", identity.realpath]); },
-    runFile: async (command, args, options) => { calls.push(["run", command, args, options]); return { exit_code: 0, stdout: `${SUPPORTED_CODEX_VERSION}\n`, stderr: "" }; },
+    runFile: async (command, args, options) => { calls.push(["run", command, args, options]); return { exit_code: 0, stdout: "codex-cli 0.144.6\n", stderr: "" }; },
   });
-  assert.equal(result.codex.version, SUPPORTED_CODEX_VERSION);
+  assert.equal(result.codex.version, "codex-cli 0.144.6");
   assert.deepEqual(calls.map((entry) => entry[0]), ["inspect", "recheck", "run", "recheck"]);
   assert.deepEqual(calls[2].slice(1, 3), [CODEX, ["--version"]]);
   assert.equal(calls[2][3].cwd, ROOT);
+});
+
+test("Codex最低版以上だけを受理し旧版・prerelease・不正表現を拒否する", async () => {
+  assert.equal(MINIMUM_CODEX_VERSION, "0.144.3");
+  assert.equal(isSupportedCodexVersion("codex-cli 0.144.3"), true);
+  assert.equal(isSupportedCodexVersion("codex-cli 0.144.6"), true);
+  assert.equal(isSupportedCodexVersion("codex-cli 0.145.0"), true);
+  assert.equal(isSupportedCodexVersion("codex-cli 1.0.0"), true);
+  assert.equal(isSupportedCodexVersion("codex-cli 0.144.2"), false);
+  assert.equal(isSupportedCodexVersion("codex-cli 0.145.0-beta.1"), false);
+  assert.equal(isSupportedCodexVersion("0.145.0"), false);
+  assert.equal(isSupportedCodexVersion("codex-cli v0.145.0"), false);
+
+  for (const candidate of ["codex-cli 0.144.2", "codex-cli 0.145.0-beta.1", "not-codex"]) {
+    await assert.rejects(
+      verifyCodexAppServerRuntime({ runtimeRoot: ROOT, codexCommand: CODEX }, {
+        effectiveUid: 501,
+        realpath: async (value) => value,
+        inspectExecutable: async () => IDENTITY,
+        recheckIdentity: async () => {},
+        runFile: async () => ({ exit_code: 0, stdout: `${candidate}\n`, stderr: "" }),
+      }),
+      expectCode("E_CODEX_VERSION_UNSUPPORTED"),
+    );
+  }
+  await assert.rejects(
+    startCodexAppServerTransport({
+      verification: {
+        ...verification(),
+        codex: { ...verification().codex, version: "codex-cli 0.144.2" },
+      },
+    }),
+    expectCode("E_CODEX_PROCESS_VERIFICATION_INVALID"),
+  );
 });
 
 test("app-serverをshellなし・Observer cwd・環境allowlistで生成する", async () => {

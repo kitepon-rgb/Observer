@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { SUPPORTED_AITERM_VERSION } from "../src/aiterm-process-transport.mjs";
-import { SUPPORTED_CODEX_VERSION } from "../src/codex-process-transport.mjs";
 import {
   LIVE_CAMPAIGN_PREFLIGHT_SCHEMA,
   runObserverLiveCampaignPreflight,
@@ -29,7 +28,7 @@ function dependencies(calls) {
       return {
         schema: "observer.throughline_process_verification.v1",
         runtime_root: runtimeRoot,
-        throughline: { version: "0.6.3" },
+        throughline: { version: "0.9.1" },
       };
     },
     createThroughlineClient: () => ({
@@ -60,7 +59,7 @@ function dependencies(calls) {
       return {
         schema: "observer.codex_process_verification.v1",
         runtime_root: runtimeRoot,
-        codex: { realpath: "/secret/codex", version: SUPPORTED_CODEX_VERSION },
+        codex: { realpath: "/secret/codex", version: "codex-cli 0.145.0" },
       };
     },
     buildHookFragment: ({ provider, stateRoot }) => {

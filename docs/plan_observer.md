@@ -881,6 +881,21 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
     [ADR 0144](adr/0144-observer-phase-o2-finalization.md)。intentional fault、追加model request、network、
     credential、push、publish、deploy、loginは実施していない。
 
+- [ ] **P5-4 Throughline上位互換version gateを補正する。**
+  - 成果物: 最低対応版以上の安定版SemVerを受理し、実versionをverificationへ束縛するruntime、
+    preflight、diagnostics、focused test、production watch smoke。
+  - 完了条件: Throughline `0.8.7`とそれより新しい安定版を受理し、旧版・不正SemVer・prereleaseを拒否する。
+    version受理後も`observer-read`／`observer-wait`のstrict wire検証を維持し、互換性をversion文字列だけで
+    成功扱いしない。
+  - [x] version range契約とverification schemaを[ADR 0145](adr/0145-throughline-forward-version-compatibility.md)へ固定する。
+  - [x] runtime、preflight、diagnostics、focused testを補正する。
+  - [x] Codex CLIも最低対応版以上＋actual version束縛へ揃え、
+    [ADR 0147](adr/0147-codex-forward-version-compatibility.md)どおり現行CLIを直接使う。
+  - [x] 実watchで露出したtruncated completed-turnの元全文digest境界を
+    [ADR 0146](adr/0146-truncated-turn-digest-boundary.md)どおり補正する。
+  - [x] source package検証、full suite、実Throughline `0.8.7`／Codex CLI `0.144.6`のversion gate通過を確認する。
+  - [ ] default state rootに残った旧fault generationを正規回収し、production watchのactive継続を確認する。
+
 ---
 
 ## v1受け入れ条件

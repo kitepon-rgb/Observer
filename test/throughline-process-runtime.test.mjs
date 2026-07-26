@@ -4,7 +4,8 @@ import { fileURLToPath } from "node:url";
 
 import {
   createVerifiedThroughlineClient,
-  SUPPORTED_THROUGHLINE_VERSION,
+  isSupportedThroughlineVersion,
+  MINIMUM_THROUGHLINE_VERSION,
   THROUGHLINE_PROCESS_VERIFICATION_SCHEMA,
   verifyThroughlineRuntime,
 } from "../src/throughline-process-runtime.mjs";
@@ -28,11 +29,11 @@ function verification() {
   return {
     schema: THROUGHLINE_PROCESS_VERIFICATION_SCHEMA,
     runtime_root: ROOT,
-    throughline: { ...IDENTITY, version: SUPPORTED_THROUGHLINE_VERSION },
+    throughline: { ...IDENTITY, version: "0.9.1" },
   };
 }
 
-test("Throughline executable identityとversionをObserver rootで二重確認する", async () => {
+test("Throughline executable identityと上位互換versionをObserver rootで二重確認する", async () => {
   const calls = [];
   const result = await verifyThroughlineRuntime({ runtimeRoot: ROOT, throughlineCommand: THROUGHLINE }, {
     effectiveUid: 501,
@@ -41,10 +42,10 @@ test("Throughline executable identityとversionをObserver rootで二重確認�
     recheckIdentity: async (identity) => { calls.push(["recheck", identity.realpath]); },
     runFile: async (command, args, options) => {
       calls.push(["run", command, args, options]);
-      return { exit_code: 0, stdout: `${SUPPORTED_THROUGHLINE_VERSION}\n`, stderr: "" };
+      return { exit_code: 0, stdout: "0.9.1\n", stderr: "" };
     },
   });
-  assert.equal(result.throughline.version, SUPPORTED_THROUGHLINE_VERSION);
+  assert.equal(result.throughline.version, "0.9.1");
   assert.deepEqual(calls.map((entry) => entry[0]), ["inspect", "recheck", "run", "recheck"]);
   assert.deepEqual(calls[2].slice(1, 3), [THROUGHLINE, ["--version"]]);
   assert.equal(calls[2][3].cwd, ROOT);
@@ -71,19 +72,39 @@ test("verified clientはread/waitごとに同じexecutable identityを再確認�
   ]);
 });
 
-test("version不一致とverification改変をfail closedにする", async () => {
-  await assert.rejects(
-    verifyThroughlineRuntime({ runtimeRoot: ROOT, throughlineCommand: THROUGHLINE }, {
-      effectiveUid: 501,
-      realpath: async (value) => value,
-      inspectExecutable: async () => IDENTITY,
-      recheckIdentity: async () => {},
-      runFile: async () => ({ exit_code: 0, stdout: "9.9.9\n", stderr: "" }),
-    }),
-    { code: "E_THROUGHLINE_VERSION_UNSUPPORTED" },
-  );
+test("最低版以上だけを受理し旧版・prerelease・不正SemVerをfail closedにする", async () => {
+  assert.equal(isSupportedThroughlineVersion(MINIMUM_THROUGHLINE_VERSION), true);
+  assert.equal(isSupportedThroughlineVersion("0.8.8"), true);
+  assert.equal(isSupportedThroughlineVersion("0.9.0"), true);
+  assert.equal(isSupportedThroughlineVersion("1.0.0"), true);
+  assert.equal(isSupportedThroughlineVersion("0.8.6"), false);
+  assert.equal(isSupportedThroughlineVersion("0.9.0-beta.1"), false);
+  assert.equal(isSupportedThroughlineVersion("v0.9.0"), false);
+  assert.equal(isSupportedThroughlineVersion("01.9.0"), false);
+
+  for (const candidate of ["0.8.6", "0.9.0-beta.1", "not-semver"]) {
+    await assert.rejects(
+      verifyThroughlineRuntime({ runtimeRoot: ROOT, throughlineCommand: THROUGHLINE }, {
+        effectiveUid: 501,
+        realpath: async (value) => value,
+        inspectExecutable: async () => IDENTITY,
+        recheckIdentity: async () => {},
+        runFile: async () => ({ exit_code: 0, stdout: `${candidate}\n`, stderr: "" }),
+      }),
+      { code: "E_THROUGHLINE_VERSION_UNSUPPORTED" },
+    );
+  }
   assert.throws(
     () => createVerifiedThroughlineClient({ verification: { ...verification(), runtime_root: "relative" } }),
+    { code: "E_THROUGHLINE_PROCESS_VERIFICATION_INVALID" },
+  );
+  assert.throws(
+    () => createVerifiedThroughlineClient({
+      verification: {
+        ...verification(),
+        throughline: { ...verification().throughline, version: "0.8.6" },
+      },
+    }),
     { code: "E_THROUGHLINE_PROCESS_VERIFICATION_INVALID" },
   );
 });

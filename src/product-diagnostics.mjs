@@ -3,10 +3,10 @@ import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
 import { SUPPORTED_AITERM_VERSION } from "./aiterm-process-transport.mjs";
-import { SUPPORTED_CODEX_VERSION } from "./codex-process-transport.mjs";
+import { SUPPORTED_CODEX_VERSION_RANGE } from "./codex-process-transport.mjs";
 import { OBSERVER_MCP_SERVER_VERSION } from "./mcp-server.mjs";
 import { fail } from "./observer-error.mjs";
-import { SUPPORTED_THROUGHLINE_VERSION } from "./throughline-process-runtime.mjs";
+import { SUPPORTED_THROUGHLINE_VERSION_RANGE } from "./throughline-process-runtime.mjs";
 
 export const OBSERVER_PRODUCT_DIAGNOSTICS_SCHEMA = "observer.product_diagnostics.v1";
 export const OBSERVER_PRODUCT_MANIFEST_SCHEMA = "observer.product_manifest.v1";
@@ -41,9 +41,9 @@ export function observerProductManifest() {
     bins: Object.entries(PACKAGE_BINS).map(([name, path]) => ({ name, path })),
     dependencies: [
       { name: "node", version: ">=22.13", scope: "runtime" },
-      { name: "throughline", version: SUPPORTED_THROUGHLINE_VERSION, scope: "supervisor" },
+      { name: "throughline", version: SUPPORTED_THROUGHLINE_VERSION_RANGE, scope: "supervisor" },
       { name: "aiterm-mcp", version: SUPPORTED_AITERM_VERSION, scope: "claude_transport" },
-      { name: "codex", version: SUPPORTED_CODEX_VERSION, scope: "codex_host" },
+      { name: "codex", version: SUPPORTED_CODEX_VERSION_RANGE, scope: "codex_host" },
     ],
     diagnostics: [
       { name: "product", command: "observer diagnostics" },

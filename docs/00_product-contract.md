@@ -188,6 +188,10 @@ wait_for_turn_change(
 - read入口は初回の`snapshot`、通常の`delta`、親作り直しの`thread_switched`、rollback等の`resync_required`、DB freshness待ちの`projection_pending`を区別する。
 - snapshotは過去履歴のbounded orientationであり、truncationを明示する。監視開始後のdelta / thread switchはopaque page tokenで全件を回収し、bounded上限による欠落を成功扱いしない。
 - Observerはreadと監査が正常終了した後だけ保存cursorを進める。read失敗時は旧cursorを保持する。
+- Throughline runtimeは必要な公開CLIを持つ最低対応版以上の安定版SemVerを受理し、実versionを
+  verificationへ束縛する。version文字列だけを互換性の証拠にせず、read／waitのstrict wire検証を必須にする。
+- Codex runtimeも最低対応版以上の安定版SemVerを受理し、実versionをverificationへ束縛する。
+  version gate後もapp-serverのinitialize、thread／turn、terminal wireをstrict検証する。
 - 通知の重複とspurious wakeupは許容する。
 - 呼出、waiter登録、timeout、再接続の境界で確定turnを失ってはならない。
 - ObserverはThroughlineのDB、WAL、mtimeを直接監視しない。

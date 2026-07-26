@@ -5,10 +5,12 @@ import { access, lstat, open, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, normalize } from "node:path";
 
 import { ObserverError, fail } from "./observer-error.mjs";
+import { isStableSemverAtLeast } from "./stable-semver.mjs";
 
 export const CODEX_PROCESS_VERIFICATION_SCHEMA = "observer.codex_process_verification.v1";
 export const CODEX_PROCESS_TERMINAL_SCHEMA = "observer.codex_process_terminal.v1";
-export const SUPPORTED_CODEX_VERSION = "codex-cli 0.144.3";
+export const MINIMUM_CODEX_VERSION = "0.144.3";
+export const SUPPORTED_CODEX_VERSION_RANGE = `>=${MINIMUM_CODEX_VERSION}`;
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 1024 * 1024;
@@ -28,11 +30,12 @@ export async function verifyCodexAppServerRuntime({ runtimeRoot, codexCommand } 
   await recheckExecutableIdentity(codex, dependencies);
   const run = dependencies.runFile ?? runFile;
   const version = await run(codex.realpath, ["--version"], commandOptions(canonicalRoot), dependencies);
-  if (version.exit_code !== 0 || version.stdout.trim() !== SUPPORTED_CODEX_VERSION || version.stderr !== "") {
-    fail("E_CODEX_VERSION_UNSUPPORTED", "Codex CLI versionが固定契約と一致しません");
+  const actualVersion = version.stdout.trim();
+  if (version.exit_code !== 0 || version.stderr !== "" || !isSupportedCodexVersion(actualVersion)) {
+    fail("E_CODEX_VERSION_UNSUPPORTED", "Codex CLI versionが対応範囲外です");
   }
   await recheckExecutableIdentity(codex, dependencies);
-  return { schema: CODEX_PROCESS_VERIFICATION_SCHEMA, runtime_root: canonicalRoot, codex: { ...codex, version: SUPPORTED_CODEX_VERSION } };
+  return { schema: CODEX_PROCESS_VERIFICATION_SCHEMA, runtime_root: canonicalRoot, codex: { ...codex, version: actualVersion } };
 }
 
 export async function startCodexAppServerTransport({ verification, onNotification = null } = {}, dependencies = {}) {
@@ -363,13 +366,18 @@ function validateVerification(value) {
       !isAbsolute(value.runtime_root) || normalize(value.runtime_root) !== value.runtime_root || hasControl(value.runtime_root) ||
       !isPlainObject(value.codex) || !hasExactKeys(value.codex, [
         "candidate", "dev", "digest", "gid", "ino", "mode", "mtime_ns", "realpath", "size", "uid", "version",
-      ]) || value.codex.version !== SUPPORTED_CODEX_VERSION ||
+      ]) || !isSupportedCodexVersion(value.codex.version) ||
       ![value.codex.candidate, value.codex.realpath].every((entry) => typeof entry === "string" && isAbsolute(entry) && normalize(entry) === entry && !hasControl(entry)) ||
       ![value.codex.uid, value.codex.gid, value.codex.mode].every(Number.isInteger) ||
       ![value.codex.dev, value.codex.ino, value.codex.size, value.codex.mtime_ns].every((entry) => typeof entry === "string" && /^\d+$/.test(entry)) ||
       typeof value.codex.digest !== "string" || !/^[a-f0-9]{64}$/.test(value.codex.digest)) {
     fail("E_CODEX_PROCESS_VERIFICATION_INVALID", "Codex process verificationが不正です");
   }
+}
+
+export function isSupportedCodexVersion(value) {
+  if (typeof value !== "string" || !value.startsWith("codex-cli ")) return false;
+  return isStableSemverAtLeast(value.slice("codex-cli ".length), MINIMUM_CODEX_VERSION);
 }
 
 function validateChild(child) {

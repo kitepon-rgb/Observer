@@ -5,10 +5,12 @@ import { access, lstat, open, realpath, stat } from "node:fs/promises";
 import { dirname, isAbsolute, normalize } from "node:path";
 
 import { fail } from "./observer-error.mjs";
+import { isStableSemverAtLeast } from "./stable-semver.mjs";
 import { createThroughlineClient } from "./throughline-client.mjs";
 
 export const THROUGHLINE_PROCESS_VERIFICATION_SCHEMA = "observer.throughline_process_verification.v1";
-export const SUPPORTED_THROUGHLINE_VERSION = "0.6.3";
+export const MINIMUM_THROUGHLINE_VERSION = "0.8.7";
+export const SUPPORTED_THROUGHLINE_VERSION_RANGE = `>=${MINIMUM_THROUGHLINE_VERSION}`;
 
 const VERSION_TIMEOUT_MS = 5_000;
 const MAX_VERSION_BYTES = 64 * 1024;
@@ -26,14 +28,15 @@ export async function verifyThroughlineRuntime({ runtimeRoot, throughlineCommand
   await recheckExecutableIdentity(throughline, dependencies);
   const run = dependencies.runFile ?? runFile;
   const version = await run(throughline.realpath, ["--version"], commandOptions(canonicalRoot), dependencies);
-  if (version.exit_code !== 0 || version.stdout.trim() !== SUPPORTED_THROUGHLINE_VERSION || version.stderr !== "") {
-    fail("E_THROUGHLINE_VERSION_UNSUPPORTED", "Throughline versionが固定契約と一致しません");
+  const actualVersion = version.stdout.trim();
+  if (version.exit_code !== 0 || version.stderr !== "" || !isSupportedThroughlineVersion(actualVersion)) {
+    fail("E_THROUGHLINE_VERSION_UNSUPPORTED", "Throughline versionが対応範囲外です");
   }
   await recheckExecutableIdentity(throughline, dependencies);
   return {
     schema: THROUGHLINE_PROCESS_VERIFICATION_SCHEMA,
     runtime_root: canonicalRoot,
-    throughline: { ...throughline, version: SUPPORTED_THROUGHLINE_VERSION },
+    throughline: { ...throughline, version: actualVersion },
   };
 }
 
@@ -146,7 +149,7 @@ function validateVerification(value) {
       !isAbsolute(value.runtime_root) || normalize(value.runtime_root) !== value.runtime_root || hasControl(value.runtime_root) ||
       !isPlainObject(value.throughline) || Object.keys(value.throughline).sort().join(",") !==
         "candidate,dev,digest,gid,ino,mode,mtime_ns,realpath,size,uid,version" ||
-      value.throughline.version !== SUPPORTED_THROUGHLINE_VERSION ||
+      !isSupportedThroughlineVersion(value.throughline.version) ||
       ![value.throughline.candidate, value.throughline.realpath].every((entry) =>
         typeof entry === "string" && isAbsolute(entry) && normalize(entry) === entry && !hasControl(entry)) ||
       ![value.throughline.uid, value.throughline.gid, value.throughline.mode].every(Number.isInteger) ||
@@ -155,6 +158,10 @@ function validateVerification(value) {
       typeof value.throughline.digest !== "string" || !/^[a-f0-9]{64}$/.test(value.throughline.digest)) {
     fail("E_THROUGHLINE_PROCESS_VERIFICATION_INVALID", "Throughline process verificationが不正です");
   }
+}
+
+export function isSupportedThroughlineVersion(value) {
+  return isStableSemverAtLeast(value, MINIMUM_THROUGHLINE_VERSION);
 }
 
 function commandOptions(cwd) {

@@ -230,6 +230,32 @@ test("tampered snapshotはdigestとentry relationshipの両方を再検証する
   assert.throws(() => validateEvidenceSnapshot(badRelationship), expectCode("E_EVIDENCE_SNAPSHOT_INVALID"));
 });
 
+test("truncated turnは元全文digestを保持してorientationへ通し完全な根拠にしない", () => {
+  const snapshot = buildEvidenceSnapshot(makeInput({
+    turns: [makeTurn(1, {
+      user: "truncated user",
+      user_sha256: sha256("original full user"),
+      assistant: "truncated assistant",
+      assistant_sha256: sha256("original full assistant"),
+      truncated: true,
+    })],
+  }));
+  assert.equal(snapshot.turns.entries[0].truncated, true);
+  assert.equal(snapshot.turns.truncated, true);
+  assert.equal(snapshot.flags.truncated, true);
+
+  assert.throws(
+    () => buildEvidenceSnapshot(makeInput({
+      turns: [makeTurn(1, {
+        assistant: "tampered",
+        assistant_sha256: sha256("original"),
+        truncated: false,
+      })],
+    })),
+    expectCode("E_EVIDENCE_SNAPSHOT_INVALID"),
+  );
+});
+
 test("test availability matrixはavailableとunavailableのexact組合せだけを許す", () => {
   const unavailable = makeTest(2, {
     available: false,

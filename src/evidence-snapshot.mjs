@@ -274,7 +274,8 @@ function normalizeTurn(value, context) {
   if (value.host !== context.parent_host || value.thread_sha256 !== context.parent_thread_sha256) {
     invalid("turn host/threadがtrusted contextと一致しません");
   }
-  if (sha256(value.user) !== value.user_sha256 || sha256(value.assistant) !== value.assistant_sha256) {
+  if (!value.truncated &&
+      (sha256(value.user) !== value.user_sha256 || sha256(value.assistant) !== value.assistant_sha256)) {
     invalid("turn本文digestが一致しません");
   }
 
