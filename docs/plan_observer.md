@@ -881,7 +881,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
     [ADR 0144](adr/0144-observer-phase-o2-finalization.md)。intentional fault、追加model request、network、
     credential、push、publish、deploy、loginは実施していない。
 
-- [ ] **P5-4 Throughline上位互換version gateを補正する。**
+- [x] **P5-4 Throughline上位互換version gateを補正する。**
   - 成果物: 最低対応版以上の安定版SemVerを受理し、実versionをverificationへ束縛するruntime、
     preflight、diagnostics、focused test、production watch smoke。
   - 完了条件: Throughline `0.8.7`とそれより新しい安定版を受理し、旧版・不正SemVer・prereleaseを拒否する。
@@ -897,7 +897,10 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
     `fault_required`を残して通常stopだけを完了する欠陥を
     [ADR 0148](adr/0148-supervisor-fault-terminalization.md)どおり補正する。
   - [x] source package検証、full suite、実Throughline `0.8.7`／Codex CLI `0.144.6`のversion gate通過を確認する。
-  - [ ] default state rootに残った旧fault generationを正規回収し、production watchのactive継続を確認する。
+  - [x] default state rootの旧fault generation／journal／pending cycleをbackup付きで可逆隔離し、
+    production watch `w_25fa83ce-ceb7-4494-bd62-474d8fd1cdba`がactive継続することを確認した。
+    旧fault再発防止はcommit `6c510b0`、上位版受入れはcommit `85326c3`。focused 49/49、
+    full 416/416、`npm run check`、Throughline `0.8.7`／Codex CLI `0.144.6`の実経路がgreen。
 
 ---
 
