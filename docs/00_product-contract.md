@@ -103,6 +103,9 @@ DBファイル自体のmtime、`sessions.updated_at`、`bodies`の件数を親�
   fault／crash後の無断自動再起動とは分離する。旧generationのterminalを確認できない場合は新世代を起動せずfaultにする。
 - 利用者が親へ明示的に停止を依頼した時は、親がchildを停止してactive watchを閉じる。
 - fault時は継続と自動再起動を止め、親が原因を利用者へ報告する。
+- Supervisor hard failureはprovider runtimeを閉じる前にfault journalをrecord-firstし、同じruntimeと保存済みhandleで
+  boundedにterminal receiptを回収する。exact receipt確認後だけgeneration、watch、journalを`faulted`へ閉じる。
+  通常stopへ読み替えたり、`fault_required`を残したままtransportだけを閉じたりしない。
 
 Codex hostはpersistent app-server threadを使い、thread IDをwatchのprivate provider handle、cycleごとのturn IDを
 Observer所有のdurable provider operation journalへ分離して保存する。`thread/start`または`turn/start`の結果が不明な時は、

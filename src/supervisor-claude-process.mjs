@@ -8,6 +8,7 @@ import {
 } from "./aiterm-process-transport.mjs";
 import { closeAitermClaudeSession } from "./aiterm-claude-host-runtime.mjs";
 import { readCycleState } from "./cycle-store.mjs";
+import { advanceGenerationFaultProviderBinding } from "./generation-fault-provider-binding.mjs";
 import { advanceGenerationHostProviderRollover } from "./generation-host-provider-binding.mjs";
 import { authorizeGenerationParentRebind } from "./generation-parent-rebind.mjs";
 import { advanceGenerationParentRebindProviderBinding } from "./generation-parent-rebind-provider-binding.mjs";
@@ -114,6 +115,7 @@ export async function createClaudeSupervisorRuntime({
       watchId,
       runtimeRoot: checked.runtime_root,
       launchRequest: ownedRequest,
+      verification: checked,
       transport,
       closeSession: sessionLifecycle === "active",
       dependencies,
@@ -164,7 +166,9 @@ export function attachClaudeSessionShutdown(owned) {
   return owned;
 }
 
-function ownedRuntime({ stateRoot, target, watchId, runtimeRoot, launchRequest, transport, closeSession, dependencies }) {
+function ownedRuntime({
+  stateRoot, target, watchId, runtimeRoot, launchRequest, verification, transport, closeSession, dependencies,
+}) {
   const baseClose = once(() => transport.closeAndWait());
   const providerRuntime = {
     provider: "claude",
@@ -189,6 +193,15 @@ function ownedRuntime({ stateRoot, target, watchId, runtimeRoot, launchRequest, 
   const runtime = {
     providerRuntime,
     providerSignal: transport.terminationSignal,
+    advanceGenerationFault: () => (
+      dependencies.advanceGenerationFaultProviderBinding ?? advanceGenerationFaultProviderBinding
+    )({
+      stateRoot,
+      target,
+      watchId,
+      launchRequest,
+      verification,
+    }, dependencies.faultBindingDependencies),
     advanceGenerationRollover: async () => {
       const request = await rolloverLaunchRequest({
         stateRoot,

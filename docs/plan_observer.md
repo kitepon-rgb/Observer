@@ -893,6 +893,9 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
     [ADR 0147](adr/0147-codex-forward-version-compatibility.md)どおり現行CLIを直接使う。
   - [x] 実watchで露出したtruncated completed-turnの元全文digest境界を
     [ADR 0146](adr/0146-truncated-turn-digest-boundary.md)どおり補正する。
+  - [x] Supervisor hard failure後にfault provider bindingを同じruntimeでterminalまで進め、
+    `fault_required`を残して通常stopだけを完了する欠陥を
+    [ADR 0148](adr/0148-supervisor-fault-terminalization.md)どおり補正する。
   - [x] source package検証、full suite、実Throughline `0.8.7`／Codex CLI `0.144.6`のversion gate通過を確認する。
   - [ ] default state rootに残った旧fault generationを正規回収し、production watchのactive継続を確認する。
 

@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { advanceGenerationFaultProviderBinding } from "../src/generation-fault-provider-binding.mjs";
 import { ObserverError } from "../src/observer-error.mjs";
+import { buildGenerationLaunchRequest } from "../src/parent-launch.mjs";
 import { readGenerationFaultStatus } from "../src/generation-fault.mjs";
 import { initializeGeneration, readGenerationState } from "../src/generation-store.mjs";
 import { acquirePrivateLock } from "../src/private-state.mjs";
@@ -60,6 +62,7 @@ function request(overrides = {}) {
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: providerController.signal,
+      advanceGenerationFault: async () => faultBinding("faulted", "faulted", "fault_terminal_recorded"),
       prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
       advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
@@ -99,6 +102,18 @@ function faultRecord(faultCode) {
     source_generation_status: "active",
     status: "fault_recorded",
     action: "authorize_stop",
+  };
+}
+
+function faultBinding(outcome, phase, reason) {
+  return {
+    schema: "observer.generation_fault_provider_binding_result.v1",
+    provider: "codex",
+    target_id: TARGET_ID,
+    watch_id: WATCH_ID,
+    phase,
+    outcome,
+    reason,
   };
 }
 
@@ -170,6 +185,7 @@ test("timeoutとcommittedは同じruntimeで次stepへ戻り、外部cancelでcl
       return {
         providerRuntime: { provider: "codex" },
         providerSignal: new AbortController().signal,
+        advanceGenerationFault: async () => faultBinding("faulted", "faulted", "fault_terminal_recorded"),
         prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
         advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
         advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
@@ -222,6 +238,7 @@ test("model pending後のplanned rolloverは同じruntimeで回収しprepared cy
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: new AbortController().signal,
+      advanceGenerationFault: async () => faultBinding("faulted", "faulted", "fault_terminal_recorded"),
       prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
       advanceGenerationRollover: async () => {
@@ -292,6 +309,7 @@ test("parent rebindは同じleaseでprogressed／pending／activatedを進めpre
       owned = {
         providerRuntime: { provider: "codex" },
         providerSignal: new AbortController().signal,
+        advanceGenerationFault: async () => faultBinding("faulted", "faulted", "fault_terminal_recorded"),
         prepareGenerationParentRebind: async (input) => {
           prepareCalls += 1;
           assert.deepEqual(input, { cycleId: CYCLE_ID, proposedParent });
@@ -363,6 +381,7 @@ test("process restartはparent rebind journalをproduction stepより先に回�
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: new AbortController().signal,
+      advanceGenerationFault: async () => faultBinding("faulted", "faulted", "fault_terminal_recorded"),
       prepareGenerationParentRebind: async () => assert.fail("restart回収中はprepareを呼ばない"),
       advanceGenerationParentRebind: async () => {
         order.push("rebind");
@@ -398,6 +417,7 @@ test("parent rebind unknownは別hostへfallbackせずfail loudにする", async
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: new AbortController().signal,
+      advanceGenerationFault: async () => faultBinding("faulted", "faulted", "fault_terminal_recorded"),
       prepareGenerationParentRebind: async () => assert.fail("prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => parentRebindResult("unknown", "rebind_required", "codex", "codex", "terminal_unknown"),
       advanceGenerationRollover: async () => assert.fail("planned rolloverは呼ばれない"),
@@ -447,6 +467,7 @@ test("process restartは非active generationをproduction stepより先に回収
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: new AbortController().signal,
+      advanceGenerationFault: async () => faultBinding("faulted", "faulted", "fault_terminal_recorded"),
       prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
       advanceGenerationRollover: async () => {
@@ -485,6 +506,7 @@ test("activation後journal cleanup前のrestartもproduction stepより先に回
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: new AbortController().signal,
+      advanceGenerationFault: async () => faultBinding("faulted", "faulted", "fault_terminal_recorded"),
       prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
       advanceGenerationRollover: async () => {
@@ -507,6 +529,7 @@ test("rollover unknownは別spawnへfallbackせずfail loudにする", async () 
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: new AbortController().signal,
+      advanceGenerationFault: async () => faultBinding("faulted", "faulted", "fault_terminal_recorded"),
       prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
       advanceGenerationRollover: async () => rollover("unknown", "stop_authorized", "terminal_not_observed"),
@@ -517,17 +540,27 @@ test("rollover unknownは別spawnへfallbackせずfail loudにする", async () 
 
 test("model result unknownは永久pollせずfaultとしてfail loudにする", async () => {
   let polls = 0;
+  let faultPolls = 0;
+  let faultAdvances = 0;
   let closed = 0;
   const faults = [];
   const { value, released } = dependencies({
     runSupervisorProductionStep: async () => step("model_result_unknown"),
     waitForModelPoll: async () => { polls += 1; },
+    waitForFaultPoll: async () => { faultPolls += 1; },
     recordGenerationFault: async (input) => { faults.push(input); return faultRecord(input.faultCode); },
   });
   await assert.rejects(runSupervisorProcess(request({
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: new AbortController().signal,
+      advanceGenerationFault: async () => {
+        faultAdvances += 1;
+        faults.push({ advanced: true });
+        if (faultAdvances === 1) return faultBinding("progressed", "stop_authorized", "stop_issued");
+        if (faultAdvances === 2) return faultBinding("pending", "stop_authorized", "terminal_not_observed");
+        return faultBinding("faulted", "faulted", "fault_terminal_recorded");
+      },
       prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
       advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
@@ -535,7 +568,10 @@ test("model result unknownは永久pollせずfaultとしてfail loudにする", 
     }),
   }), value), { code: "E_SUPERVISOR_MODEL_RESULT_UNKNOWN" });
   assert.equal(polls, 0);
-  assert.deepEqual(faults.map(({ faultCode }) => faultCode), ["E_OBSERVER_MODEL_RESULT_UNKNOWN"]);
+  assert.equal(faultPolls, 1);
+  assert.equal(faultAdvances, 3);
+  assert.equal(faults[0].faultCode, "E_OBSERVER_MODEL_RESULT_UNKNOWN");
+  assert.deepEqual(faults.slice(1), [{ advanced: true }, { advanced: true }, { advanced: true }]);
   assert.equal(closed, 1);
   assert.equal(released(), 1);
 });
@@ -558,6 +594,10 @@ test("provider process faultはThroughline waitを取消しcycle mutation前にf
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: providerController.signal,
+      advanceGenerationFault: async () => {
+        order.push("fault-terminal");
+        return faultBinding("faulted", "faulted", "fault_terminal_recorded");
+      },
       prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
       advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
@@ -565,7 +605,7 @@ test("provider process faultはThroughline waitを取消しcycle mutation前にf
     }),
   }), value), { code: "E_SUPERVISOR_PROVIDER_PROCESS_TERMINATED" });
   assert.equal(closed, 1);
-  assert.deepEqual(order, ["fault:E_OBSERVER_PROVIDER_TERMINATED", "close"]);
+  assert.deepEqual(order, ["fault:E_OBSERVER_PROVIDER_TERMINATED", "fault-terminal", "close"]);
   assert.equal(released(), 1);
 });
 
@@ -584,7 +624,7 @@ test("pending generation faultはprovider runtime生成とrollover/rebind再開�
   assert.equal(released(), 1);
 });
 
-test("provider process faultは実stateへrecord-first journalとgeneration fault_requiredを残す", async () => {
+test("provider process faultはrecord-first後、同じhandleのterminal receiptでgeneration/watchをfaultedへ閉じる", async () => {
   const stateRoot = await mkdtemp(join(tmpdir(), "observer-supervisor-fault-integration-"));
   await chmod(stateRoot, 0o700);
   const handle = { kind: "codex.thread", value: "019f671e-87a6-7fb3-a6e7-8c800908206d" };
@@ -605,12 +645,45 @@ test("provider process faultは実stateへrecord-first journalとgeneration faul
   }, { now });
   const providerController = new AbortController();
   providerController.abort();
+  const launchRequest = buildGenerationLaunchRequest({
+    target: TARGET,
+    watchId: WATCH_ID,
+    provider: "codex",
+    runtimeRoot: "/observer",
+  });
+  const terminalReceipt = {
+    schema: "observer.host_receipt.v1",
+    provider: "codex",
+    target_id: TARGET_ID,
+    watch_id: WATCH_ID,
+    outcome: "stopped",
+    handle,
+    terminal: {
+      schema: "observer.codex_turn_terminal.v1",
+      thread_id: handle.value,
+      turn_id: "019f671e-87a6-7fb3-a6e7-8c800908206e",
+      status: "failed",
+      observed_at: "2026-07-26T00:00:00.000Z",
+    },
+  };
   let closed = 0;
   await assert.rejects(runSupervisorProcess(request({
     stateRoot,
     createProviderRuntime: async () => ({
       providerRuntime: { provider: "codex" },
       providerSignal: providerController.signal,
+      advanceGenerationFault: () => advanceGenerationFaultProviderBinding({
+        stateRoot,
+        target: TARGET,
+        watchId: WATCH_ID,
+        launchRequest,
+        session: {},
+      }, {
+        codexRuntime: {
+          observeCodexGenerationTerminal: async () => ({ outcome: "terminal", receipt: terminalReceipt }),
+          stopCodexObserver: async () => ({ terminal_receipt: terminalReceipt }),
+        },
+      }),
       prepareGenerationParentRebind: async () => assert.fail("rebind prepareは呼ばれない"),
       advanceGenerationParentRebind: async () => assert.fail("rebind callbackは呼ばれない"),
       advanceGenerationRollover: async () => assert.fail("rollover callbackは呼ばれない"),
@@ -618,10 +691,10 @@ test("provider process faultは実stateへrecord-first journalとgeneration faul
     }),
   })), { code: "E_SUPERVISOR_PROVIDER_PROCESS_TERMINATED" });
   const fault = await readGenerationFaultStatus({ stateRoot, targetId: TARGET_ID, watchId: WATCH_ID });
-  assert.equal(fault.status, "fault_recorded");
+  assert.equal(fault.status, "faulted");
   assert.equal(fault.fault_code, "E_OBSERVER_PROVIDER_TERMINATED");
-  assert.equal((await readGenerationState({ stateRoot, targetId: TARGET_ID })).status, "fault_required");
-  assert.equal((await readWatchStatus({ stateRoot, targetId: TARGET_ID })).status, "active");
+  assert.equal((await readGenerationState({ stateRoot, targetId: TARGET_ID })).status, "faulted");
+  assert.equal((await readWatchStatus({ stateRoot, targetId: TARGET_ID })).status, "faulted");
   assert.equal(closed, 1);
 });
 

@@ -133,6 +133,7 @@ function ownedRuntime(close = async () => {}) {
   return {
     providerRuntime: { provider: "codex", runtime_root: RUNTIME_ROOT, session },
     providerSignal: new AbortController().signal,
+    advanceGenerationFault: async () => {},
     advanceGenerationRollover: async () => {},
     prepareGenerationParentRebind: async () => {},
     advanceGenerationParentRebind: async () => {},

@@ -6,6 +6,7 @@ import {
   startCodexAppServerTransport,
   verifyCodexAppServerRuntime,
 } from "./codex-process-transport.mjs";
+import { advanceGenerationFaultProviderBinding } from "./generation-fault-provider-binding.mjs";
 import { advanceGenerationHostProviderRollover } from "./generation-host-provider-binding.mjs";
 import {
   authorizeGenerationParentRebind,
@@ -98,6 +99,15 @@ export async function createCodexSupervisorRuntime({ stateRoot, target, watchId,
         session: transport,
       },
       providerSignal: transport.terminationSignal,
+      advanceGenerationFault: () => (
+        dependencies.advanceGenerationFaultProviderBinding ?? advanceGenerationFaultProviderBinding
+      )({
+        stateRoot,
+        target,
+        watchId,
+        launchRequest,
+        session: transport,
+      }, dependencies.faultBindingDependencies),
       advanceGenerationRollover: () => (
         dependencies.advanceGenerationHostProviderRollover ?? advanceGenerationHostProviderRollover
       )({

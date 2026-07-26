@@ -24,6 +24,7 @@ const RECOVERABLE_STEP = new Set(["model_pending"]);
 const CONTINUING_STEP = new Set(["timeout", "committed"]);
 const WATCH_TERMINAL = new Set(["stopping", "stopped", "faulted"]);
 const DEFAULT_POLL_INTERVAL_MS = 1_000;
+const DEFAULT_FAULT_RECOVERY_ATTEMPTS = 30;
 
 export async function runSupervisorProcess({
   stateRoot,
@@ -54,6 +55,7 @@ export async function runSupervisorProcess({
 
   let primary = null;
   let closeProviderRuntime = null;
+  let providerRuntime = null;
   try {
     const initial = await observeWatch({ stateRoot, target, watchId }, dependencies);
     const initialTerminal = terminalForWatch(initial);
@@ -63,6 +65,7 @@ export async function runSupervisorProcess({
 
     const owned = await createProviderRuntime();
     const runtime = validateOwnedRuntime(owned);
+    providerRuntime = runtime;
     closeProviderRuntime = runtime.close;
     const afterRuntime = await observeWatch({ stateRoot, target, watchId, provider: initial.provider }, dependencies);
     const afterRuntimeTerminal = terminalForWatch(afterRuntime);
@@ -141,7 +144,7 @@ export async function runSupervisorProcess({
     }
   } catch (error) {
     let failure = error;
-    if (shouldRecordFault(error)) {
+    if (providerRuntime !== null && shouldRecordFault(error)) {
       try {
         const watch = await (dependencies.readWatchStatus ?? readWatchStatus)({ stateRoot, targetId: target.targetId });
         if (watch?.watch_id === watchId && watch.status === "active") {
@@ -157,6 +160,13 @@ export async function runSupervisorProcess({
             provider: watch.provider,
             faultCode: faultCodeFor(error),
           });
+          await finalizeRecordedGenerationFault({
+            stateRoot,
+            target,
+            watchId,
+            runtime: providerRuntime,
+            pollIntervalMs,
+          }, dependencies);
         }
       } catch (faultError) {
         failure = new AggregateError([error, faultError], "Supervisor failureとgeneration fault記録が失敗しました");
@@ -309,9 +319,12 @@ function terminalForWatch(watch) {
 
 function validateOwnedRuntime(value) {
   if (!isPlainObject(value) || Object.keys(value).sort().join(",") !==
-      "advanceGenerationParentRebind,advanceGenerationRollover,close,prepareGenerationParentRebind,providerRuntime,providerSignal" ||
+      "advanceGenerationFault,advanceGenerationParentRebind,advanceGenerationRollover,close,prepareGenerationParentRebind,providerRuntime,providerSignal" ||
       !isPlainObject(value.providerRuntime) || !(value.providerSignal instanceof AbortSignal) || typeof value.close !== "function") {
     fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "Supervisor provider runtime所有権が不正です");
+  }
+  if (typeof value.advanceGenerationFault !== "function") {
+    fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "generation fault callbackが不正です");
   }
   if (typeof value.advanceGenerationRollover !== "function") {
     fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "generation rollover callbackが不正です");
@@ -320,6 +333,38 @@ function validateOwnedRuntime(value) {
     fail("E_SUPERVISOR_PROCESS_RUNTIME_INVALID", "generation parent rebind callbackが不正です");
   }
   return value;
+}
+
+async function finalizeRecordedGenerationFault({
+  stateRoot, target, watchId, runtime, pollIntervalMs,
+}, dependencies) {
+  if (runtime === null) {
+    fail("E_SUPERVISOR_GENERATION_FAULT_RUNTIME_MISSING", "generation fault回収用runtimeがありません");
+  }
+  const attempts = dependencies.faultRecoveryAttempts ?? DEFAULT_FAULT_RECOVERY_ATTEMPTS;
+  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 300) {
+    fail("E_SUPERVISOR_GENERATION_FAULT_ATTEMPTS_INVALID", "generation fault回収attemptsが不正です");
+  }
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const transition = validateGenerationFaultResult(await runtime.advanceGenerationFault(), {
+      target,
+      watchId,
+      provider: runtime.providerRuntime.provider,
+    });
+    if (transition.outcome === "faulted") return;
+    if (transition.outcome === "unknown") {
+      fail("E_SUPERVISOR_GENERATION_FAULT_UNKNOWN", "generation faultのterminal結果をexact回収できません");
+    }
+    if (transition.outcome === "progressed") continue;
+    if (transition.outcome !== "pending") {
+      fail("E_SUPERVISOR_GENERATION_FAULT_INVALID", "generation fault結果をprocessへ適用できません");
+    }
+    await (dependencies.waitForFaultPoll ?? waitForModelPoll)(
+      pollIntervalMs,
+      runtime.providerSignal,
+    );
+  }
+  fail("E_SUPERVISOR_GENERATION_FAULT_TIMEOUT", "generation faultのterminal確認がbounded attempts内に完了しませんでした");
 }
 
 async function resumeGenerationParentRebind({
@@ -530,6 +575,19 @@ function validateGenerationRolloverResult(value, { target, watchId, provider }) 
       !["pending", "progressed", "activated", "unknown"].includes(value.outcome) ||
       typeof value.reason !== "string" || value.reason.length === 0 || value.reason.length > 128) {
     fail("E_SUPERVISOR_GENERATION_ROLLOVER_INVALID", "generation rollover binding結果が不正です");
+  }
+  return value;
+}
+
+function validateGenerationFaultResult(value, { target, watchId, provider }) {
+  if (!isPlainObject(value) ||
+      Object.keys(value).sort().join(",") !== "outcome,phase,provider,reason,schema,target_id,watch_id" ||
+      value.schema !== "observer.generation_fault_provider_binding_result.v1" || value.provider !== provider ||
+      value.target_id !== target.targetId || value.watch_id !== watchId ||
+      !["fault_recorded", "stop_authorized", "terminal_observed", "faulted"].includes(value.phase) ||
+      !["pending", "progressed", "faulted", "unknown"].includes(value.outcome) ||
+      typeof value.reason !== "string" || value.reason.length === 0 || value.reason.length > 128) {
+    fail("E_SUPERVISOR_GENERATION_FAULT_INVALID", "generation fault binding結果が不正です");
   }
   return value;
 }

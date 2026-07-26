@@ -308,6 +308,7 @@ function validateOwnedRuntime(value, request) {
       value.providerRuntime.session_id !== request.host.session_name ||
       !value.providerRuntime.transport || typeof value.providerRuntime.transport.callTool !== "function" ||
       !(value.providerSignal instanceof AbortSignal) || typeof value.close !== "function" ||
+      typeof value.advanceGenerationFault !== "function" ||
       typeof value.advanceGenerationRollover !== "function" ||
       typeof value.prepareGenerationParentRebind !== "function" ||
       typeof value.advanceGenerationParentRebind !== "function") {

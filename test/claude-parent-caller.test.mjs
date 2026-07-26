@@ -84,6 +84,7 @@ function claudeRuntime(close = async () => {}) {
       transport: { callTool: async () => {} },
     },
     providerSignal: new AbortController().signal,
+    advanceGenerationFault: async () => {},
     advanceGenerationRollover: async () => {},
     prepareGenerationParentRebind: async () => {},
     advanceGenerationParentRebind: async () => {},
@@ -118,7 +119,7 @@ function claudeDependencies(overrides = {}) {
 
 test("Claude parent callerはdurable launch→active→generation後に一度だけSupervisorへruntime所有権を譲渡する", async () => {
   const calls = [];
-  const runtime = { providerRuntime: { provider: "claude", runtime_root: "/observer", session_id: SESSION_ID, transport: { callTool: async () => {} } }, providerSignal: new AbortController().signal, advanceGenerationRollover: async () => {}, prepareGenerationParentRebind: async () => {}, advanceGenerationParentRebind: async () => {}, close: async () => { calls.push("close"); } };
+  const runtime = { providerRuntime: { provider: "claude", runtime_root: "/observer", session_id: SESSION_ID, transport: { callTool: async () => {} } }, providerSignal: new AbortController().signal, advanceGenerationFault: async () => {}, advanceGenerationRollover: async () => {}, prepareGenerationParentRebind: async () => {}, advanceGenerationParentRebind: async () => {}, close: async () => { calls.push("close"); } };
   const result = await runClaudeParentWatchProcess({ stateRoot: "/state", projectRoot: "/project", runtimeRoot: "/observer", throughlineCommand: "/bin/throughline", aitermCommand: "/bin/aiterm", parentContext: { schema: "observer.parent_watch_context.v1", parent_provider: "claude", runtime_root: "/observer", expected_previous_watch_id: null, authorization: { schema: "observer.parent_authorization.v1", intent: "start_observer", parent_provider: "claude" } } }, {
     runProductDiagnostics: async () => { calls.push("product"); return { schema: "observer.product_diagnostics.v1", status: "ready" }; },
     verifyThroughlineRuntime: async () => { calls.push("throughline"); return { schema: "observer.throughline_process_verification.v1", runtime_root: "/observer" }; },
@@ -159,7 +160,7 @@ test("Claude parent callerはlaunch response lossを同じsessionのexact recove
   const calls = [];
   const request = { schema: "observer.parent_launch_request.v1", provider: "claude", watch_id: WATCH_ID, target_id: TARGET_ID, project_root: "/project", runtime_root: "/observer", required_handle_kind: "claude.session", host: { kind: "aiterm.claude_agent.v1", cwd: "/observer", agent_done: true, session_name: SESSION_ID }, child_start: { schema: "observer.child_start.v1", mode: "observe", provider: "claude", watch_id: WATCH_ID, target_id: TARGET_ID, project_root: "/project", runtime_root: "/observer" } };
   const receipt = { schema: "observer.host_receipt.v1", provider: "claude", watch_id: WATCH_ID, target_id: TARGET_ID, outcome: "spawned", handle: { kind: "claude.session", value: SESSION_ID } };
-  const runtime = { providerRuntime: { provider: "claude", runtime_root: "/observer", session_id: SESSION_ID, transport: { callTool: async () => {} } }, providerSignal: new AbortController().signal, advanceGenerationRollover: async () => {}, prepareGenerationParentRebind: async () => {}, advanceGenerationParentRebind: async () => {}, close: async () => {} };
+  const runtime = { providerRuntime: { provider: "claude", runtime_root: "/observer", session_id: SESSION_ID, transport: { callTool: async () => {} } }, providerSignal: new AbortController().signal, advanceGenerationFault: async () => {}, advanceGenerationRollover: async () => {}, prepareGenerationParentRebind: async () => {}, advanceGenerationParentRebind: async () => {}, close: async () => {} };
   await runClaudeParentWatchProcess({ stateRoot: "/state", projectRoot: "/project", runtimeRoot: "/observer", throughlineCommand: "/bin/throughline", aitermCommand: "/bin/aiterm", parentContext: { schema: "observer.parent_watch_context.v1", parent_provider: "claude", runtime_root: "/observer", expected_previous_watch_id: null, authorization: { schema: "observer.parent_authorization.v1", intent: "start_observer", parent_provider: "claude" } } }, {
     runProductDiagnostics: async () => ({ schema: "observer.product_diagnostics.v1", status: "ready" }),
     verifyThroughlineRuntime: async () => ({ schema: "observer.throughline_process_verification.v1", runtime_root: "/observer" }),

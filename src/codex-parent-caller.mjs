@@ -459,6 +459,7 @@ function validateOwnedRuntime(value, runtimeRoot) {
       value.providerRuntime.provider !== "codex" || value.providerRuntime.runtime_root !== runtimeRoot ||
       !value.providerRuntime.session || typeof value.providerRuntime.session.request !== "function" ||
       !(value.providerSignal instanceof AbortSignal) || typeof value.close !== "function" ||
+      typeof value.advanceGenerationFault !== "function" ||
       typeof value.advanceGenerationRollover !== "function" ||
       typeof value.prepareGenerationParentRebind !== "function" ||
       typeof value.advanceGenerationParentRebind !== "function") {
