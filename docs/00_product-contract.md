@@ -111,11 +111,17 @@ Codex hostはpersistent app-server threadを使い、thread IDをwatchのprivate
 Observer所有のdurable provider operation journalへ分離して保存する。`thread/start`または`turn/start`の結果が不明な時は、
 同じObserver `cwd`に見えるthreadやturnを推測でattachせず、`*_start_unknown`を保持して再実行を止める。
 `thread/read`は保存済みIDのterminal照合、`thread/resume`は再接続後の継続とevent購読にだけ使う。
+`turn/start` ACK直後はrollout metadataのflush前であり得るため`thread/read`を発行しない。同じthread ID／turn IDの
+`turn/completed` notificationをexact相関した後だけdurable threadをreadし、notificationと保存statusを再照合する。
 
 Codex停止では`turn/interrupt`の空ACKを終端証拠にしない。同じthread ID／turn IDの
 `completed | interrupted | failed`観測をCodex固有terminal receiptへ束縛し、そのreceiptをparent launch coreが
 検証した後だけwatchを閉じる。app-server process／connectionは再作成可能なtransportであり、provider handleにしない。
-製品ObserverのCodex app-serverは、ユーザー全体のlifecycle hookとpluginを無効化して起動する。
+製品ObserverのCodex app-serverは、Observer state配下のisolated `CODEX_HOME`で起動し、ユーザー全体の
+config、lifecycle hook、plugin、skill、MCPを読み込まない。認証はowner本人かつgroup／other権限なしの
+元`auth.json`へ、isolated home内の固定symlink一件だけで接続し、secret本体を複製しない。
+Apps、browser、computer use、image generation、multi-agent、shell／unified exec等の不要featureも無効化する。
+`mcpServer/startupStatus/updated`が一件でも届いた場合は隔離違反としてwatchをfaultさせる。
 Observer AIはcanonical inputだけを評価し、shell、MCP、plugin、外部toolを使わないため、
 親AI向けの自動注入やplugin startupを子turnへ継承しない。
 thread／turnの`cwd`は常にcanonical Observer rootで、target `project_root`はchild envelopeにだけ保持する。
@@ -391,7 +397,8 @@ v1のsupported platformはmacOSとする。
 - target IDはcanonical project pathから導くdigestとし、path文字列をdirectory名へ直接使わない。
 - directoryは`0700`、state / message / receiptは`0600`を要求する。
 - temp fileは必ず最終fileと同じdirectory / filesystemへ作り、検証後にatomic renameする。
-- symlink、owner不一致、group / other permission、相対path、path traversalをfail closedで拒否する。
+- symlinkは`codex-runtime/home/auth.json`から検証済みの元Codex `auth.json`への固定認証connectorだけを許す。
+  それ以外のsymlink、owner不一致、group / other permission、相対path、path traversalをfail closedで拒否する。
 - working tree、Throughline、Claude、Codexの管理領域へObserver stateを書かない。
 - test用の明示state rootは許可するが、通常利用者の必須入力はproject絶対pathだけとする。
 - Linux / Windowsはowner、mode、atomicity、installerを実証するまで`unsupported`または`unverified`と表示し、自動fallbackしない。

@@ -77,7 +77,7 @@ function expectCode(code) {
 
 test("connection handshakeはstable APIのbounded client identityだけを送る", () => {
   assert.deepEqual(buildCodexInitializeParams(), {
-    clientInfo: { name: "observer", title: "Observer", version: "0.1.3" },
+    clientInfo: { name: "observer", title: "Observer", version: "0.1.4" },
     capabilities: { optOutNotificationMethods: ["item/agentMessage/delta", "turn/diff/updated", "turn/plan/updated"] },
   });
 });

@@ -48,6 +48,18 @@
   `status=interrupted`を同じthread／turn IDで観測して初めてterminalとする。
 - `turn/completed`は`completed | interrupted | failed`を区別する。`error` notificationやtransport終了を
   `completed`へ丸めない。
+- Codex CLI 0.144.6では`turn/start` ACK直後の`thread/read(includeTurns=true)`が、rollout metadataの
+  flush前に`-32603: rollout ... is empty`を返すことを実測した。`turn/completed`をexact相関してから
+  durable readする。
+
+## production実行profile
+
+- `--disable hooks --disable plugins`だけではglobal `config.toml`由来MCPを無効化しない。
+- 2026-07-26の0.144.6実測では、認証元`auth.json`へのsymlinkだけを持つisolated `CODEX_HOME`で
+  ChatGPT認証を維持しつつ、MCP startup 0、global AGENTS／config／hooks／plugins非継承、
+  Observer repoのAGENTSだけをinstruction sourceにできた。
+- Apps、browser、computer use、image generation、multi-agent、shell／unified exec等の不要featureは
+  app-server argvで無効化し、残存MCP notificationを隔離違反として扱う。
 
 ## AGENTS.mdとproject identity
 

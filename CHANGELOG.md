@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.4
+
+- Codex bootstrapは`turn/start`直後に`thread/read`せず、exactな`turn/completed`通知後にdurable threadを再照合する。
+- production Codex子をObserver state内のisolated `CODEX_HOME`で起動し、認証だけを0600の元ファイルへsymlink接続する。
+- hooks、plugins、MCP、Apps、shell等の不要surfaceを隔離し、MCP startup通知が残った場合はwatchをfail loudにする。
+
 ## 0.1.3
 
 - terminal watchから新watchを開始する時、pendingのない旧generation stateだけを新watchへatomic置換できるようにする。

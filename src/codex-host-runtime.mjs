@@ -48,8 +48,7 @@ const JOURNAL_STATUSES = new Set([
 ]);
 const TERMINAL_STATUSES = new Set(["completed", "interrupted", "failed"]);
 const GENERATION_TERMINAL_OBSERVATION_STATUSES = new Set(["running", "stopping", ...TERMINAL_STATUSES]);
-const CODEX_BOOTSTRAP_POLL_INTERVAL_MS = 1_000;
-const CODEX_BOOTSTRAP_ATTEMPTS = 60;
+const CODEX_BOOTSTRAP_TIMEOUT_MS = 60_000;
 const claimedSessions = new WeakSet();
 const initializedSessions = new WeakSet();
 
@@ -333,7 +332,8 @@ export async function readCodexObserverThread({ request, threadId, session } = {
   let result;
   try {
     result = await session.request("thread/read", buildCodexThreadReadParams(threadId));
-  } catch {
+  } catch (error) {
+    if (error instanceof ObserverError && error.code.startsWith("E_CODEX_")) throw error;
     fail("E_CODEX_THREAD_READ_FAILED", "保存済みCodex threadをreadできません");
   }
   return parseCodexThreadReadResult({ result, expectedThreadId: threadId, expectedCwd: request.runtime_root, observedAt: now(dependencies) });
@@ -349,24 +349,26 @@ export async function waitForCodexBootstrapCompletion({ request, operation, sess
     fail("E_CODEX_BOOTSTRAP_OPERATION_INVALID", "Codex bootstrap operationが不正です");
   }
   if (operation.status !== "inProgress") fail("E_CODEX_BOOTSTRAP_OPERATION_INVALID", "Codex bootstrap operationがrunningではありません");
-  const attempts = dependencies.bootstrapAttempts ?? CODEX_BOOTSTRAP_ATTEMPTS;
-  const pollIntervalMs = dependencies.bootstrapPollIntervalMs ?? CODEX_BOOTSTRAP_POLL_INTERVAL_MS;
-  if (!Number.isSafeInteger(attempts) || attempts < 1 || attempts > 300 ||
-      !Number.isSafeInteger(pollIntervalMs) || pollIntervalMs < 0 || pollIntervalMs > 60_000) {
-    fail("E_CODEX_BOOTSTRAP_WAIT_CONFIG", "Codex bootstrap wait設定が不正です");
+  const wait = dependencies.waitForCodexTurnTerminal ?? session.waitForTurnTerminal?.bind(session);
+  if (typeof wait !== "function") fail("E_CODEX_BOOTSTRAP_WAIT_UNAVAILABLE", "Codex terminal notification待機面がありません");
+  const terminal = await wait({
+    threadId: operation.thread_id,
+    turnId: operation.turn_id,
+    timeoutMs: dependencies.bootstrapTimeoutMs ?? CODEX_BOOTSTRAP_TIMEOUT_MS,
+  });
+  if (!isPlainObject(terminal) || terminal.schema !== "observer.codex_turn_terminal_notification.v1" ||
+      terminal.thread_id !== operation.thread_id || terminal.turn_id !== operation.turn_id ||
+      !["completed", "interrupted", "failed"].includes(terminal.status)) {
+    fail("E_CODEX_BOOTSTRAP_TERMINAL_INVALID", "Codex bootstrap terminal notificationが不正です");
   }
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const observation = await readCodexObserverThread({ request, threadId: operation.thread_id, session }, dependencies);
-    const turn = observation.turns.find((entry) => entry.turn_id === operation.turn_id);
-    if (!turn) fail("E_CODEX_BOOTSTRAP_TURN_MISSING", "保存済みCodex bootstrap turnを回収できません");
-    if (turn.status === "completed") return observation;
-    if (["failed", "interrupted"].includes(turn.status)) {
-      fail("E_CODEX_BOOTSTRAP_TERMINAL_FAILURE", "Codex bootstrap turnが正常完了しませんでした");
-    }
-    if (turn.status !== "inProgress") fail("E_CODEX_BOOTSTRAP_STATE_INVALID", "Codex bootstrap turn状態が不正です");
-    if (attempt + 1 < attempts) await (dependencies.sleep ?? delay)(pollIntervalMs);
+  if (terminal.status !== "completed") {
+    fail("E_CODEX_BOOTSTRAP_TERMINAL_FAILURE", "Codex bootstrap turnが正常完了しませんでした");
   }
-  fail("E_CODEX_BOOTSTRAP_TIMEOUT", "Codex bootstrap turnが期限内に完了しませんでした");
+  const observation = await readCodexObserverThread({ request, threadId: operation.thread_id, session }, dependencies);
+  const turn = observation.turns.find((entry) => entry.turn_id === operation.turn_id);
+  if (!turn) fail("E_CODEX_BOOTSTRAP_TURN_MISSING", "保存済みCodex bootstrap turnを回収できません");
+  if (turn.status !== terminal.status) fail("E_CODEX_BOOTSTRAP_TERMINAL_MISMATCH", "Codex bootstrap terminal状態がdurable threadと一致しません");
+  return observation;
 }
 
 export async function stopCodexObserver({ stateRoot, request, launchRequest, session, previousInterruptReceipt = null, generationId = null } = {}, dependencies = {}) {
@@ -621,10 +623,6 @@ function validateTimestamp(value) {
 
 function now(dependencies) {
   return (dependencies.now ?? (() => new Date().toISOString()))();
-}
-
-function delay(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function serialize(value) {

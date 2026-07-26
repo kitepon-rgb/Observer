@@ -34,3 +34,10 @@ Observer 0.1.2でCodex bootstrapは完了したが、新watchをactiveへ進め�
 
 - npm公開前は変更commitをrevertする。
 - 公開後は0.1.3をunpublishせず、必要ならdeprecatedにして0.1.2へglobal installを戻す。
+
+## Outcome
+
+0.1.3のcommit／push／tag／npm publish／global installとgeneration切替を完了した。
+installed watchは新generationへ進んだ後、Codex 0.144.6の`turn/start`直後に
+empty rolloutを`thread/read`したためapp-server errorで停止した。generation切替自体は受入済みとし、
+production watchの`active`継続は[ADR 0152](0152-codex-bootstrap-terminal-gate-and-isolated-home.md)へ引き継ぐ。

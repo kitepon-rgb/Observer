@@ -1,8 +1,8 @@
 import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
-import { access, lstat, open, realpath, stat } from "node:fs/promises";
-import { dirname, isAbsolute, normalize } from "node:path";
+import { access, lstat, mkdir, open, readlink, realpath, stat, symlink } from "node:fs/promises";
+import { dirname, isAbsolute, join, normalize } from "node:path";
 
 import { ObserverError, fail } from "./observer-error.mjs";
 import { isStableSemverAtLeast } from "./stable-semver.mjs";
@@ -14,8 +14,31 @@ export const SUPPORTED_CODEX_VERSION_RANGE = `>=${MINIMUM_CODEX_VERSION}`;
 
 const MAX_LINE_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 1024 * 1024;
+const MAX_TERMINAL_NOTIFICATIONS = 128;
 const VERSION_TIMEOUT_MS = 5_000;
 const METHOD_RE = /^[A-Za-z][A-Za-z0-9]*(?:\/[A-Za-z][A-Za-z0-9]*)*$/;
+const UUID_V7_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const TERMINAL_TURN_STATUSES = new Set(["completed", "interrupted", "failed"]);
+const DISABLED_CODEX_FEATURES = Object.freeze([
+  "apps",
+  "browser_use",
+  "browser_use_external",
+  "code_mode_host",
+  "computer_use",
+  "hooks",
+  "image_generation",
+  "in_app_browser",
+  "multi_agent",
+  "plugins",
+  "remote_plugin",
+  "request_permissions_tool",
+  "shell_tool",
+  "skill_mcp_dependency_install",
+  "tool_call_mcp_elicitation",
+  "tool_suggest",
+  "unified_exec",
+  "workspace_dependencies",
+]);
 const ENV_ALLOWLIST = Object.freeze([
   "CODEX_HOME", "HOME", "LANG", "LC_ALL", "PATH", "SHELL", "TMPDIR", "USER", "USERPROFILE",
   "XDG_CONFIG_HOME", "XDG_STATE_HOME",
@@ -29,7 +52,7 @@ export async function verifyCodexAppServerRuntime({ runtimeRoot, codexCommand } 
   const codex = await inspect({ candidate: codexCommand, effectiveUid }, dependencies);
   await recheckExecutableIdentity(codex, dependencies);
   const run = dependencies.runFile ?? runFile;
-  const version = await run(codex.realpath, ["--version"], commandOptions(canonicalRoot), dependencies);
+  const version = await run(codex.realpath, ["--version"], commandOptions(canonicalRoot, dependencies.env ?? process.env), dependencies);
   const actualVersion = version.stdout.trim();
   if (version.exit_code !== 0 || version.stderr !== "" || !isSupportedCodexVersion(actualVersion)) {
     fail("E_CODEX_VERSION_UNSUPPORTED", "Codex CLI versionが対応範囲外です");
@@ -38,20 +61,23 @@ export async function verifyCodexAppServerRuntime({ runtimeRoot, codexCommand } 
   return { schema: CODEX_PROCESS_VERIFICATION_SCHEMA, runtime_root: canonicalRoot, codex: { ...codex, version: actualVersion } };
 }
 
-export async function startCodexAppServerTransport({ verification, onNotification = null } = {}, dependencies = {}) {
+export async function startCodexAppServerTransport({ verification, stateRoot, onNotification = null } = {}, dependencies = {}) {
   validateVerification(verification);
   await recheckExecutableIdentity(verification.codex, dependencies);
   if (onNotification !== null && typeof onNotification !== "function") fail("E_CODEX_NOTIFICATION_HANDLER_INVALID", "Codex notification handlerが不正です");
+  const isolatedCodexHome = await (
+    dependencies.prepareIsolatedCodexHome ?? prepareIsolatedCodexHome
+  )({ stateRoot, sourceEnv: dependencies.env ?? process.env }, dependencies);
+  await recheckExecutableIdentity(verification.codex, dependencies);
   const spawnProcess = dependencies.spawn ?? spawn;
   let child;
   try {
     child = spawnProcess(verification.codex.realpath, [
       "app-server",
-      "--disable", "hooks",
-      "--disable", "plugins",
+      ...DISABLED_CODEX_FEATURES.flatMap((feature) => ["--disable", feature]),
     ], {
       cwd: verification.runtime_root,
-      env: boundedEnv(dependencies.env ?? process.env),
+      env: { ...boundedEnv(dependencies.env ?? process.env), CODEX_HOME: isolatedCodexHome },
       detached: true,
       shell: false,
       stdio: ["pipe", "pipe", "pipe"],
@@ -84,6 +110,8 @@ export class CodexProcessTransport {
   #probeProcessGroup;
   #sentSignals = new Set();
   #terminationFailure = null;
+  #terminalNotifications = new Map();
+  #terminalWaiters = new Map();
 
   constructor(child, {
     onNotification = null,
@@ -124,6 +152,36 @@ export class CodexProcessTransport {
     this.#requireOpen();
     validateMethodAndParams(method, params);
     return this.#write({ method, params });
+  }
+
+  waitForTurnTerminal({ threadId, turnId, timeoutMs = 60_000 } = {}) {
+    this.#requireOpen();
+    if (!UUID_V7_RE.test(threadId) || !UUID_V7_RE.test(turnId) ||
+        !Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 300_000) {
+      fail("E_CODEX_TURN_TERMINAL_WAIT_INVALID", "Codex terminal notification待機条件が不正です");
+    }
+    const key = `${threadId}:${turnId}`;
+    const observed = this.#terminalNotifications.get(key);
+    if (observed !== undefined) return Promise.resolve(structuredClone(observed));
+    if (this.#terminalWaiters.has(key)) {
+      fail("E_CODEX_TURN_TERMINAL_WAIT_DUPLICATE", "同じCodex turnのterminal notificationを重複待機できません");
+    }
+    return new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.#terminalWaiters.delete(key);
+        reject(new ObserverError("E_CODEX_TURN_TERMINAL_TIMEOUT", "Codex turn terminal notificationが期限内に届きません"));
+      }, timeoutMs);
+      this.#terminalWaiters.set(key, {
+        resolve: (receipt) => {
+          clearTimeout(timeout);
+          resolve(structuredClone(receipt));
+        },
+        reject: (error) => {
+          clearTimeout(timeout);
+          reject(error);
+        },
+      });
+    });
   }
 
   close() {
@@ -221,11 +279,47 @@ export class CodexProcessTransport {
     if (!hasExactKeys(message, ["method", "params"]) || !METHOD_RE.test(message.method) || !isPlainObject(message.params)) {
       return this.#abort("E_CODEX_TRANSPORT_PROTOCOL", "Codex app-server notification schemaが不正です");
     }
+    if (message.method === "mcpServer/startupStatus/updated") {
+      return this.#abort("E_CODEX_MCP_SURFACE_EXPOSED", "Observer子へMCP surfaceが公開されました");
+    }
+    this.#recordTerminalNotification(message);
     if (this.#onNotification === null) return;
     try {
       this.#onNotification(structuredClone(message));
     } catch {
       this.#abort("E_CODEX_TRANSPORT_PROTOCOL", "Codex notification handlerが失敗しました");
+    }
+  }
+
+  #recordTerminalNotification(message) {
+    if (message.method !== "turn/completed") return;
+    const threadId = message.params.threadId;
+    const turn = message.params.turn;
+    if (!UUID_V7_RE.test(threadId) || !isPlainObject(turn) || !UUID_V7_RE.test(turn.id) ||
+        !TERMINAL_TURN_STATUSES.has(turn.status)) {
+      this.#abort("E_CODEX_TRANSPORT_PROTOCOL", "Codex turn/completed notificationが不正です");
+      return;
+    }
+    const key = `${threadId}:${turn.id}`;
+    const receipt = {
+      schema: "observer.codex_turn_terminal_notification.v1",
+      thread_id: threadId,
+      turn_id: turn.id,
+      status: turn.status,
+    };
+    const previous = this.#terminalNotifications.get(key);
+    if (previous !== undefined && previous.status !== receipt.status) {
+      this.#abort("E_CODEX_TRANSPORT_PROTOCOL", "Codex turn/completed notificationが競合しました");
+      return;
+    }
+    this.#terminalNotifications.set(key, receipt);
+    while (this.#terminalNotifications.size > MAX_TERMINAL_NOTIFICATIONS) {
+      this.#terminalNotifications.delete(this.#terminalNotifications.keys().next().value);
+    }
+    const waiter = this.#terminalWaiters.get(key);
+    if (waiter !== undefined) {
+      this.#terminalWaiters.delete(key);
+      waiter.resolve(receipt);
     }
   }
 
@@ -250,6 +344,8 @@ export class CodexProcessTransport {
     const error = new ObserverError(code, message);
     for (const pending of this.#pending.values()) pending.reject(error);
     this.#pending.clear();
+    for (const waiter of this.#terminalWaiters.values()) waiter.reject(error);
+    this.#terminalWaiters.clear();
     try { this.#child.stdin.end(); } catch {}
     if (terminate) this.#ensureProcessGroupSignal("SIGTERM");
   }
@@ -416,8 +512,56 @@ function validateMethodAndParams(method, params) {
   if (typeof method !== "string" || !METHOD_RE.test(method) || !isPlainObject(params)) fail("E_CODEX_TRANSPORT_REQUEST_INVALID", "Codex app-server methodまたはparamsが不正です");
 }
 
-function commandOptions(cwd) {
-  return { cwd, env: boundedEnv(), timeout: VERSION_TIMEOUT_MS, maxBuffer: MAX_LINE_BYTES };
+async function prepareIsolatedCodexHome({ stateRoot, sourceEnv }, dependencies) {
+  if (typeof stateRoot !== "string" || !isAbsolute(stateRoot) || normalize(stateRoot) !== stateRoot || hasControl(stateRoot)) {
+    fail("E_CODEX_ISOLATED_HOME_INVALID", "Observer state rootが不正です");
+  }
+  const sourceHome = typeof sourceEnv.CODEX_HOME === "string"
+    ? sourceEnv.CODEX_HOME
+    : typeof sourceEnv.HOME === "string"
+      ? join(sourceEnv.HOME, ".codex")
+      : null;
+  if (sourceHome === null || !isAbsolute(sourceHome) || normalize(sourceHome) !== sourceHome || hasControl(sourceHome)) {
+    fail("E_CODEX_AUTH_SOURCE_INVALID", "Codex認証元homeが不正です");
+  }
+  const authSource = join(sourceHome, "auth.json");
+  const effectiveUid = dependencies.effectiveUid ?? (typeof process.getuid === "function" ? process.getuid() : null);
+  if (!Number.isInteger(effectiveUid)) fail("E_CODEX_AUTH_SOURCE_INVALID", "Codex認証元ownerを確認できません");
+  let authInfo;
+  try {
+    authInfo = await (dependencies.lstat ?? lstat)(authSource);
+  } catch {
+    fail("E_CODEX_AUTH_SOURCE_INVALID", "Codex認証元を確認できません");
+  }
+  if (!authInfo.isFile() || authInfo.isSymbolicLink() || authInfo.uid !== effectiveUid ||
+      (authInfo.mode & 0o077) !== 0) {
+    fail("E_CODEX_AUTH_SOURCE_INVALID", "Codex認証元のtype、owner、modeが不正です");
+  }
+
+  const isolatedHome = join(stateRoot, "codex-runtime", "home");
+  await (dependencies.mkdir ?? mkdir)(isolatedHome, { recursive: true, mode: 0o700 });
+  const canonicalHome = await (dependencies.realpath ?? realpath)(isolatedHome);
+  if (canonicalHome !== isolatedHome) fail("E_CODEX_ISOLATED_HOME_INVALID", "Codex隔離homeはcanonical pathである必要があります");
+  const homeInfo = await (dependencies.lstat ?? lstat)(isolatedHome);
+  if (!homeInfo.isDirectory() || homeInfo.isSymbolicLink() || homeInfo.uid !== effectiveUid ||
+      (homeInfo.mode & 0o077) !== 0) {
+    fail("E_CODEX_ISOLATED_HOME_INVALID", "Codex隔離homeのtype、owner、modeが不正です");
+  }
+  const authLink = join(isolatedHome, "auth.json");
+  try {
+    await (dependencies.symlink ?? symlink)(authSource, authLink);
+  } catch (error) {
+    if (error?.code !== "EEXIST") fail("E_CODEX_AUTH_LINK_FAILED", "Codex認証connectorを作成できません");
+    const linkInfo = await (dependencies.lstat ?? lstat)(authLink);
+    if (!linkInfo.isSymbolicLink() || await (dependencies.readlink ?? readlink)(authLink) !== authSource) {
+      fail("E_CODEX_AUTH_LINK_MISMATCH", "Codex認証connectorが認証元と一致しません");
+    }
+  }
+  return isolatedHome;
+}
+
+function commandOptions(cwd, env = process.env) {
+  return { cwd, env: boundedEnv(env), timeout: VERSION_TIMEOUT_MS, maxBuffer: MAX_LINE_BYTES };
 }
 
 function boundedEnv(source = process.env) {

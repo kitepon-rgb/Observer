@@ -84,6 +84,7 @@ test("Codex runtimeはapp-serverを一度initializeし、closeAndWait所有権�
   const transport = {
     request: async () => {},
     notify: async () => {},
+    waitForTurnTerminal: async () => {},
     closeAndWait: async () => { calls.push("close"); },
     terminationSignal: new AbortController().signal,
   };
@@ -145,6 +146,7 @@ test("Codex runtimeはcross-provider capability欠損をauthorization前に拒�
   const transport = {
     request: async () => {},
     notify: async () => {},
+    waitForTurnTerminal: async () => {},
     closeAndWait: async () => {},
     terminationSignal: new AbortController().signal,
   };
@@ -169,6 +171,7 @@ test("initialize失敗時もtransport terminal cleanupを確認してから失�
   const transport = {
     request: async () => {},
     notify: async () => {},
+    waitForTurnTerminal: async () => {},
     closeAndWait: async () => { closed += 1; },
     terminationSignal: new AbortController().signal,
   };

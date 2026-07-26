@@ -74,8 +74,12 @@ export async function createCodexSupervisorRuntime({ stateRoot, target, watchId,
   }, dependencies.verificationDependencies);
   let transport = null;
   try {
-    transport = await (dependencies.startCodexAppServerTransport ?? startCodexAppServerTransport)({ verification }, dependencies.transportDependencies);
+    transport = await (dependencies.startCodexAppServerTransport ?? startCodexAppServerTransport)({
+      verification,
+      stateRoot,
+    }, dependencies.transportDependencies);
     if (!transport || typeof transport.request !== "function" || typeof transport.notify !== "function" ||
+        typeof transport.waitForTurnTerminal !== "function" ||
         typeof transport.closeAndWait !== "function" || !(transport.terminationSignal instanceof AbortSignal)) {
       fail("E_SUPERVISOR_CODEX_RUNTIME_INVALID", "Codex app-server transport所有権が不正です");
     }

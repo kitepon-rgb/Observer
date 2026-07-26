@@ -925,7 +925,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
   - [x] 実Codex app-server characterizationでhook／plugin event 0、bootstrap `completed`を確認した。
   - [x] 0.1.2のfull／package gateを通した。full 416/416、`npm run check`、
     package install smoke、64-file tarballがgreen。
-  - [ ] commit／push／tag／npm publish／global installを完了する。
+  - [x] commit／push／tag／npm publish／global installを完了した。
   - [x] installed 0.1.2でbootstrap完了を確認した。旧generation stateとの衝突で停止したため、
     `active`継続の受入はP5-7へ引き継いだ。
 
@@ -937,8 +937,23 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
   - [x] 新watch active CASと旧generation状態を照合する置換transaction／focused testを実装した。
   - [x] full／package gateを通した。full 418/418、`npm run check`、package install smoke、
     64-file tarballがgreen。
+  - [x] commit／push／tag／npm publish／global installを完了した。
+  - [x] installed 0.1.3でgeneration切替は完了したが、`turn/start`直後の
+    empty rolloutに対する`thread/read`がerrorとなり、`active`受入はP5-8へ引き継いだ。
+
+- [ ] **P5-8 Observer 0.1.4でCodex bootstrapのflush競合とglobal tool surface継承を解消する。**
+  - 成果物: [ADR 0152](adr/0152-codex-bootstrap-terminal-gate-and-isolated-home.md)、
+    terminal notification gate、isolated `CODEX_HOME`、認証connector、0.1.4 release／installed watch。
+  - 完了条件: `turn/completed`前に`thread/read`を発行せず、isolated homeがglobal config／MCPを継承しない。
+    installed 0.1.4のforeground callerとbingo watchが`active`を維持する。
+  - [x] `turn/completed` exact相関後のdurable readとtransport testを実装した。
+  - [x] isolated `CODEX_HOME`、0600認証元symlink、不要feature無効化、残存MCP fail-loudを実装した。
+  - [x] source runtimeでMCP startupなし、Observer AGENTSだけのinstruction source、read-only policy、
+    bingo watch `active`を確認した。
+  - [x] full／package gateを通した。full 422/422、`npm run check`、
+    isolated package install smokeがgreen。
   - [ ] commit／push／tag／npm publish／global installを完了する。
-  - [ ] installed 0.1.3でbingo監視を`active`にし、作業を再開する。
+  - [ ] installed 0.1.4でbingo監視を`active`にし、作業を再開する。
 
 ---
 

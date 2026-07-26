@@ -21,7 +21,7 @@ test("source package diagnosticsはsanitized manifestと5 binaryを固定する"
   assert.equal(result.status, "ready");
   assert.equal(result.manifest.schema, OBSERVER_PRODUCT_MANIFEST_SCHEMA);
   assert.equal(result.manifest.name, "observer");
-  assert.equal(result.manifest.version, "0.1.3");
+  assert.equal(result.manifest.version, "0.1.4");
   const distribution = JSON.parse(await readFile(join(ROOT, "package.json"), "utf8"));
   assert.equal(distribution.name, "@quolu/observer");
   assert.equal(distribution.version, result.manifest.version);

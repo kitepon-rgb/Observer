@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readlink, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
@@ -20,6 +20,8 @@ import { ObserverError } from "../src/observer-error.mjs";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
 const CODEX = "/opt/codex/bin/codex";
+const THREAD_ID = "019f62a1-1111-7111-8111-111111111111";
+const TURN_ID = "019f62a2-2222-7222-8222-222222222222";
 const IDENTITY = {
   candidate: CODEX, realpath: CODEX, uid: 501, gid: 20, mode: 0o755,
   dev: "1", ino: "2", size: "3", mtime_ns: "4", digest: "a".repeat(64),
@@ -140,27 +142,99 @@ test("app-serverをshellなし・Observer cwd・環境allowlist・hook/plugin無
   const child = new FakeChild();
   const harness = processGroupHarness();
   let invocation;
-  const transport = await startCodexAppServerTransport({ verification: verification() }, {
+  const transport = await startCodexAppServerTransport({ verification: verification(), stateRoot: "/state" }, {
     recheckIdentity: async () => {},
     env: { HOME: "/home", PATH: "/bin", SECRET_TOKEN: "no" },
+    prepareIsolatedCodexHome: async () => "/state/codex-runtime/home",
     spawn: (command, args, options) => { invocation = { command, args, options }; return child; },
     ...harness.options,
   });
   assert.ok(transport instanceof CodexProcessTransport);
   assert.deepEqual({ command: invocation.command, args: invocation.args }, {
     command: CODEX,
-    args: ["app-server", "--disable", "hooks", "--disable", "plugins"],
+    args: [
+      "app-server",
+      "--disable", "apps",
+      "--disable", "browser_use",
+      "--disable", "browser_use_external",
+      "--disable", "code_mode_host",
+      "--disable", "computer_use",
+      "--disable", "hooks",
+      "--disable", "image_generation",
+      "--disable", "in_app_browser",
+      "--disable", "multi_agent",
+      "--disable", "plugins",
+      "--disable", "remote_plugin",
+      "--disable", "request_permissions_tool",
+      "--disable", "shell_tool",
+      "--disable", "skill_mcp_dependency_install",
+      "--disable", "tool_call_mcp_elicitation",
+      "--disable", "tool_suggest",
+      "--disable", "unified_exec",
+      "--disable", "workspace_dependencies",
+    ],
   });
   assert.equal(invocation.options.detached, true, "親terminal signalをCodex app-server childへ直接配送しない");
   assert.equal(invocation.options.cwd, ROOT);
   assert.equal(invocation.options.shell, false);
-  assert.deepEqual(invocation.options.env, { NO_COLOR: "1", HOME: "/home", PATH: "/bin" });
+  assert.deepEqual(invocation.options.env, {
+    NO_COLOR: "1",
+    HOME: "/home",
+    PATH: "/bin",
+    CODEX_HOME: "/state/codex-runtime/home",
+  });
   transport.close();
   assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"]]);
   await assert.rejects(
     startCodexAppServerTransport({ verification: { ...verification(), runtime_root: "relative" } }),
     expectCode("E_CODEX_PROCESS_VERIFICATION_INVALID"),
   );
+});
+
+test("隔離CODEX_HOMEは0600認証元へのsymlinkだけを接続する", async (t) => {
+  const temporary = await mkdtemp(join(tmpdir(), "observer-codex-home-"));
+  const root = await realpath(temporary);
+  const sourceHome = join(root, "source");
+  const stateRoot = join(root, "state");
+  await mkdir(sourceHome, { mode: 0o700 });
+  await chmod(sourceHome, 0o700);
+  const authSource = join(sourceHome, "auth.json");
+  await writeFile(authSource, "{}\n", { mode: 0o600 });
+  await chmod(authSource, 0o600);
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const child = new FakeChild();
+  const harness = processGroupHarness();
+  const transport = await startCodexAppServerTransport({
+    verification: verification(),
+    stateRoot,
+  }, {
+    recheckIdentity: async () => {},
+    effectiveUid: process.getuid(),
+    env: { CODEX_HOME: sourceHome, HOME: "/ignored", PATH: "/bin" },
+    spawn: (_command, _args, options) => {
+      assert.equal(options.env.CODEX_HOME, join(stateRoot, "codex-runtime", "home"));
+      return child;
+    },
+    ...harness.options,
+  });
+  assert.equal(
+    await readlink(join(stateRoot, "codex-runtime", "home", "auth.json")),
+    authSource,
+  );
+  transport.close();
+});
+
+test("残存MCP startup notificationをfail loudにする", async () => {
+  const child = new FakeChild();
+  const { transport } = transportFor(child);
+  const pending = transport.request("thread/read", {});
+  child.respond({
+    method: "mcpServer/startupStatus/updated",
+    params: { threadId: THREAD_ID, name: "unexpected", status: "starting", error: null, failureReason: null },
+  });
+  await assert.rejects(pending, expectCode("E_CODEX_MCP_SURFACE_EXPOSED"));
+  assert.equal(transport.terminationSignal.aborted, true);
 });
 
 test("JSONL request IDをout-of-order responseへexact相関しjsonrpc headerを送らない", async () => {
@@ -184,12 +258,38 @@ test("notificationをbounded callbackへ渡しserver requestをprotocol違反に
   const harness = processGroupHarness();
   const notifications = [];
   const { transport } = transportFor(child, harness, { onNotification: (message) => notifications.push(message) });
-  child.respond({ method: "turn/completed", params: { turn: { id: "turn" } } });
-  assert.deepEqual(notifications, [{ method: "turn/completed", params: { turn: { id: "turn" } } }]);
+  child.respond({ method: "turn/completed", params: { threadId: THREAD_ID, turn: { id: TURN_ID, status: "completed" } } });
+  assert.deepEqual(notifications, [{ method: "turn/completed", params: { threadId: THREAD_ID, turn: { id: TURN_ID, status: "completed" } } }]);
   const pending = transport.request("thread/read", {});
   child.respond({ id: 99, method: "item/commandExecution/requestApproval", params: {} });
   await assert.rejects(pending, expectCode("E_CODEX_TRANSPORT_PROTOCOL"));
   assert.deepEqual(harness.state.signals, [[-child.pid, "SIGTERM"]]);
+});
+
+test("turn/completedをexact相関しread前のterminal gateとして保持する", async () => {
+  const child = new FakeChild();
+  const { transport } = transportFor(child);
+  const waiting = transport.waitForTurnTerminal({ threadId: THREAD_ID, turnId: TURN_ID, timeoutMs: 1_000 });
+  child.respond({
+    method: "turn/completed",
+    params: { threadId: THREAD_ID, turn: { id: TURN_ID, status: "completed" } },
+  });
+  assert.deepEqual(await waiting, {
+    schema: "observer.codex_turn_terminal_notification.v1",
+    thread_id: THREAD_ID,
+    turn_id: TURN_ID,
+    status: "completed",
+  });
+  assert.equal((await transport.waitForTurnTerminal({ threadId: THREAD_ID, turnId: TURN_ID, timeoutMs: 1_000 })).status, "completed");
+  await assert.rejects(
+    transport.waitForTurnTerminal({
+      threadId: THREAD_ID,
+      turnId: "019f62a3-3333-7333-8333-333333333333",
+      timeoutMs: 1,
+    }),
+    expectCode("E_CODEX_TURN_TERMINAL_TIMEOUT"),
+  );
+  transport.close();
 });
 
 test("error responseはraw payloadを露出せず未知または重複response IDはfail closedにする", async () => {
