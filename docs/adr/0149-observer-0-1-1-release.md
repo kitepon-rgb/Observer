@@ -41,3 +41,10 @@ repo mainには上位安定版SemVerの受入れ、truncated evidence境界、Su
 - publish前: release commitをrevertし、tagを作らない。
 - publish後: 0.1.1をunpublishせず必要ならdeprecatedにし、global installを0.1.0へ戻す。
 - watch起動後: 同じforeground callerへSIGINTを送り、managed terminal cleanupを確認する。
+
+## Outcome
+
+0.1.1のcommit／push／tag／npm publish／global install／diagnosticsは完了した。
+installed production watchのbootstrapは親AI向けhook／pluginを継承した状態で外部interruptを受け、
+`active`継続の受入だけ未達となった。公開済み0.1.1を改変せず、
+[ADR 0150](0150-codex-observer-runtime-profile-isolation.md)の0.1.2修正へ引き継ぐ。

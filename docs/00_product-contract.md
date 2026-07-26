@@ -115,6 +115,9 @@ Observer所有のdurable provider operation journalへ分離して保存する�
 Codex停止では`turn/interrupt`の空ACKを終端証拠にしない。同じthread ID／turn IDの
 `completed | interrupted | failed`観測をCodex固有terminal receiptへ束縛し、そのreceiptをparent launch coreが
 検証した後だけwatchを閉じる。app-server process／connectionは再作成可能なtransportであり、provider handleにしない。
+製品ObserverのCodex app-serverは、ユーザー全体のlifecycle hookとpluginを無効化して起動する。
+Observer AIはcanonical inputだけを評価し、shell、MCP、plugin、外部toolを使わないため、
+親AI向けの自動注入やplugin startupを子turnへ継承しない。
 thread／turnの`cwd`は常にcanonical Observer rootで、target `project_root`はchild envelopeにだけ保持する。
 
 各cycleのmodel結果はhost lifecycleと別のprovider operation journalで回収する。Codexはcycleごとに同じpersistent

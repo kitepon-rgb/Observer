@@ -136,7 +136,7 @@ test("Codex最低版以上だけを受理し旧版・prerelease・不正表現�
   );
 });
 
-test("app-serverをshellなし・Observer cwd・環境allowlistで生成する", async () => {
+test("app-serverをshellなし・Observer cwd・環境allowlist・hook/plugin無効で生成する", async () => {
   const child = new FakeChild();
   const harness = processGroupHarness();
   let invocation;
@@ -147,7 +147,10 @@ test("app-serverをshellなし・Observer cwd・環境allowlistで生成する",
     ...harness.options,
   });
   assert.ok(transport instanceof CodexProcessTransport);
-  assert.deepEqual({ command: invocation.command, args: invocation.args }, { command: CODEX, args: ["app-server"] });
+  assert.deepEqual({ command: invocation.command, args: invocation.args }, {
+    command: CODEX,
+    args: ["app-server", "--disable", "hooks", "--disable", "plugins"],
+  });
   assert.equal(invocation.options.detached, true, "親terminal signalをCodex app-server childへ直接配送しない");
   assert.equal(invocation.options.cwd, ROOT);
   assert.equal(invocation.options.shell, false);

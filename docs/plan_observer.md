@@ -910,10 +910,23 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
     bingoのwatchがinstalled binaryから`active`継続する。
   - [x] live文書とpackage identityを0.1.1／Throughline `>=0.8.7`へ同期する。
   - [x] package tarball、full suite、static check、package install smokeをgreenにする。
-  - [ ] commitをmainへpushし、tag `v0.1.1`をpushする。
-  - [ ] `@quolu/observer@0.1.1`をnpmへ公開し、registry metadataを確認する。
-  - [ ] global installを0.1.1へ更新し、installed diagnostics／MCP diagnosticsを確認する。
-  - [ ] installed binaryでbingo監視を再開し、`active`継続後に作業を再開する。
+  - [x] commitをmainへpushし、tag `v0.1.1`をpushした。
+  - [x] `@quolu/observer@0.1.1`をnpmへ公開し、registry metadataを確認した。
+  - [x] global installを0.1.1へ更新し、installed diagnostics／MCP diagnosticsを確認した。
+  - [x] installed binaryでbingo監視を再開したが、親AI向けhook／pluginを継承したbootstrapが
+    外部interruptを受け、`active`継続の受入はP5-6へ引き継いだ。
+
+- [ ] **P5-6 Observer 0.1.2でCodex子の実行プロファイルを隔離し、installed watchをactiveにする。**
+  - 成果物: [ADR 0150](adr/0150-codex-observer-runtime-profile-isolation.md)、hook／plugin無効化、
+    0.1.2 package identity、release commit/tag、npm公開、global install、production watch。
+  - 完了条件: focused／full／package gateがgreen、installed 0.1.2のbingo watchがbootstrapを完了し、
+    foreground callerとwatchが`active`を維持する。
+  - [x] app-serverを`--disable hooks --disable plugins`で起動し、process transport testで固定した。
+  - [x] 実Codex app-server characterizationでhook／plugin event 0、bootstrap `completed`を確認した。
+  - [x] 0.1.2のfull／package gateを通した。full 416/416、`npm run check`、
+    package install smoke、64-file tarballがgreen。
+  - [ ] commit／push／tag／npm publish／global installを完了する。
+  - [ ] installed 0.1.2でbingo監視を`active`にし、作業を再開する。
 
 ---
 

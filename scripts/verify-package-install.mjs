@@ -67,7 +67,7 @@ try {
   const installedRoot = join(prefix, "lib", "node_modules", "@quolu", "observer");
   const installedManifest = JSON.parse(await readFile(join(installedRoot, "package.json"), "utf8"));
   assert.equal(installedManifest.name, "@quolu/observer");
-  assert.equal(installedManifest.version, "0.1.1");
+  assert.equal(installedManifest.version, "0.1.2");
   assert.equal(Object.hasOwn(installedManifest, "private"), false);
 
   const binRoot = process.platform === "win32" ? prefix : join(prefix, "bin");
@@ -79,7 +79,7 @@ try {
     expectedStatus: process.platform === "darwin" ? 0 : 1,
   }).stdout);
   assert.equal(product.manifest.name, "observer");
-  assert.equal(product.manifest.version, "0.1.1");
+  assert.equal(product.manifest.version, "0.1.2");
   assert.equal(
     product.status,
     process.platform === "darwin" ? "ready" : "unsupported_platform",
@@ -87,7 +87,7 @@ try {
 
   const mcp = JSON.parse(run(join(binRoot, "observer-mcp"), ["--diagnostics"]).stdout);
   assert.equal(mcp.status, "ready");
-  assert.equal(mcp.server_version, "0.1.1");
+  assert.equal(mcp.server_version, "0.1.2");
   assert.deepEqual(mcp.tools, ["observer_read", "observer_wait"]);
 
   for (const name of [

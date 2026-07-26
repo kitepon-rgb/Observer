@@ -45,7 +45,11 @@ export async function startCodexAppServerTransport({ verification, onNotificatio
   const spawnProcess = dependencies.spawn ?? spawn;
   let child;
   try {
-    child = spawnProcess(verification.codex.realpath, ["app-server"], {
+    child = spawnProcess(verification.codex.realpath, [
+      "app-server",
+      "--disable", "hooks",
+      "--disable", "plugins",
+    ], {
       cwd: verification.runtime_root,
       env: boundedEnv(dependencies.env ?? process.env),
       detached: true,

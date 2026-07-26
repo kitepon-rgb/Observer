@@ -1,6 +1,6 @@
 {
   "name": "@quolu/observer",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Read-only AI parent monitoring with evidence-based advisories for Claude and Codex",
   "license": "MIT",
   "author": "quolu",

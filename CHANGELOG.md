@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.2
+
+- Codex Observer子のapp-serverでユーザー全体のhooks／pluginsを無効化し、親AI向け自動処理によるbootstrap割込みと不要なMCP起動を防ぐ。
+- installed production watchがbootstrap完了後に`active`を維持する実運用gateを追加する。
+
 ## 0.1.1
 
 - Throughline 0.8.7以降の上位互換runtimeを、固定version一致ではなく安定版SemVerとstrict wire検証で受理する。
