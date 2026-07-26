@@ -40,3 +40,14 @@ production Observer AIのtool allowlistは空であり、利用者のglobal hook
 
 - npm公開前は変更commitをrevertする。
 - 公開後は0.1.4をunpublishせず、必要ならdeprecatedにして0.1.3へglobal installを戻す。
+
+## Outcome
+
+commit `71e66cf`を`origin/main`へpushし、annotated tag `v0.1.4`を公開した。
+full 422/422、static check、isolated package install smokeを通し、
+`@quolu/observer@0.1.4`をnpmへ公開した。registry shasumは
+`a1c083c653516175aaf3bff974de284752223658`、global diagnostics／MCP diagnosticsは`ready`である。
+
+installed 0.1.4からbingo watch `w_194bceab-d266-492a-943c-aefa8692cdce`をforeground起動し、
+bootstrap完了後に`active`を確認した。isolated `CODEX_HOME`はglobal config／MCPを継承せず、
+認証元への固定symlinkだけを保持する。foreground callerは終了させず稼働を継続している。

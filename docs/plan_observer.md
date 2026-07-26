@@ -941,7 +941,7 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
   - [x] installed 0.1.3でgeneration切替は完了したが、`turn/start`直後の
     empty rolloutに対する`thread/read`がerrorとなり、`active`受入はP5-8へ引き継いだ。
 
-- [ ] **P5-8 Observer 0.1.4でCodex bootstrapのflush競合とglobal tool surface継承を解消する。**
+- [x] **P5-8 Observer 0.1.4でCodex bootstrapのflush競合とglobal tool surface継承を解消する。**
   - 成果物: [ADR 0152](adr/0152-codex-bootstrap-terminal-gate-and-isolated-home.md)、
     terminal notification gate、isolated `CODEX_HOME`、認証connector、0.1.4 release／installed watch。
   - 完了条件: `turn/completed`前に`thread/read`を発行せず、isolated homeがglobal config／MCPを継承しない。
@@ -952,8 +952,10 @@ P5-1b4の非H caller coreは完了した。次はP5-1b5 dual-host live Hであ�
     bingo watch `active`を確認した。
   - [x] full／package gateを通した。full 422/422、`npm run check`、
     isolated package install smokeがgreen。
-  - [ ] commit／push／tag／npm publish／global installを完了する。
-  - [ ] installed 0.1.4でbingo監視を`active`にし、作業を再開する。
+  - [x] commit `71e66cf`をmainへpushし、tag `v0.1.4`、npm publish、
+    registry shasum `a1c083c653516175aaf3bff974de284752223658`、global installを確認した。
+  - [x] installed 0.1.4でbingo監視 `w_194bceab-d266-492a-943c-aefa8692cdce`を
+    foreground起動し、watch／callerが`active`を維持して作業を再開した。
 
 ---
 
