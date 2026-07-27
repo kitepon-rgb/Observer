@@ -4,8 +4,12 @@ Observerは、ClaudeまたはCodexで動く親AIの確定ターンをread-only�
 有意に改善できる時だけ、証拠付きの助言を返す伴走プロダクトです。正常進行では
 沈黙し、監視対象のコード・設定・工程を変更しません。
 
-**工場での役割:** Observerはdotagents開発工場が管理する自作コア10製品の一つです。
-macOS上のread-only伴走監視を所有し、dotagentsが製品横断の導入・統合契約を所有します。
+[kitepon.dev](https://kitepon.dev/)を運営する[クオ（@QLyun35332）](https://x.com/QLyun35332)が
+開発・メンテナンスしています。
+
+**所有境界:** 本repositoryはmacOS上のread-only伴走監視を所有します。製品横断の導入・
+統合契約は、kitepon.devの製品開発を支える内部基盤
+[dotagents](https://github.com/kitepon-rgb/dotagents)が担当します。
 
 ## 対応環境
 
