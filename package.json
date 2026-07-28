@@ -3,7 +3,10 @@
   "version": "0.1.4",
   "description": "Read-only AI parent monitoring with evidence-based advisories for Claude and Codex",
   "license": "MIT",
-  "author": "quolu",
+  "author": {
+    "name": "Quo / クオ at kitepon.dev",
+    "url": "https://x.com/QLyun35332"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/kitepon-rgb/Observer.git"
